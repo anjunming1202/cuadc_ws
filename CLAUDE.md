@@ -1,30 +1,34 @@
 # Claude Agent Workflow
 
-## Project overview
+## Git workflow
 
-CUADC 2026 —— 固定翼无人机侦察与打击（Fixed-wing UAV Reconnaissance & Strike）。
-本仓库是伴随计算机（Companion Computer）软件部分：感知/视觉、规划/决策、
-以及与 Pixhawk/ArduPilot 的通信接口。飞控本身（Pixhawk 参数、PID、机体、
-投放机构）由另一个子队（飞控组）负责，不在本仓库范围内。
+- Never proactively run `git commit` or `git push`. After making changes,
+  point out that this is a good point to commit — state briefly why —
+  and propose a concise commit message. The user runs the commit
+  themselves.
+- Commit message suggestions must be in English.
+- When work is risky, exploratory, or unrelated to the current main
+  line, suggest creating a new branch — state briefly why — and propose
+  a concise branch name. Only run `git branch` after the user agrees.
+- Branch names must be in English.
 
-ROS2 Humble（与本机其它项目共用的环境一致）。
+## Documentation principle
 
-## Current status
+Single source of truth: every fact is maintained in exactly one place.
+Don't restate project facts (mission, architecture, status) here — this
+file is operating conventions only.
 
-设计阶段。`docs/spec/` 尚未建立——架构和各模块的设计规范正在与人类架构师
-讨论中，讨论确定后才会落成正式文档；spec 确定前不要在 `src/` 下开始实现
-具体功能包。
+## Where to find things
+
+See `README.md` — it has the project overview and directory structure.
+Don't duplicate that list here.
 
 ## Working mode
 
-- 人：系统设计、架构、技术决策。
-- AI：代码实现、算法实现、文档完善——始终以 `docs/spec/` 里已确认的设计
-  为依据，不做无依据的自由发挥。
+- Human: system design, architecture, technical decisions.
+- AI: implementation, algorithms, documentation — always against an
+  agreed spec in `docs/spec/`, not ad hoc.
 
 ## Language
 
-用中文或英文回复，不用其它语言。
-
-## Notes
-
-本文件内容会随 `docs/spec/` 的建立不断扩充和调整，目前只是占位。
+Respond in Chinese or English only.

@@ -1,0 +1,15 @@
+# docs/reference/
+
+从外部权威来源（竞赛规则、ArduPilot 官方能力）摘录的背景事实，不是我们
+自己的设计决策。
+
+**更新纪律**：只有当外部来源真的变了（比如竞赛规则出新版本），或者发现
+摘录有误时才修改这里；日常设计迭代不会改动这些文件——那些改动应该发生在
+`docs/spec/` 里。
+
+**当前文件**：
+- `competition-rules-summary.md` —— 竞赛规则摘要（任务、场地、计分、判罚）
+- `target-classes.md` —— 目标类别/价值表（配合附件12的轮廓图使用）
+- `ardupilot-interface-overview.md` —— ArduPilot/MAVLink 接口能力概览
+
+每份文件开头都标了来源出处和提取日期，方便以后核对是否需要同步更新。
