@@ -9,7 +9,7 @@
 
 **当前文件**：
 - `competition-rules-summary.md` —— 竞赛规则摘要（任务、场地、计分、判罚）
-- `target-classes.md` —— 目标类别/价值表（配合附件12的轮廓图使用）
+- `hazmat-placards.md` —— 灾情侦察区危险化学品标识参考（配合附件11 使用）
 - `ardupilot-interface-overview.md` —— ArduPilot/MAVLink 接口能力概览
 
 每份文件开头都标了来源出处和提取日期，方便以后核对是否需要同步更新。

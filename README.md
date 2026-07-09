@@ -1,12 +1,12 @@
-# CUADC 2026 —— 固定翼无人机侦察与打击（伴随计算机软件）
+# CUADC 2026 —— 多旋翼无人机侦察与救援（伴随计算机软件）
 
 ![ROS2 Humble](https://img.shields.io/badge/ROS2-Humble-blue)
 ![Status](https://img.shields.io/badge/status-design--phase-lightgrey)
 
-固定翼无人机自主侦察与打击任务的伴随计算机（Companion Computer）软件，
-飞控为 Pixhawk + ArduPilot。本仓库仅覆盖软件组负责的部分：感知/视觉、
-规划/决策、以及与飞控的通信接口；飞控本身的调参、机体、投放机构由
-另一个子队负责。
+多旋翼无人机自主完成标准载荷投放与灾情侦察任务的伴随计算机（Companion
+Computer）软件，飞控为 Pixhawk + ArduPilot（ArduCopter）。本仓库仅覆盖
+软件组负责的部分：感知/视觉、规划/决策、以及与飞控的通信接口；飞控本身
+的调参、机体、投放机构由另一个子队负责。
 
 ## 现状
 
@@ -32,4 +32,4 @@
 
 ## 相关比赛项目
 
-2026 中国大学生飞行器设计创新大赛 ——「固定翼无人机侦察与打击」。
+2026 中国大学生飞行器设计创新大赛 ——「多旋翼无人机侦察与救援」。
