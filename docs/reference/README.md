@@ -11,5 +11,8 @@
 - `competition-rules-summary.md` —— 竞赛规则摘要（任务、场地、计分、判罚）
 - `hazmat-placards.md` —— 灾情侦察区危险化学品标识参考（配合附件11 使用）
 - `ardupilot-interface-overview.md` —— ArduPilot/MAVLink 接口能力概览
+- `tech-stack.md` —— 项目用到的软件/工具/协议一览（不是摘录自单一权威来源、随认识的新工具持续累积，不
+  适用下面"只有来源变了才改"的纪律）
 
-每份文件开头都标了来源出处和提取日期，方便以后核对是否需要同步更新。
+每份文件开头都标了来源出处和提取日期，方便以后核对是否需要同步更新
+（`tech-stack.md` 除外，见上）。

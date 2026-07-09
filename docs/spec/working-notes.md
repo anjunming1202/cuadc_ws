@@ -22,17 +22,15 @@
 - **仿真资产归属**：
   - 我们自己写的仿真场景（比赛场地世界文件、投放区/灾情侦察区的圆筒和
     危险化学品标识模型、spawn 和话题桥接的 launch 文件）属于我们自己的
-    代码，应该是 `src/` 里的一个普通 ROS2 包（暂定名 `cuadc_sim`，未最终
-    确定）。
+    代码，是 `src/` 里的一个普通 ROS2 包，包名已定为 `cuadc_sim`（见
+    [`src/cuadc_sim/README.md`](../../src/cuadc_sim/README.md)）。
   - **ArduPilot SITL**（ArduPilot 固件自带的软件在环模拟器）和
     **`ardupilot_gazebo`**（连接 SITL 飞行动力学和 Gazebo 物理/传感器的
     桥接插件）都是第三方代码，不是我们写的，**不 vendor 进本仓库**，应作为
     外部依赖单独安装（类似 ROS2 Humble 本身不会被塞进任何项目仓库）。
-  - 仿真器具体选型（Gazebo 还是别的）**还没有正式拍板**，Gazebo 只是因为
-    ArduPilot 官方有现成的 `ardupilot_gazebo` 桥接插件而被提及，值得注意
-    的是：如果选了一个和 ROS2 不兼容的仿真器（比如 Webots），会被迫出现
-    类似 `~/projects/OxbotsSimulator` 那种顶层结构分裂（仿真器原生目录
-    约定 vs ROS2 的 colcon 约定互不兼容，只能分开摆或者互相嵌套）。
+    ArduPilot 源码已装在 `~/ardupilot`（不在仓库内），SITL 运行时状态/
+    日志用 `~/ardupilot_sitl_run`（也不在仓库内）。
+  - 仿真器选型见下方"已解决"一节——第一阶段只用 SITL，暂不接 Gazebo。
 - **外部时间约束**：飞控组 phase 1（人工控制下让飞机飞起来、按软件组给出
   的模拟指令调试控制器）需要在 **2026-08-01 前**完成，这依赖软件组尽早
   定下确定的指令接口格式（轨迹/模式/速度输出的数据类型）。这是设计
@@ -48,6 +46,15 @@
 - **"机载计算" vs "地面站自动计算"**：已拍板为"机载计算，无地面站计算
   路径"，见 [ADR-0002](adr/0002-onboard-inference-only.md)（决策依据）
   和 `docs/lessons.md` 2026-07-09 条目（此前推理为什么反复横跳过）。
+- **仿真到底要搭多真（第一阶段）**：拍板先只装 ArduPilot SITL（编译目标
+  ArduCopter），不接 Gazebo/`ardupilot_gazebo`——SITL 自带简化飞行动力学，
+  足够测规划/决策/接口层闭环（遥测读取、GUIDED 指令收发），感知模块的
+  真实度需求以后再单独评估（合成图片/录制视频 vs 接入 Gazebo 视觉仿真，
+  见 `src/cuadc_sim/README.md`）。已跑通闭环验证：起 SITL（`ros2 launch
+  cuadc_sim sitl_bringup.launch.py`）→ 读遥测（GPS、电池）→ 解锁/切
+  GUIDED/起飞/发送位置目标，全部通过 `sitl_smoke_test` 节点验证。这是
+  分阶段起步的决定，不是排除以后接 Gazebo 的可能性，接不接、什么时候接
+  仍待评估，暂不写 ADR。
 
 ## 还没决定、需要讨论的开放问题
 
@@ -56,12 +63,6 @@
    原文没有明确说明这 10 种是否就是灾情侦察区可能出现的全部种类，还是仅
    为样例（见 `docs/reference/hazmat-placards.md`），实现感知模块前需要
    确认。
-2. **仿真到底要搭多真**：ArduPilot SITL（本项目机型是多旋翼，编译目标是
-   ArduCopter，不是 ArduPlane）本身不需要 Gazebo 就能测规划/决策/控制
-   逻辑（自带简化飞行动力学），感知模块用合成图片/录制视频测试可能比搭
-   一个逼真 3D 场景更快出结果——"要不要接完整的 Gazebo 视觉仿真"和"规划
-   决策逻辑仿真"可以分开决定，值得在某个模块文档（可能是感知模块文档
-   或者专门的"开发与仿真环境"文档）里详细讨论，现在不用决定。
 
 ## 早期架构草案里可复用的部分（已按现在的范围重新解读）
 

@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>cuadc_sim</name>
+  <version>0.0.0</version>
+  <description>CUADC 2026 simulation assets: SITL bringup, verification nodes, and (later) Gazebo world/models</description>
+  <maintainer email="anjunming0819@outlook.com">Junming An</maintainer>
+  <license>MIT</license>
+
+  <depend>rclpy</depend>
+  <depend>launch</depend>
+  <depend>launch_ros</depend>
+
+  <!-- ArduPilot SITL and pymavlink are external, non-vendored dependencies
+       (see docs/spec/working-notes.md), installed via `pip3 install --user
+       pymavlink` rather than apt/rosdep -- there is no python3-pymavlink
+       rosdep key on Ubuntu. -->
+
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

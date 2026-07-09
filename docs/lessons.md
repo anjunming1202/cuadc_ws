@@ -51,3 +51,22 @@
   15–25cm 筒径该有的视觉比例）。涉及具体尺寸判断且肉眼直觉可能不可靠时，
   应该直接把图渲染出来做像素测量（对比多个实例的相对大小关系），而不是
   只看一遍就下结论。
+
+- **本机 colcon 编译出的 ROS2 包，`source install/setup.bash` 后
+  `ros2 run`/`ros2 launch` 找不到包**：正常预期下 `colcon build` 会给
+  每个包生成一个 `ament_prefix_path` 环境 hook（写在
+  `install/<pkg>/share/<pkg>/hook/ament_prefix_path.sh` 等文件里），
+  `install/setup.bash` source 时会执行这个 hook，把包所在的 prefix 加进
+  `AMENT_PREFIX_PATH`，`ros2` 系工具才找得到包。用 `cuadc_sim` 包实测
+  （`ament_python` build type，`colcon-ros 0.5.0` + `colcon-core 0.20.1`，
+  均为系统 apt 包）发现这个 hook 文件始终没有生成——不管 `--merge-install`
+  与否都一样，日志和 events.log 里也没有任何报错或异常。单独调用
+  `colcon_core.shell.create_environment_hook()` 复现是正常工作的，说明不是
+  这个函数本身坏了，具体是 `colcon_ros` 调用它的哪个环节没生效还没有
+  继续深挖（对搭仿真环境这个目标没有增量价值，先记录现象和 workaround）。
+  **Workaround**：`source install/setup.bash` 之后，手动把每个用到的包的
+  安装前缀显式加进 `AMENT_PREFIX_PATH`，例如：
+  `export AMENT_PREFIX_PATH="$(pwd)/install/<pkg>:$AMENT_PREFIX_PATH"`。
+  **教训**：这台机器上任何新建的 ROS2 包，`colcon build` 之后如果
+  `ros2 run`/`ros2 launch` 报"package not found"，先怀疑这个已知坑，
+  不要假设是包本身写错了（`package.xml`/`setup.py` 配置没问题）。
