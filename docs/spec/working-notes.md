@@ -26,11 +26,21 @@
     [`src/cuadc_sim/README.md`](../../src/cuadc_sim/README.md)）。
   - **ArduPilot SITL**（ArduPilot 固件自带的软件在环模拟器）和
     **`ardupilot_gazebo`**（连接 SITL 飞行动力学和 Gazebo 物理/传感器的
-    桥接插件）都是第三方代码，不是我们写的，**不 vendor 进本仓库**，应作为
-    外部依赖单独安装（类似 ROS2 Humble 本身不会被塞进任何项目仓库）。
-    ArduPilot 源码已装在 `~/ardupilot`（不在仓库内），SITL 运行时状态/
-    日志用 `~/ardupilot_sitl_run`（也不在仓库内）。
-  - 仿真器选型见下方"已解决"一节——第一阶段只用 SITL，暂不接 Gazebo。
+    桥接插件）、**`ardupilot_gz`**（Gazebo+ROS2 的集成层）都是第三方
+    代码，不是我们写的，**不 vendor 进本仓库**，应作为外部依赖单独安装
+    （类似 ROS2 Humble 本身不会被塞进任何项目仓库）。安装位置（都不在
+    仓库内）：
+    - `~/ardupilot`——ArduPilot 源码 + SITL（内置物理模型）
+    - `~/ardupilot_run_builtin_physics`——SITL 运行时状态/日志（内置
+      物理模型那次）
+    - `~/ardupilot_run_gazebo_physics`——SITL 运行时状态/日志（接
+      Gazebo 那次）
+    - `~/ardupilot_gazebo`——`ardupilot_gazebo` 插件源码+编译产物
+      （路径与官方文档一致，不额外套 workspace 外层）
+    - `~/gazebo_ros2_ws`——`ardupilot_gz`（ROS2 集成层，规划中）
+    - `~/QGroundControl.AppImage`——地面站软件
+  - 仿真器选型已更新，见下方"已解决"一节——已拍板接入 Gazebo（Harmonic
+    版本），推翻了之前"第一阶段只用 SITL"的暂定安排。
 - **外部时间约束**：飞控组 phase 1（人工控制下让飞机飞起来、按软件组给出
   的模拟指令调试控制器）需要在 **2026-08-01 前**完成，这依赖软件组尽早
   定下确定的指令接口格式（轨迹/模式/速度输出的数据类型）。这是设计
@@ -46,15 +56,24 @@
 - **"机载计算" vs "地面站自动计算"**：已拍板为"机载计算，无地面站计算
   路径"，见 [ADR-0002](adr/0002-onboard-inference-only.md)（决策依据）
   和 `docs/lessons.md` 2026-07-09 条目（此前推理为什么反复横跳过）。
-- **仿真到底要搭多真（第一阶段）**：拍板先只装 ArduPilot SITL（编译目标
-  ArduCopter），不接 Gazebo/`ardupilot_gazebo`——SITL 自带简化飞行动力学，
-  足够测规划/决策/接口层闭环（遥测读取、GUIDED 指令收发），感知模块的
-  真实度需求以后再单独评估（合成图片/录制视频 vs 接入 Gazebo 视觉仿真，
-  见 `src/cuadc_sim/README.md`）。已跑通闭环验证：起 SITL（`ros2 launch
-  cuadc_sim sitl_bringup.launch.py`）→ 读遥测（GPS、电池）→ 解锁/切
-  GUIDED/起飞/发送位置目标，全部通过 `sitl_smoke_test` 节点验证。这是
-  分阶段起步的决定，不是排除以后接 Gazebo 的可能性，接不接、什么时候接
-  仍待评估，暂不写 ADR。
+- **仿真到底要搭多真（第一阶段）**：最初拍板先只装 ArduPilot SITL、不接
+  Gazebo，已跑通闭环验证（起 SITL → 读遥测 → 解锁/切 GUIDED/起飞/发送
+  位置目标，`sitl_smoke_test` 节点）。**后来重新讨论并推翻了这个暂定
+  安排**：只有流程走通、没有真实场景/摄像头画面，规划/决策和感知模块
+  的代码没法真正验证（算法本身对不对、不是靠流程通不通能测出来的），
+  拍板接入 Gazebo（Harmonic 版本）渲染真实 3D 场景。分支
+  `feature/gazebo-sim-integration`。
+  - 边界说清楚：接 Gazebo 解决的是"感知算法有没有真实图像可以测"，
+    解决不了算力瓶颈（要在目标硬件上测）和真实物理扰动（风、传感器
+    噪声这些需要额外配置，Gazebo 本身不会自动模拟）。
+  - 已验证：Gazebo Harmonic 渲染正常（WSLg + D3D12 GPU 加速链路没
+    问题）、`ardupilot_gazebo` 插件编译通过、SITL 通过 JSON 协议连上
+    Gazebo 拿到物理数据飞（不是 SITL 自己内置那套简化模型）。
+  - 还没做：ROS2 集成层（`ardupilot_gz`）、我们自己的比赛场地
+    world/模型、摄像头画面桥接。目前用的是 `ardupilot_gazebo` 仓库
+    自带的示例资产（iris 四旋翼 + 跑道），不是我们自己的机体/场地。
+  - 暂不写 ADR——这条决策本身记在这里已经够用，等真正搭完整套、
+    形成稳定架构后再评估要不要正式写成 spec/ADR。
 
 ## 还没决定、需要讨论的开放问题
 

@@ -70,3 +70,47 @@
   **教训**：这台机器上任何新建的 ROS2 包，`colcon build` 之后如果
   `ros2 run`/`ros2 launch` 报"package not found"，先怀疑这个已知坑，
   不要假设是包本身写错了（`package.xml`/`setup.py` 配置没问题）。
+
+- **Gazebo+SITL 反复起不来，其实是残留进程/端口冲突，不是架构问题**：
+  接 Gazebo 物理（`--model JSON`）跑三方联调（Gazebo + arducopter +
+  MAVProxy/QGC）时，遇到一连串"起来就死"：MAVProxy 连上 SITL 的
+  TCP 5760 但一直收不到心跳、随后自己卸载模块退出，arducopter 也莫名
+  其妙不在了。一度怀疑是 arducopter 的 Gazebo-JSON 握手没完成、或
+  Gazebo 插件状态坏了。**真实原因**：一次 WSL2 VM 中途重启（Windows
+  触发，非我们操作）把所有进程杀了但保留了磁盘状态，之后我几次快速
+  重启只清理了一部分进程，残留的 arducopter/xterm/gz sim 抢占
+  5760/9002 端口，新起的实例和旧的互相打架。**根因排查方法**（有效）：
+  别在满是残留进程的环境里做取证，直接全部清干净、冷启动、一层一层
+  叠加验证。清干净后按下面顺序单独验证，一次就通了：
+
+  ```bash
+  # 0) 彻底清场（pkill -f 在本机不可靠，用 kill -9 <显式PID>，见下）
+  for p in sim_vehicle arducopter "xterm.*ArduCopter" "gz sim" mavproxy; do
+    pids=$(pgrep -f "$p"); [ -n "$pids" ] && kill -9 $pids
+  done
+  ss -tln | grep -E '5760|9002|1455'   # 必须为空才算清干净
+
+  # 1) 只起 Gazebo 物理服务端（headless，-s 不开 GUI，先不管渲染/GPU）
+  export GZ_SIM_SYSTEM_PLUGIN_PATH=$HOME/ardupilot_gazebo/build
+  export GZ_SIM_RESOURCE_PATH=$HOME/ardupilot_gazebo/models:$HOME/ardupilot_gazebo/worlds
+  gz sim -s -r -v4 iris_runway.sdf      # 日志出现 "Found IMU sensor" 即插件已加载、在等 SITL
+
+  # 2) 只起 SITL 连 Gazebo（先不挂 MAVProxy，排除转发层干扰）
+  cd ~/ardupilot
+  Tools/autotest/sim_vehicle.py -v ArduCopter -f gazebo-iris --model JSON \
+    --no-mavproxy --no-wsl2-network --no-rebuild --use-dir ~/ardupilot_run_gazebo_physics
+
+  # 3) 直接 pymavlink 连 tcp:127.0.0.1:5760 验心跳+GPS
+  #    心跳 0s 到、GPS 拿到 -35.3632621,149.1652374（来自 Gazebo 物理）即全链路通
+  ```
+
+  验证结果：心跳瞬间就到，GPS 位置正确，Gazebo 日志出现
+  `ArduPilotPlugin.cc:1599 ArduPilot controller has reset`——这行是
+  **正常**的握手确认（新 SITL 客户端连上时插件重置状态），不是报错。
+  **教训**：(a) 用 Gazebo 物理时 frame 要用 `-f gazebo-iris` 且必须带
+  `--model JSON`，跟内置物理的 `-f quad` 是两条不同的路子；(b) WSL2
+  下永远带 `--no-wsl2-network`，否则 MAVProxy 的 `--out` 会被悄悄改到
+  Windows 宿主 IP；(c) 联调起不来时，先怀疑残留进程/端口冲突，冷启动
+  分层验证比在乱局里取证快得多；(d) 排查阶段刻意用 `-s`（headless）+
+  `--no-mavproxy`，把 GPU 渲染和消息转发两个变量都摘掉，能一刀切定位
+  问题到底在物理桥还是在外围。

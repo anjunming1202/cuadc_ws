@@ -29,7 +29,7 @@ def generate_launch_description():
     )
     sitl_run_dir_arg = DeclareLaunchArgument(
         'sitl_run_dir',
-        default_value=os.path.expanduser('~/ardupilot_sitl_run'),
+        default_value=os.path.expanduser('~/ardupilot_run_builtin_physics'),
         description='Scratch directory for SITL state/logs (kept out of the repo and out of the ardupilot checkout)',
     )
     frame_arg = DeclareLaunchArgument(

@@ -33,6 +33,22 @@
 - **QGroundControl**：图形化地面站软件，用地图和仪表盘显示飞控状态
   （位置、姿态、模式、电量），仿真和真机通用。
   
-- **Gazebo**：开源 3D 机器人仿真器，能渲染场景和摄像头等传感器画面；
-  项目目前决定暂不接入（见 `docs/spec/working-notes.md`），等做感知
-  模块视觉测试时再评估。
+- **Gazebo（新一代，gz-sim / "Gazebo Sim"）**：开源 3D 机器人仿真器，
+  能渲染场景和摄像头等传感器画面。本项目用 **Harmonic**（LTS，`gz sim`
+  版本号 8.x），是 ArduPilot 官方当前支持的版本；跟已被淘汰的
+  **Gazebo Classic 11**（2025-01 EOL，和 ArduPilot 现行工具链不兼容）
+  是两套不同的东西。已决定接入（见 `docs/spec/working-notes.md`）。
+
+- **ardupilot_gazebo**：ArduPilot 官方的 C++ Gazebo 插件（从源码编译，
+  产物在 `~/ardupilot_gazebo`），提供 ArduPilotPlugin 等；SITL 用
+  `--model JSON` 通过一个本地 socket（默认 9002）把物理/传感器计算
+  交给 Gazebo，替换掉 SITL 自带的简化物理模型。
+
+- **ardupilot_gz**：ArduPilot 官方的 ROS2 集成层（另一个仓库，规划中，
+  `~/gazebo_ros2_ws`），负责把 Gazebo 和 ROS2 话题打通，跟上面那个
+  纯 C++ 插件不是一回事。
+
+- **gz sim**：新一代 Gazebo 的命令行入口。`-s` 只跑物理服务端（无 GUI，
+  headless），带 GUI 则省略 `-s`；靠 `GZ_SIM_SYSTEM_PLUGIN_PATH`（找
+  插件 .so）和 `GZ_SIM_RESOURCE_PATH`（找 world/model）两个环境变量
+  定位 `ardupilot_gazebo` 的资产。

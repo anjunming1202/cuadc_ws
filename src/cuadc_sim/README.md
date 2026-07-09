@@ -14,17 +14,28 @@
   `ptyprocess`、`dronecan`
 - 完整系统依赖（编译工具链等）由 ArduPilot 官方脚本安装，需要 sudo：
   `~/ardupilot/Tools/environment_install/install-prereqs-ubuntu.sh -y`
+- **Gazebo Harmonic**（apt，需要单独加 OSRF 官方源，见
+  `docs/reference/tech-stack.md`）
+- **`ardupilot_gazebo`**（C++ 插件，从源码编译，`~/ardupilot_gazebo`，
+  路径与官方文档一致）
+- **`ardupilot_gz`**（ROS2 集成层，规划中，`~/gazebo_ros2_ws`）
+- **QGroundControl**（AppImage，`~/QGroundControl.AppImage`）
 
-选型依据（为什么现阶段只用 SITL、不接 Gazebo）见
-[`docs/spec/working-notes.md`](../../docs/spec/working-notes.md) 开放
-问题 2。
+各外部依赖具体装在哪个目录，见
+[`docs/spec/working-notes.md`](../../docs/spec/working-notes.md)"已经
+决定的事"一节。选型依据（为什么后来决定接 Gazebo）也在同一份文件里。
 
 ## 现状
 
-只有 SITL 起飞验证闭环（`launch/sitl_bringup.launch.py` +
-`sitl_smoke_test` 节点），验证"能起 SITL、遥测能读、GUIDED 指令能发出去"。
-还没有：场地世界文件、圆筒/标识模型、Gazebo 桥接（这些要接 Gazebo 视觉
-仿真时才需要）。
+- SITL 起飞验证闭环（`launch/sitl_bringup.launch.py` + `sitl_smoke_test`
+  节点），验证"能起 SITL、遥测能读、GUIDED 指令能发出去"，同时接了
+  QGroundControl（MAVProxy 双路输出，见下方"用法"）。
+- Gazebo Harmonic + `ardupilot_gazebo` 已验证：SITL 能通过 JSON 物理
+  接口连上 Gazebo、用 Gazebo 算出来的物理数据飞（而不是 SITL 自己内置
+  的简化模型），目前用的是官方示例场景/机体（`iris_runway.sdf` +
+  `iris_with_gimbal`），不是我们自己的场地/机体。
+- 还没有：ROS2 集成层（`ardupilot_gz`）、我们自己的比赛场地世界文件、
+  圆筒/危险化学品标识模型、摄像头画面桥接到 ROS2。
 
 ## 用法
 
@@ -47,7 +58,7 @@ ros2 launch cuadc_sim sitl_bringup.launch.py
 的接口层实现（见 [ADR-0001](../../docs/spec/adr/0001-interface-layer-separate-module.md)），
 只是仿真环境的验证脚手架。
 
-默认连接串是 `tcp:127.0.0.1:5760`——因为 launch 文件用
-`--no-mavproxy` 启动 SITL，这种模式下没有 MAVProxy 转发到常见的
-`udp:14550`，SITL 直接把 MAVLink 主端口开在 `5760 + 10*instance` 的
-TCP 端口上。
+launch 文件用正常的 MAVProxy 模式启动 SITL（不是 `--no-mavproxy`），
+这样能同时接多个客户端：MAVProxy 默认的 `udp:127.0.0.1:14550` 留给
+QGroundControl（装好直接自动连），`sitl_smoke_test` 节点走专属的
+`udp:127.0.0.1:14551`，两边不用抢同一个连接。
