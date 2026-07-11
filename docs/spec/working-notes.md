@@ -1,4 +1,4 @@
-# Working notes — pre-spec discussion (2026-07-06 ~ 2026-07-08)
+# Working notes — pre-spec discussion (2026-07-06 ~ 2026-07-11)
 
 > **本文件性质**：不是正式 spec。是"讨论到这里，已经决定了什么、还有什么
 > 没决定"的交接记录，供在 WSL 上继续设计讨论时做起点，避免重新推导一遍。
@@ -37,7 +37,10 @@
       Gazebo 那次）
     - `~/ardupilot_gazebo`——`ardupilot_gazebo` 插件源码+编译产物
       （路径与官方文档一致，不额外套 workspace 外层）
-    - `~/gazebo_ros2_ws`——`ardupilot_gz`（ROS2 集成层，规划中）
+    - `~/gazebo_ros2_ws`——`ardupilot_gz`（ROS2 集成层，已搭建完成，
+      本仓库只用它提供的 `ros_gz_bridge`，不使用它自带的 launch 文件）
+    - `~/Micro-XRCE-DDS-Gen`——`ardupilot_gz` 编译 SITL 需要的代码生成
+      工具，从源码构建
     - `~/QGroundControl.AppImage`——地面站软件
   - 仿真器选型已更新，见下方"已解决"一节——已拍板接入 Gazebo（Harmonic
     版本），推翻了之前"第一阶段只用 SITL"的暂定安排。
@@ -50,7 +53,12 @@
 
 - **接口层要不要独立成一个模块/包**：已决定独立，见
   [ADR-0001](adr/0001-interface-layer-separate-module.md) 和
-  [`00-index.md`](00-index.md)。
+  [`00-index.md`](00-index.md)。落到 launch 文件层面的具体推论：
+  `cuadc_sim` 的 launch 文件（如 `gazebo_bringup.launch.py`）只负责
+  搭建仿真专属的基础设施（Gazebo、SITL），不部署到真机；接口层/规划
+  模块以后会是独立的包和 launch 文件，仿真和真机用同一份代码、同一份
+  launch，区别只是运行时传入的 MAVLink 连接目标不同（仿真指向 SITL 的
+  端口，真机指向真飞控的串口/网口）。
 - **`docs/spec/00-index.md` 大纲**：已经写成正式文档，见
   [`00-index.md`](00-index.md)，本文件不再重复维护大纲提案。
 - **"机载计算" vs "地面站自动计算"**：已拍板为"机载计算，无地面站计算
@@ -68,10 +76,14 @@
     噪声这些需要额外配置，Gazebo 本身不会自动模拟）。
   - 已验证：Gazebo Harmonic 渲染正常（WSLg + D3D12 GPU 加速链路没
     问题）、`ardupilot_gazebo` 插件编译通过、SITL 通过 JSON 协议连上
-    Gazebo 拿到物理数据飞（不是 SITL 自己内置那套简化模型）。
-  - 还没做：ROS2 集成层（`ardupilot_gz`）、我们自己的比赛场地
-    world/模型、摄像头画面桥接。目前用的是 `ardupilot_gazebo` 仓库
-    自带的示例资产（iris 四旋翼 + 跑道），不是我们自己的机体/场地。
+    Gazebo 拿到物理数据飞（不是 SITL 自己内置那套简化模型）、ROS2
+    集成层（`ardupilot_gz`）搭建完成并提供 `ros_gz_bridge`、摄像头
+    画面桥接到 ROS2 话题、QGroundControl 端到端验证通过（解锁、起飞、
+    悬停，机架参数正确）。详见
+    [`src/cuadc_sim/README.md`](../../src/cuadc_sim/README.md)"现状"
+    一节和 `docs/lessons.md`。
+  - 还没做：我们自己的比赛场地 world/模型。目前用的是 `ardupilot_gazebo`
+    仓库自带的示例资产（iris 四旋翼 + 跑道），不是我们自己的机体/场地。
   - 暂不写 ADR——这条决策本身记在这里已经够用，等真正搭完整套、
     形成稳定架构后再评估要不要正式写成 spec/ADR。
 
@@ -82,6 +94,32 @@
    原文没有明确说明这 10 种是否就是灾情侦察区可能出现的全部种类，还是仅
    为样例（见 `docs/reference/hazmat-placards.md`），实现感知模块前需要
    确认。
+
+2. **规划模块任务如何触发（提议，规划模块正式设计时确认）**：竞赛规则
+   原文（2.2 条，见 `docs/reference/competition-rules-summary.md`"自主
+   飞行定义"一节）明确规定"飞行器启动后应以全自动方式完成比赛，比赛
+   过程中不允许任何形式的人工操纵"，"开启飞行器"和"螺旋桨开始旋转"是
+   同一时刻——即没有人工在地面站点击解锁/起飞这个动作的空间，任务必须
+   在飞控一上电、准备就绪后**自动**触发，不能靠地面站按钮或人工指令
+   启动。据此提议规划模块的任务触发设计：
+   - 触发条件是"检测到飞控已连接且飞行前检查通过"（心跳 + EKF/GPS
+     就绪 + PreArm 检查通过），不是人工指令或地面站按钮；满足条件后
+     规划节点自己发出解锁、切模式、起飞指令，无需等待外部触发。
+   - 建议的任务状态机（呼应本文件下方"早期架构草案"一节里
+     `03-planning.md` 的种子清单）：
+     `INIT → WAIT_VEHICLE_READY → ARM_AND_TAKEOFF → NAVIGATE_TO_DROP_ZONE
+     → DETECT_AND_DROP → NAVIGATE_TO_SURVEY_ZONE → DETECT_AND_REPORT →
+     RTL_OR_LAND`。
+   - QGroundControl 在真正比赛计时开始后只用于监视，规划节点不等待、
+     也不依赖它发出任何指令。
+   - 紧急停止走硬件安全开关直接切断动力，不需要软件设计（呼应本文件
+     "早期架构草案"一节"安全与异常处理的横向原则"）。
+   - 仅为开发调试保留一个非比赛用的手动开关（例如启动参数
+     `auto_start`，默认 `true` 对应比赛要求的全自动行为，调试时可设为
+     `false` 让任务节点停在 `WAIT_VEHICLE_READY` 不自动往下走）。
+   - 遗留问题：真机上软件必须在飞控通电前就已经在运行、等着自动触发
+     （规则不允许人开机后再手动敲命令启动），常见做法是配置成开机
+     自启（如 systemd 服务），部署到真机时再解决，仿真阶段不用管。
 
 ## 早期架构草案里可复用的部分（已按现在的范围重新解读）
 

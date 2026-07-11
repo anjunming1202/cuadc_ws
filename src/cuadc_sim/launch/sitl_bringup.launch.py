@@ -1,13 +1,20 @@
-"""Bring up ArduPilot SITL (ArduCopter) and run the closed-loop smoke test.
+"""Bring up ArduPilot SITL (ArduCopter) with built-in physics (no Gazebo).
 
 ArduPilot SITL is an external dependency (not vendored in this repo, see
 docs/spec/working-notes.md) -- it must already be cloned and its Python
 requirements installed; this launch file only invokes it.
 
+Lightweight sandbox for testing MAVLink command/telemetry logic (the
+interface layer) without the overhead of Gazebo -- see
+src/cuadc_sim/README.md for how this differs from gazebo_bringup.launch.py.
+This launch file only stands up the simulated world; it deliberately
+does not run any task/verification node -- run those separately, e.g.:
+    ros2 run cuadc_sim sitl_smoke_test
+
 Runs with MAVProxy enabled so more than one client can be connected at
 once: MAVProxy's default GCS output (udp:127.0.0.1:14550) is free for
 QGroundControl or another GCS, and a second output (udp:127.0.0.1:14551)
-is reserved for our own smoke-test node.
+is reserved for our own scripts/nodes.
 
 First run in a fresh sitl_run_dir needs a EEPROM wipe, e.g.:
     ros2 launch cuadc_sim sitl_bringup.launch.py extra_sitl_args:=-w
@@ -17,8 +24,6 @@ import os
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node
-from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -37,24 +42,10 @@ def generate_launch_description():
         default_value='quad',
         description='ArduCopter frame type passed to sim_vehicle.py -f',
     )
-    connection_arg = DeclareLaunchArgument(
-        'connection',
-        default_value='udp:127.0.0.1:14551',
-        description=(
-            'MAVLink connection string the smoke-test node should connect to. '
-            'MAVProxy reserves udp:14550 for a GCS (e.g. QGroundControl); '
-            "14551 is this node's own dedicated output."
-        ),
-    )
     extra_sitl_args_arg = DeclareLaunchArgument(
         'extra_sitl_args',
         default_value='',
         description="Extra args appended to sim_vehicle.py, e.g. '-w' to wipe EEPROM on first run",
-    )
-    run_guided_check_arg = DeclareLaunchArgument(
-        'run_guided_check',
-        default_value='true',
-        description='Also arm, takeoff, and send one GUIDED position target',
     )
 
     sitl_process = ExecuteProcess(
@@ -71,25 +62,10 @@ def generate_launch_description():
         output='screen',
     )
 
-    smoke_test_node = Node(
-        package='cuadc_sim',
-        executable='sitl_smoke_test',
-        name='sitl_smoke_test',
-        output='screen',
-        parameters=[{
-            'connection': LaunchConfiguration('connection'),
-            'run_guided_check': ParameterValue(
-                LaunchConfiguration('run_guided_check'), value_type=bool),
-        }],
-    )
-
     return LaunchDescription([
         ardupilot_path_arg,
         sitl_run_dir_arg,
         frame_arg,
-        connection_arg,
         extra_sitl_args_arg,
-        run_guided_check_arg,
         sitl_process,
-        smoke_test_node,
     ])

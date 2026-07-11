@@ -94,21 +94,51 @@ class SitlSmokeTest(Node):
                     f'  battery={msg.voltage_battery / 1000.0:.2f}V')
 
     def _wait_for_ekf_ready(self, master, timeout):
-        # Fresh SITL boots need a warm-up period for the EKF to settle and
-        # GPS/home to be set -- arming before that is rejected outright (the
-        # ACK comes back FAILED), so wait for a real position fix instead of
-        # assuming SITL is instantly flight-ready.
+        # A non-zero GLOBAL_POSITION_INT fix can appear *before* the EKF has
+        # actually set its origin and started trusting GPS -- arming/taking
+        # off during that window still gets ACCEPTED, but produces an
+        # unstable height reference that trips ArduPilot's own land-detector
+        # into auto-disarming a few seconds later ("Disarming motors", no
+        # real climb). Observed in practice: EKF_STATUS_REPORT's
+        # EKF_POS_HORIZ_ABS/EKF_POS_VERT_ABS flags didn't set until several
+        # seconds after GLOBAL_POSITION_INT already showed a non-zero fix.
+        # Check those flags directly instead of inferring readiness from
+        # position alone.
         self.get_logger().info(
             f'waiting for EKF/GPS to be ready (timeout {timeout:.0f}s) ...')
+        required = (mavutil.mavlink.EKF_POS_HORIZ_ABS
+                    | mavutil.mavlink.EKF_POS_VERT_ABS)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            msg = master.recv_match(type='GLOBAL_POSITION_INT', blocking=True, timeout=5)
-            if msg is not None and (msg.lat != 0 or msg.lon != 0):
-                self.get_logger().info('EKF/GPS ready (got a non-zero position fix)')
+            msg = master.recv_match(type='EKF_STATUS_REPORT', blocking=True, timeout=5)
+            if msg is not None and (msg.flags & required) == required:
+                self.get_logger().info(
+                    'EKF/GPS ready (EKF_POS_HORIZ_ABS and EKF_POS_VERT_ABS set)')
                 return
         raise RuntimeError(
-            f'no valid position fix after {timeout:.0f}s -- SITL EKF/GPS '
-            'never became ready')
+            f'EKF position estimate never became reliable within {timeout:.0f}s '
+            '(EKF_STATUS_REPORT never set EKF_POS_HORIZ_ABS/EKF_POS_VERT_ABS)')
+
+    def _set_mode_and_confirm(self, master, mode_name, timeout):
+        # set_mode() only sends the request; it doesn't confirm the mode
+        # switch actually landed before returning. Arming/taking off before
+        # the flight controller has genuinely switched modes lets
+        # MAV_CMD_NAV_TAKEOFF get ACCEPTED at the command-handler level
+        # while the vehicle is still in whatever mode it was in before (e.g.
+        # STABILIZE, which needs manual throttle to climb) -- symptom:
+        # takeoff "succeeds" but the vehicle never leaves the ground and no
+        # motor thrust is ever commanded, followed by an auto-disarm a few
+        # seconds later. Confirm via HEARTBEAT.custom_mode before moving on.
+        mode_id = master.mode_mapping()[mode_name]
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            master.set_mode(mode_id)
+            hb = master.recv_match(type='HEARTBEAT', blocking=True, timeout=2)
+            if hb is not None and hb.custom_mode == mode_id:
+                self.get_logger().info(f'confirmed mode switch to {mode_name}')
+                return
+        raise RuntimeError(
+            f'mode never switched to {mode_name} within {timeout:.0f}s')
 
     def _arm_with_retry(self, master, timeout):
         # A GPS fix alone isn't the full arming-readiness signal -- ArduPilot
@@ -136,7 +166,7 @@ class SitlSmokeTest(Node):
 
     def _guided_check(self, master, arm_retry_timeout):
         self.get_logger().info('arming and switching to GUIDED ...')
-        master.set_mode(master.mode_mapping()['GUIDED'])
+        self._set_mode_and_confirm(master, 'GUIDED', timeout=10.0)
         self._arm_with_retry(master, timeout=arm_retry_timeout)
         master.motors_armed_wait()
         self.get_logger().info('armed, sending takeoff to 10m ...')
@@ -163,12 +193,24 @@ class SitlSmokeTest(Node):
         self.get_logger().info('GUIDED position target sent')
 
     def _wait_command_ack(self, master, command, timeout=10):
-        ack = master.recv_match(type='COMMAND_ACK', blocking=True, timeout=timeout)
-        if ack is None or ack.command != command:
-            raise RuntimeError(f'no ACK received for command {command}')
-        if ack.result != mavutil.mavlink.MAV_RESULT_ACCEPTED:
-            raise RuntimeError(f'command {command} rejected: result={ack.result}')
-        self.get_logger().info(f'command {command} accepted')
+        # Other COMMAND_ACKs (e.g. SET_MESSAGE_INTERVAL from MAVProxy/QGC)
+        # can arrive in between; grabbing just the first COMMAND_ACK and
+        # bailing out if it's for a different command misreports a real
+        # accept as "no ACK received". Keep reading until the matching
+        # command shows up or the deadline passes.
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            ack = master.recv_match(type='COMMAND_ACK', blocking=True, timeout=remaining)
+            if ack is None:
+                break
+            if ack.command != command:
+                continue
+            if ack.result != mavutil.mavlink.MAV_RESULT_ACCEPTED:
+                raise RuntimeError(f'command {command} rejected: result={ack.result}')
+            self.get_logger().info(f'command {command} accepted')
+            return
+        raise RuntimeError(f'no ACK received for command {command}')
 
 
 def main(args=None):

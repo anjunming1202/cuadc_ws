@@ -71,46 +71,100 @@
   `ros2 run`/`ros2 launch` 报"package not found"，先怀疑这个已知坑，
   不要假设是包本身写错了（`package.xml`/`setup.py` 配置没问题）。
 
-- **Gazebo+SITL 反复起不来，其实是残留进程/端口冲突，不是架构问题**：
-  接 Gazebo 物理（`--model JSON`）跑三方联调（Gazebo + arducopter +
-  MAVProxy/QGC）时，遇到一连串"起来就死"：MAVProxy 连上 SITL 的
-  TCP 5760 但一直收不到心跳、随后自己卸载模块退出，arducopter 也莫名
-  其妙不在了。一度怀疑是 arducopter 的 Gazebo-JSON 握手没完成、或
-  Gazebo 插件状态坏了。**真实原因**：一次 WSL2 VM 中途重启（Windows
-  触发，非我们操作）把所有进程杀了但保留了磁盘状态，之后我几次快速
-  重启只清理了一部分进程，残留的 arducopter/xterm/gz sim 抢占
-  5760/9002 端口，新起的实例和旧的互相打架。**根因排查方法**（有效）：
-  别在满是残留进程的环境里做取证，直接全部清干净、冷启动、一层一层
-  叠加验证。清干净后按下面顺序单独验证，一次就通了：
+- **Gazebo+SITL 联调"起来就死"，根因是残留进程/端口冲突（5760/9002），
+  不是握手/架构问题**。冷启动、一层层叠加验证定位最快：
 
   ```bash
-  # 0) 彻底清场（pkill -f 在本机不可靠，用 kill -9 <显式PID>，见下）
+  # 0) 彻底清场（pkill -f 在本机不可靠，用 kill -9 <显式PID>）
   for p in sim_vehicle arducopter "xterm.*ArduCopter" "gz sim" mavproxy; do
     pids=$(pgrep -f "$p"); [ -n "$pids" ] && kill -9 $pids
   done
   ss -tln | grep -E '5760|9002|1455'   # 必须为空才算清干净
 
-  # 1) 只起 Gazebo 物理服务端（headless，-s 不开 GUI，先不管渲染/GPU）
+  # 1) 只起 Gazebo 物理服务端（headless，先不管渲染/GPU）
   export GZ_SIM_SYSTEM_PLUGIN_PATH=$HOME/ardupilot_gazebo/build
   export GZ_SIM_RESOURCE_PATH=$HOME/ardupilot_gazebo/models:$HOME/ardupilot_gazebo/worlds
-  gz sim -s -r -v4 iris_runway.sdf      # 日志出现 "Found IMU sensor" 即插件已加载、在等 SITL
+  gz sim -s -r -v4 iris_runway.sdf      # 日志出现 "Found IMU sensor" 即插件已加载
 
-  # 2) 只起 SITL 连 Gazebo（先不挂 MAVProxy，排除转发层干扰）
+  # 2) 只起 SITL 连 Gazebo（先不挂 MAVProxy）
   cd ~/ardupilot
   Tools/autotest/sim_vehicle.py -v ArduCopter -f gazebo-iris --model JSON \
     --no-mavproxy --no-wsl2-network --no-rebuild --use-dir ~/ardupilot_run_gazebo_physics
 
   # 3) 直接 pymavlink 连 tcp:127.0.0.1:5760 验心跳+GPS
-  #    心跳 0s 到、GPS 拿到 -35.3632621,149.1652374（来自 Gazebo 物理）即全链路通
   ```
 
-  验证结果：心跳瞬间就到，GPS 位置正确，Gazebo 日志出现
-  `ArduPilotPlugin.cc:1599 ArduPilot controller has reset`——这行是
-  **正常**的握手确认（新 SITL 客户端连上时插件重置状态），不是报错。
-  **教训**：(a) 用 Gazebo 物理时 frame 要用 `-f gazebo-iris` 且必须带
-  `--model JSON`，跟内置物理的 `-f quad` 是两条不同的路子；(b) WSL2
-  下永远带 `--no-wsl2-network`，否则 MAVProxy 的 `--out` 会被悄悄改到
-  Windows 宿主 IP；(c) 联调起不来时，先怀疑残留进程/端口冲突，冷启动
-  分层验证比在乱局里取证快得多；(d) 排查阶段刻意用 `-s`（headless）+
-  `--no-mavproxy`，把 GPU 渲染和消息转发两个变量都摘掉，能一刀切定位
-  问题到底在物理桥还是在外围。
+  `ArduPilotPlugin.cc:1599 ArduPilot controller has reset` 是新客户端
+  连上时的正常握手确认，不是报错。**教训**：(a) Gazebo 物理要
+  `-f gazebo-iris --model JSON`，跟内置物理的 `-f quad` 是两条路；
+  (b) WSL2 下永远带 `--no-wsl2-network`，否则 MAVProxy 的 `--out` 会被
+  悄悄改到 Windows 宿主 IP；(c) 排查阶段用 `-s`（headless）+
+  `--no-mavproxy` 摘掉渲染和转发两个变量，能一刀切定位问题在物理桥
+  还是外围。
+
+- **`ardupilot_gz_bringup` 官方 launch（`iris_runway.launch.py` 等）在
+  本机必现崩溃，是上游未解决的已知 bug**：这些 launch 靠
+  `robot_state_publisher` 生成机体描述、`create` 节点读话题去 Gazebo
+  spawn，`robot_state_publisher` 解析模型时崩溃
+  （`sdformat_urdf`：`Unable to find uri[package://ardupilot_gazebo/...]`）。
+  根因是 Gazebo 的 `model://` 路径和 ROS/RViz 的 `package://` 路径不
+  兼容，是
+  [ArduPilot/ardupilot_gz#49](https://github.com/ArduPilot/ardupilot_gz/issues/49)
+  和 [ros/sdformat_urdf#25](https://github.com/ros/sdformat_urdf/issues/25)
+  记录在案的已知问题，官方无修复。**应对**：不改第三方代码，自己写
+  `gazebo_bringup.launch.py`，复用"world 文件里写死飞机"这条已验证
+  路径做物理链路，单独接 `ros_gz_bridge` 做摄像头桥接。
+
+- **两份不同分支的 `ardupilot_gazebo` 同时存在时，`SDF_PATH` 环境变量
+  互相踩**：`~/ardupilot_gazebo`（`main` 分支，`model://`，能正常解析）
+  和 `ardupilot_gz` vcs import 进 `~/gazebo_ros2_ws/src/ardupilot_gazebo`
+  的（`ros2` 分支，`package://`，就是上一条 bug 的源头）**都有一个叫
+  `iris_with_gimbal` 的同名模型**。`source ~/gazebo_ros2_ws/install/setup.bash`
+  会把 `SDF_PATH`（不是 `GZ_SIM_RESOURCE_PATH`）设成指向坏的那份；
+  libsdformat 解析 `model://` 优先吃 `SDF_PATH`，比 `gz-sim` 自己基于
+  `GZ_SIM_RESOURCE_PATH` 的逻辑更早生效，导致静默加载错的模型。
+  **教训**：`GZ_SIM_SYSTEM_PLUGIN_PATH`/`GZ_SIM_RESOURCE_PATH`/
+  `SDF_PATH` 三个都要显式覆盖；不依赖继承自父 shell 的值，直接写成
+  `gz sim` 那条 shell 命令自己的行内 `export`（`gazebo_bringup.launch.py`
+  的 `gz_env_prefix`）。
+
+- **`ros2 launch` 拉起的进程树，清场关键词必须覆盖全部卫星节点**：
+  最早一次官方 launch 测试的 `ros2 launch` 父进程、`micro_ros_agent`、
+  `mavproxy`、`ros_gz_sim create`、`rviz2`、`topic_tools relay` 这几个
+  卫星进程，被只杀 `gz sim`/`arducopter`/`sim_vehicle`/`mavproxy`/
+  `parameter_bridge` 的清场漏掉，活了几个小时。**教训**：`ros2 launch`
+  的卫星进程比手动 xterm 拼起来的多得多，清场要么按最初 `ros2 launch`
+  的 PID 连子进程一起杀，要么 `ps aux` 全量扫一遍；`ros2 node list`/
+  `ros2 topic list` 有几秒到十几秒的 DDS 发现缓存滞后，节点/话题"看起来
+  还在"不代表进程没死，以 `ps -p <pid>` 为准。
+
+- **`sim_vehicle.py -f <frame>` 不会自动加载该 frame 的默认参数文件，
+  `FRAME_CLASS` 一直是 0，QGC 报 `PreArm: Motors: Check frame class
+  and type`**：`vehicleinfo.json` 里 `gazebo-iris` 写了
+  `default_params_filename`，但这个字段**只在 `start_CAN_Periph()`
+  （跟我们无关的代码路径）里被读取**，主飞控启动逻辑不查这个映射；
+  `-w` 清 EEPROM、`--defaults` 都没用（`sim_vehicle.py` 源码注释明说
+  "we no longer pass --defaults here"）。**正确做法**：
+  `--add-param-file <path/to/gazebo-iris.parm>`（`action="append"`，
+  可多次传），已加进 `gazebo_bringup.launch.py`。**教训**：配置文件里
+  某字段"看起来应该生效"不代表真的生效，验证参数是否真加载了要直接
+  `param_request_read` 查实际值，不能只读配置文件猜测。
+
+- **清场确认只查 `ss -tln`（TCP 监听端口）查不出 MAVProxy 这类 UDP
+  进程还活着**：MAVProxy 的 `--out` 是 UDP 发送，不占监听端口，不会
+  因端口冲突报错、也不出现在 `ss -tln` 里，导致好几轮 relaunch 的
+  `sim_vehicle.py`/`mavproxy.py`/`parameter_bridge` 只堆积没被杀掉，
+  十几个僵尸进程链活了很久没发现。**教训**：清场验证要用
+  `ps aux | grep -iE "gz sim|arducopter|sim_vehicle|mavproxy|parameter_bridge"`
+  直接列进程，`ss -tln` 只能证明"新进程能绑定"，证明不了"旧进程已经
+  不在了"。
+
+- **`set -euo pipefail` 的 `-u`（nounset）跟 ROS2 官方 `setup.bash` 不
+  兼容**：`scripts/run_gazebo_demo.sh`/`run_sitl_demo.sh` 一开始带了
+  `-u`，一 source `/opt/ros/humble/setup.bash` 就报
+  `AMENT_TRACE_SETUP_FILES: unbound variable`——ROS2 自己的 setup 脚本
+  内部直接引用一些可能没设置的变量，假设的是 bash 默认"没设置就当空
+  字符串"的宽松行为，不是`-u`那种"没设置就报错"。**教训**：写
+  会 source ROS2 官方/colcon 生成脚本的 wrapper，别带 `-u`，只留
+  `set -eo pipefail` 就够（`-e` 捕获我们自己命令的真实错误，`pipefail`
+  照旧）。

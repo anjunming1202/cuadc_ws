@@ -44,9 +44,20 @@
   `--model JSON` 通过一个本地 socket（默认 9002）把物理/传感器计算
   交给 Gazebo，替换掉 SITL 自带的简化物理模型。
 
-- **ardupilot_gz**：ArduPilot 官方的 ROS2 集成层（另一个仓库，规划中，
-  `~/gazebo_ros2_ws`），负责把 Gazebo 和 ROS2 话题打通，跟上面那个
-  纯 C++ 插件不是一回事。
+- **ardupilot_gz**：ArduPilot 官方的 ROS2 集成层（另一个仓库，
+  `~/gazebo_ros2_ws`，vcs import 官方 `ros2_gz.repos` 锁定版本 +
+  colcon build 搭建完成），负责把 Gazebo 和 ROS2 话题打通，跟上面那个
+  纯 C++ 插件不是一回事；本项目只用它提供的 `ros_gz_bridge`，不使用它
+  自带的 launch 文件（见 `docs/lessons.md` 的已知 bug记录）。
+
+- **ros_gz_bridge**：`ardupilot_gz` 工作区里的一个包，把 Gazebo 的话题
+  （比如摄像头图像）转换成对应的 ROS2 话题，是 Gazebo 和 ROS2 之间实际
+  干活的桥，`ardupilot_gz` 只是把它和别的组件打包到一起。
+
+- **Micro-XRCE-DDS-Gen**：ArduPilot 编译 DDS/ROS2 支持（`AP_DDS` 库）
+  需要的代码生成工具（Java 实现，`eProsima`/ArduPilot 各自维护一个
+  分支），编译 SITL 缺了它会报 `Could not find the program
+  ['microxrceddsgen']`，需要单独 clone+编译，见 `docs/lessons.md`。
 
 - **gz sim**：新一代 Gazebo 的命令行入口。`-s` 只跑物理服务端（无 GUI，
   headless），带 GUI 则省略 `-s`；靠 `GZ_SIM_SYSTEM_PLUGIN_PATH`（找
