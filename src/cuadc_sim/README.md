@@ -71,8 +71,9 @@
 |---|---|
 | 轻量接口测试（不接 Gazebo） | `./scripts/run_sitl_demo.sh` |
 | 完整仿真（接 Gazebo） | `./scripts/run_gazebo_demo.sh` |
-| 验证 MAVLink 通信本身（协议层） | `ros2 run cuadc_sim sitl_smoke_test`（前两者任一先跑起来之后，另开终端跑这条） |
-| 验证真的能起飞/悬停/降落（物理层） | `ros2 run cuadc_sim flight_acceptance_test`（同上，另开终端跑） |
+| 激活测试节点终端的环境（每个终端一次） | `source scripts/activate_env.sh`（注意是 `source`，不是 `./`，否则变量出了这条命令就没了；前两者任一先跑起来之后，另开一个终端跑这条） |
+| 验证 MAVLink 通信本身（协议层） | `ros2 run cuadc_sim sitl_smoke_test`（同一个已激活的终端里跑，不用重新 source） |
+| 验证真的能起飞/悬停/降落（物理层） | `ros2 run cuadc_sim flight_acceptance_test`（同上） |
 
 两个测试都假设起始状态是飞机在地面、已解锁、prearm 检查通过（也就是
 QGroundControl 里显示 `Ready to Fly` 的那个状态）——如果之前手动在
@@ -83,10 +84,20 @@ QGC 里解锁/起飞过，飞机还在空中，测试会因为状态不符（比
 首次在某个 `sitl_run_dir` 里跑，两个包装脚本后面都加
 `extra_sitl_args:=-w` 清空 EEPROM。
 
-两个包装脚本只是把该 source 的环境、该 export 的变量收起来（具体内容
-见脚本文件自己的注释），换机器/路径不一样时对照脚本内容手动展开即可。
-MAVProxy 默认的 `udp:127.0.0.1:14550` 留给 QGroundControl（装好直接
-自动连），我们自己的脚本/节点走专属的 `udp:127.0.0.1:14551`。
+`scripts/activate_env.sh` 是三个入口（`sitl_bringup`、`gazebo_bringup`、
+测试节点）共同需要的环境交集（ROS Humble + 本工作空间 `install` +
+`AMENT_PREFIX_PATH` workaround）。两个 `run_*_demo.sh` 都靠 `source` 它
+拿到这部分，`run_gazebo_demo.sh` 再自己加 Gazebo 专属的两行（source
+`gazebo_ros2_ws` + `GZ_VERSION`）；两者本身都用 `exec` 收尾，所以运行
+仿真的终端和运行测试节点的终端天然是两个独立进程，不会互相污染环境。
+测试节点特意只依赖这份交集、不碰 Gazebo 专属变量，这也是它们协议层/
+物理层测试都和物理后端无关（SITL、Gazebo 都能测）这条设计的自然结果。
+环境变量是按 shell 进程独立的，换一个终端要重新 `source` 一次，但同一
+个终端里 `source` 一次之后可以连续跑任意多条 `ros2 run`/`ros2 topic`
+之类的命令，不用每条前面都重新 `source`。换机器/路径不一样时对照脚本
+文件自己的注释手动展开即可。MAVProxy 默认的 `udp:127.0.0.1:14550` 留
+给 QGroundControl（装好直接自动连），我们自己的脚本/节点走专属的
+`udp:127.0.0.1:14551`。
 
 `sitl_smoke_test` 和 `flight_acceptance_test` 都不是本项目正式的接口层
 实现（见

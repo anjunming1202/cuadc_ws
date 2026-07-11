@@ -1,6 +1,6 @@
 #!/bin/bash
 # Convenience wrapper for the lightweight SITL sandbox (no Gazebo): sources
-# the workspace + env var sitl_bringup.launch.py needs, then execs it.
+# the common env via activate_env.sh, then execs sitl_bringup.launch.py.
 # See src/cuadc_sim/README.md for what this actually launches.
 #
 # Usage: ./scripts/run_sitl_demo.sh [extra ros2 launch args]
@@ -13,11 +13,6 @@
 set -eo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$REPO_ROOT"
-
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-# Local colcon quirk workaround, see docs/lessons.md 2026-07-09 entry.
-export AMENT_PREFIX_PATH="$REPO_ROOT/install/cuadc_sim:$AMENT_PREFIX_PATH"
+source "$REPO_ROOT/scripts/activate_env.sh"
 
 exec ros2 launch cuadc_sim sitl_bringup.launch.py "$@"
