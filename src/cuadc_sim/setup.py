@@ -29,6 +29,7 @@ setup(
     entry_points={
         'console_scripts': [
             'sitl_smoke_test = cuadc_sim.sitl_smoke_test:main',
+            'flight_acceptance_test = cuadc_sim.flight_acceptance_test:main',
         ],
     },
 )

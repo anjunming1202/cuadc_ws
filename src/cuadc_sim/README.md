@@ -53,23 +53,17 @@
 另外 Gazebo 画面里跑道贴图目前渲染成灰色网格（贴图文件本身存在，怀疑
 是 WSLg 的 GPU 转译层限制），不影响功能，做自己的场地时一并排查。
 
-## 已知问题（未解决）
+## 已解决问题
 
-- **GUIDED 起飞指令被接受，但电机从不真正爬升，几十秒后自动上锁**：
-  `sitl_smoke_test` 目前每次跑到 `MAV_CMD_NAV_TAKEOFF` 都收到
-  `ACCEPTED`、脚本自己打印"complete"，但 Gazebo 里飞机的高度（ground
-  truth）全程不变、`SERVO_OUTPUT_RAW` 卡在怠速 PWM，几秒后飞控自己发
-  `STATUSTEXT: "Disarming motors"` 并上锁——**这条命令目前不能真的让
-  飞机飞起来**。已排除：wrapper 脚本封装（手动敲命令复现一致）、
-  ArduPilot 版本差异（`master`/`Copter-4.6.3` 复现一致）、编译缓存
-  陈旧（`rm -rf build` 全新 clean rebuild 后依旧）、WSL2/整机重启后的
-  残留状态。当前最可疑的根因：ArduCopter `ArduCopter/takeoff_check.cpp`
-  里唯一负责解除电机 `spool-up block` 的逻辑，整个函数体被
-  `#if HAL_WITH_ESC_TELEM` 包住，SITL 大概率没有这个宏（没有真实 ESC
-  遥测硬件），导致 block 永远解不开、电机一直卡在地面怠速。**尚未
-  确认**，只是排除法后最支持的假设，还没验证 SITL 编译时
-  `HAL_WITH_ESC_TELEM` 的实际值，也没找到官方文档说明 SITL 该怎么绕开
-  这个限制。
+- **GUIDED 起飞指令被接受，但电机从不真正爬升，几十秒后自动上锁**（已
+  修复）：根因已确认——SITL 默认编译 `HAL_WITH_ESC_TELEM` 为假（没有
+  CAN/串口 RCOut），导致 `ArduCopter/takeoff_check.cpp` 里唯一负责解除
+  电机 `spool-up block` 的函数整个函数体被编译掉，block 永远解不开。
+  两个 launch 文件现在都在 `sim_vehicle.py` 命令行里固定加了
+  `--configure-define=HAL_WITH_ESC_TELEM=1`（具体原因见两个 launch
+  文件里对应的行内注释），已验证起飞后飞机能在约 8 秒内爬升到目标
+  高度并稳定悬停，不再自动上锁。首次生效需要 SITL 完整重新编译（waf
+  define 变了会触发 clean rebuild），后续正常增量编译。
 
 ## 用法
 
@@ -77,7 +71,14 @@
 |---|---|
 | 轻量接口测试（不接 Gazebo） | `./scripts/run_sitl_demo.sh` |
 | 完整仿真（接 Gazebo） | `./scripts/run_gazebo_demo.sh` |
-| 看一次解锁/起飞演示 | `ros2 run cuadc_sim sitl_smoke_test`（前两者任一先跑起来之后，另开终端跑这条） |
+| 验证 MAVLink 通信本身（协议层） | `ros2 run cuadc_sim sitl_smoke_test`（前两者任一先跑起来之后，另开终端跑这条） |
+| 验证真的能起飞/悬停/降落（物理层） | `ros2 run cuadc_sim flight_acceptance_test`（同上，另开终端跑） |
+
+两个测试都假设起始状态是飞机在地面、已解锁、prearm 检查通过（也就是
+QGroundControl 里显示 `Ready to Fly` 的那个状态）——如果之前手动在
+QGC 里解锁/起飞过，飞机还在空中，测试会因为状态不符（比如再收到一次
+`NAV_TAKEOFF` 会被飞控拒绝）而失败；先在 QGC 里降落、上锁，回到
+`Ready to Fly` 再跑。
 
 首次在某个 `sitl_run_dir` 里跑，两个包装脚本后面都加
 `extra_sitl_args:=-w` 清空 EEPROM。
@@ -87,7 +88,22 @@
 MAVProxy 默认的 `udp:127.0.0.1:14550` 留给 QGroundControl（装好直接
 自动连），我们自己的脚本/节点走专属的 `udp:127.0.0.1:14551`。
 
-`sitl_smoke_test` 不是本项目正式的接口层实现（见
+`sitl_smoke_test` 和 `flight_acceptance_test` 都不是本项目正式的接口层
+实现（见
 [ADR-0001](../../docs/spec/adr/0001-interface-layer-separate-module.md)），
-只是仿真环境的验证脚手架：连上 SITL 后读几条遥测，然后解锁、切
-GUIDED、起飞到 10m、发一个位置目标点。
+只是仿真环境的验证脚手架，且分工不同：
+
+- **`sitl_smoke_test`**（协议层）：连上后读几条遥测、解锁、切 GUIDED、
+  发起飞指令、发一个位置目标点——只确认这些指令有没有被飞控接受
+  （`COMMAND_ACK` 是不是 `ACCEPTED`），指令发完就退出，不管后续物理
+  世界有没有真的反应。
+- **`flight_acceptance_test`**（物理层）：额外断言起飞后飞机真的爬升到
+  目标高度（容差内）、能稳定悬停、发 `LAND` 后能正常下降并在地面上锁
+  （而不是空中失控上锁）——任何一步没达成都会抛异常、非零退出。这个
+  正是能抓出"指令被接受但电机没有真实推力"这类问题的测试（见上面
+  "已解决问题"里 `HAL_WITH_ESC_TELEM` 那个 bug）。
+
+两者都只跟 MAVLink 通信打交道，不关心底下是哪种物理后端——`connection`
+参数默认指向 `udp:127.0.0.1:14551`，两个 bringup launch 文件都把这个
+端口留给自己的脚本用，所以不用改代码，指向 `sitl_bringup`（快速回归）
+还是 `gazebo_bringup`（换 world/model 后的最终验收）都能直接跑。

@@ -52,6 +52,15 @@ def generate_launch_description():
         cmd=[[
             LaunchConfiguration('ardupilot_path'), '/Tools/autotest/sim_vehicle.py',
             ' -v ArduCopter -f ', LaunchConfiguration('frame'),
+            # SITL's default build has HAL_WITH_ESC_TELEM=0 (no CAN/serial
+            # RCOut), which compiles out the entire body of
+            # Copter::takeoff_check() -- the only place that ever clears
+            # the motors' spool-up block. Without this, motors latch in
+            # GROUND_IDLE forever after arming and the vehicle auto-disarms
+            # instead of climbing. TKOFF_RPM_MIN defaults to 0 so forcing
+            # this on does not require real ESC RPM telemetry. See
+            # src/cuadc_sim/README.md "已知问题（未解决）".
+            ' --configure-define=HAL_WITH_ESC_TELEM=1',
             ' --no-wsl2-network --use-dir ', LaunchConfiguration('sitl_run_dir'),
             ' -m "--out 127.0.0.1:14551"',
             ' ', LaunchConfiguration('extra_sitl_args'),
