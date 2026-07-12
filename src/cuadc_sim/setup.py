@@ -5,6 +5,24 @@ from setuptools import find_packages, setup
 
 package_name = 'cuadc_sim'
 
+
+def data_files_tree(src_root, dest_root):
+    """(dest_dir, [files]) pairs for every file under src_root, preserving
+    its subdirectory structure under dest_root -- worlds/cuadc_field.sdf
+    references its textures via relative paths (../models/...), so the
+    install layout must mirror the source layout for those to still
+    resolve once installed (see field/gen_world.py)."""
+    pairs = []
+    for dirpath, _dirnames, filenames in os.walk(src_root):
+        if not filenames:
+            continue
+        # dirpath is already relative (e.g. "models/cuadc_ground/.../textures")
+        # since src_root itself is relative -- keep that prefix verbatim.
+        pairs.append((os.path.join(dest_root, dirpath),
+                       [os.path.join(dirpath, f) for f in filenames]))
+    return pairs
+
+
 setup(
     name=package_name,
     version='0.0.0',
@@ -15,6 +33,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
         (os.path.join('share', package_name, 'worlds'), glob('worlds/*.sdf')),
+        *data_files_tree('models', os.path.join('share', package_name)),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
