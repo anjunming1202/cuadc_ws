@@ -74,6 +74,13 @@ check('recon cylinder is 5x d=0.20 h=0.15',
 check('recon placard count == 3 and size == 0.12',
       config.RECON_PLACARD_COUNT == 3 and approx(config.RECON_PLACARD_SIZE, 0.12))
 
+# Dual-field spacing (doc section 13): edge gap >= 5m between the two
+# fields' nearest boundaries (a >= constraint, not an exact-equality one --
+# still fails loudly if a future edit shrinks it below the rules minimum).
+_offsets = sorted(config.FIELD_Y_OFFSETS.values())
+_edge_gap = (config.FIELD_Y_MIN + _offsets[1]) - (config.FIELD_Y_MAX + _offsets[0])
+check('parallel-field edge gap >= 5m', _edge_gap >= 5.0 - 1e-9, f'got {_edge_gap}m')
+
 # ---------------------------------------------------------------------------
 # 2a. Generated SDF vs. config.py (parses <model> poses/geometry).
 # ---------------------------------------------------------------------------
@@ -98,88 +105,119 @@ gw, gh = ground_visual.find('geometry/plane/size').text.split()
 check('ground plane <size> matches config.GROUND_LENGTH/WIDTH',
       approx(float(gw), config.GROUND_LENGTH) and approx(float(gh), config.GROUND_WIDTH))
 
-# Vehicle spawn == landing pad center (this session's actual bug: it used
-# to spawn at the takeoff line instead).
+# The plane's <pose> must be centered on the SAME extents used for its
+# <size> above -- this session's actual bug: <size> was right but <pose>
+# Y was hardcoded 0 instead of the extents' midpoint, so once dual-field
+# support made GROUND_Y_MIN/MAX asymmetric (not centered on 0 any more),
+# the plane -- and everything baked into its texture, e.g. the H markers
+# -- sat 6.5m off from where the (correctly-positioned, real-geometry)
+# chalk lines/tubes actually are. A <size>-only check couldn't catch this
+# since the plane was still the right SIZE, just in the wrong PLACE.
+gx, gy = model_pose_xy('cuadc_ground')
+check('ground plane <pose> is centered on GROUND_X/Y_MIN/MAX\'s midpoint, not just sized right',
+      approx(gx, (config.GROUND_X_MIN + config.GROUND_X_MAX) / 2)
+      and approx(gy, (config.GROUND_Y_MIN + config.GROUND_Y_MAX) / 2),
+      f'got ({gx}, {gy})')
+
+# Vehicle spawn == field A's landing pad (this session's actual bug: it
+# used to spawn at the takeoff line instead). Only field A gets a vehicle
+# (see gen_world.py's WORLD_TEMPLATE comment for why).
 vehicle_include = world.find("include[uri='model://iris_with_gimbal']")
 vx, vy, *_ = vehicle_include.find('pose').text.split()
-check('vehicle spawns on the landing pad center, not the takeoff line',
-      approx(float(vx), config.LANDING_PAD_CENTER[0])
-      and approx(float(vy), config.LANDING_PAD_CENTER[1]),
-      f'got ({vx}, {vy}), expected {config.LANDING_PAD_CENTER}')
+expected_vehicle_xy = (config.LANDING_PAD_CENTER[0],
+                       config.LANDING_PAD_CENTER[1] + config.FIELD_Y_OFFSETS['A'])
+check('vehicle spawns on field A landing pad, not the takeoff line',
+      approx(float(vx), expected_vehicle_xy[0]) and approx(float(vy), expected_vehicle_xy[1]),
+      f'got ({vx}, {vy}), expected {expected_vehicle_xy}')
 
-# Drop tubes: position + mesh filename encodes the right diameter/height.
-for label, diameter, height in config.DROP_CYLINDERS:
-    name = f'drop_tube_{label}'
-    x, y = model_pose_xy(name)
-    expected_x, expected_y = config.DROP_CYLINDER_POSITIONS[label]
-    mesh_uri = models_by_name[name].find("link/visual/geometry/mesh/uri").text
-    expected_mesh = f'tube_d{int(round(diameter*1000))}_h{int(round(height*1000))}.obj'
-    check(f'{name} position matches config', approx(x, expected_x) and approx(y, expected_y))
-    check(f'{name} mesh filename encodes d={diameter}m h={height}m',
-          mesh_uri.endswith(expected_mesh))
-    ring_name = f'drop_ring_{label}'
-    rx, ry = model_pose_xy(ring_name)
-    check(f'{ring_name} centered on its tube', approx(rx, expected_x) and approx(ry, expected_y))
-    ring_radius = float(models_by_name[ring_name].find(
-        "link/visual/geometry/cylinder/radius").text)
-    check(f'{ring_name} radius == B-ring outer diameter / 2',
-          approx(ring_radius, config.DROP_ZONE_B_RING_OUTER_DIAMETER / 2))
+check('config.FIELD_IDS/FIELD_Y_OFFSETS agree on which fields exist',
+      set(config.FIELD_IDS) == set(config.FIELD_Y_OFFSETS.keys()))
 
-# Recon tubes + placards.
-for key, (expected_x, expected_y) in config.RECON_CYLINDER_POSITIONS.items():
-    name = f'recon_tube_{key}'
-    x, y = model_pose_xy(name)
-    check(f'{name} position matches config', approx(x, expected_x) and approx(y, expected_y))
-    placard_key = config.RECON_CYLINDER_PLACARDS.get(key)
-    placard_name = f'recon_placard_{key}'
-    if placard_key:
-        check(f'{placard_name} exists for a cylinder with an assigned placard',
-              placard_name in models_by_name)
-        if placard_name in models_by_name:
-            plx, ply = model_pose_xy(placard_name)
-            check(f'{placard_name} centered on its tube', approx(plx, expected_x) and approx(ply, expected_y))
-            size = models_by_name[placard_name].find("link/visual/geometry/plane/size").text.split()
-            check(f'{placard_name} size == 0.12x0.12',
-                  approx(float(size[0]), config.RECON_PLACARD_SIZE)
-                  and approx(float(size[1]), config.RECON_PLACARD_SIZE))
-    else:
-        check(f'{placard_name} absent for a cylinder with no assigned placard',
-              placard_name not in models_by_name)
+for field_id in config.FIELD_IDS:
+    y_off = config.FIELD_Y_OFFSETS[field_id]
+    p = f'field{field_id}_'
+    print(f'-- field {field_id} (y offset {y_off}) --')
 
-check('exactly RECON_PLACARD_COUNT placards total',
-      sum(1 for k in config.RECON_CYLINDER_POSITIONS if k in config.RECON_CYLINDER_PLACARDS)
-      == config.RECON_PLACARD_COUNT)
+    # Drop tubes: position + mesh filename encodes the right diameter/height.
+    for label, diameter, height in config.DROP_CYLINDERS:
+        name = f'{p}drop_tube_{label}'
+        x, y = model_pose_xy(name)
+        expected_x, expected_y = config.DROP_CYLINDER_POSITIONS[label]
+        expected_y += y_off
+        mesh_uri = models_by_name[name].find("link/visual/geometry/mesh/uri").text
+        expected_mesh = f'tube_d{int(round(diameter*1000))}_h{int(round(height*1000))}.obj'
+        check(f'{name} position matches config', approx(x, expected_x) and approx(y, expected_y))
+        check(f'{name} mesh filename encodes d={diameter}m h={height}m',
+              mesh_uri.endswith(expected_mesh))
+        ring_name = f'{p}drop_ring_{label}'
+        rx, ry = model_pose_xy(ring_name)
+        check(f'{ring_name} centered on its tube', approx(rx, expected_x) and approx(ry, expected_y))
+        ring_radius = float(models_by_name[ring_name].find(
+            "link/visual/geometry/cylinder/radius").text)
+        check(f'{ring_name} radius == B-ring outer diameter / 2',
+              approx(ring_radius, config.DROP_ZONE_B_RING_OUTER_DIAMETER / 2))
 
-# Chalk lines: real thin-box geometry (config.CHALK_LINE_WIDTH is sub-pixel
-# at the ground texture's resolution, see that constant's comment), so
-# these are exact-size checks, not fuzzy pixel-color sampling.
-chalk_x_lines = [  # (name, x_min, x_max, y)
-    ('chalk_side_landing_drop_top', config.LANDING_ZONE_X_MIN, config.DROP_ZONE_X_MAX, config.FIELD_Y_MAX),
-    ('chalk_side_landing_drop_bottom', config.LANDING_ZONE_X_MIN, config.DROP_ZONE_X_MAX, config.FIELD_Y_MIN),
-    ('chalk_side_recon_top', config.RECON_ZONE_X_MIN, config.RECON_ZONE_X_MAX, config.FIELD_Y_MAX),
-    ('chalk_side_recon_bottom', config.RECON_ZONE_X_MIN, config.RECON_ZONE_X_MAX, config.FIELD_Y_MIN),
-]
-for name, x_min, x_max, y in chalk_x_lines:
-    size = [float(v) for v in models_by_name[name].find('link/visual/geometry/box/size').text.split()]
-    x, py = model_pose_xy(name)
-    check(f'{name} length matches its zone span', approx(size[0], x_max - x_min))
-    check(f'{name} width == CHALK_LINE_WIDTH', approx(size[1], config.CHALK_LINE_WIDTH))
-    check(f'{name} centered correctly', approx(x, (x_min + x_max) / 2) and approx(py, y))
+    # Recon tubes + placards.
+    for key, (expected_x, expected_y) in config.RECON_CYLINDER_POSITIONS.items():
+        expected_y = expected_y + y_off
+        name = f'{p}recon_tube_{key}'
+        x, y = model_pose_xy(name)
+        check(f'{name} position matches config', approx(x, expected_x) and approx(y, expected_y))
+        placard_key = config.RECON_CYLINDER_PLACARDS.get(key)
+        placard_name = f'{p}recon_placard_{key}'
+        if placard_key:
+            check(f'{placard_name} exists for a cylinder with an assigned placard',
+                  placard_name in models_by_name)
+            if placard_name in models_by_name:
+                plx, ply = model_pose_xy(placard_name)
+                check(f'{placard_name} centered on its tube',
+                      approx(plx, expected_x) and approx(ply, expected_y))
+                size = models_by_name[placard_name].find("link/visual/geometry/plane/size").text.split()
+                check(f'{placard_name} size == 0.12x0.12',
+                      approx(float(size[0]), config.RECON_PLACARD_SIZE)
+                      and approx(float(size[1]), config.RECON_PLACARD_SIZE))
+        else:
+            check(f'{placard_name} absent for a cylinder with no assigned placard',
+                  placard_name not in models_by_name)
 
-chalk_y_lines = [  # (name, x)
-    ('chalk_cross_landing_rear', config.LANDING_ZONE_X_MIN),
-    ('chalk_cross_landing_drop', config.LANDING_ZONE_X_MAX),
-    ('chalk_cross_drop_far', config.DROP_ZONE_X_MAX),
-    ('chalk_cross_recon_near', config.RECON_ZONE_X_MIN),
-    ('chalk_cross_recon_far', config.RECON_ZONE_X_MAX),
-    ('chalk_takeoff_line', config.TAKEOFF_LINE_X),
-]
-for name, x in chalk_y_lines:
-    size = [float(v) for v in models_by_name[name].find('link/visual/geometry/box/size').text.split()]
-    px_, _py = model_pose_xy(name)
-    check(f'{name} length matches field width', approx(size[1], config.FIELD_WIDTH))
-    check(f'{name} width == CHALK_LINE_WIDTH', approx(size[0], config.CHALK_LINE_WIDTH))
-    check(f'{name} positioned at x={x}', approx(px_, x))
+    check(f'field {field_id}: exactly RECON_PLACARD_COUNT placards total',
+          sum(1 for k in config.RECON_CYLINDER_POSITIONS if k in config.RECON_CYLINDER_PLACARDS)
+          == config.RECON_PLACARD_COUNT)
+
+    # Chalk lines: real thin-box geometry (config.CHALK_LINE_WIDTH is
+    # sub-pixel at the ground texture's resolution, see that constant's
+    # comment), so these are exact-size checks, not fuzzy pixel sampling.
+    chalk_x_lines = [  # (name, x_min, x_max, y)
+        (f'{p}chalk_side_landing_drop_top', config.LANDING_ZONE_X_MIN, config.DROP_ZONE_X_MAX,
+         config.FIELD_Y_MAX + y_off),
+        (f'{p}chalk_side_landing_drop_bottom', config.LANDING_ZONE_X_MIN, config.DROP_ZONE_X_MAX,
+         config.FIELD_Y_MIN + y_off),
+        (f'{p}chalk_side_recon_top', config.RECON_ZONE_X_MIN, config.RECON_ZONE_X_MAX,
+         config.FIELD_Y_MAX + y_off),
+        (f'{p}chalk_side_recon_bottom', config.RECON_ZONE_X_MIN, config.RECON_ZONE_X_MAX,
+         config.FIELD_Y_MIN + y_off),
+    ]
+    for name, x_min, x_max, y in chalk_x_lines:
+        size = [float(v) for v in models_by_name[name].find('link/visual/geometry/box/size').text.split()]
+        x, py = model_pose_xy(name)
+        check(f'{name} length matches its zone span', approx(size[0], x_max - x_min))
+        check(f'{name} width == CHALK_LINE_WIDTH', approx(size[1], config.CHALK_LINE_WIDTH))
+        check(f'{name} centered correctly', approx(x, (x_min + x_max) / 2) and approx(py, y))
+
+    chalk_y_lines = [  # (name, x)
+        (f'{p}chalk_cross_landing_rear', config.LANDING_ZONE_X_MIN),
+        (f'{p}chalk_cross_landing_drop', config.LANDING_ZONE_X_MAX),
+        (f'{p}chalk_cross_drop_far', config.DROP_ZONE_X_MAX),
+        (f'{p}chalk_cross_recon_near', config.RECON_ZONE_X_MIN),
+        (f'{p}chalk_cross_recon_far', config.RECON_ZONE_X_MAX),
+        (f'{p}chalk_takeoff_line', config.TAKEOFF_LINE_X),
+    ]
+    for name, x in chalk_y_lines:
+        size = [float(v) for v in models_by_name[name].find('link/visual/geometry/box/size').text.split()]
+        px_, _py = model_pose_xy(name)
+        check(f'{name} length matches field width', approx(size[1], config.FIELD_WIDTH))
+        check(f'{name} width == CHALK_LINE_WIDTH', approx(size[0], config.CHALK_LINE_WIDTH))
+        check(f'{name} positioned at x={x}', approx(px_, x))
 
 # ---------------------------------------------------------------------------
 # 2b. Baked ground texture vs. config.py -- the landing pad (blue disc + H)
@@ -208,11 +246,14 @@ def is_blue(rgb):
 
 
 cx, cy = config.LANDING_PAD_CENTER
-# Sample off-center (within the disc but outside the "H" glyph strokes,
-# which occupy the middle of the circle) -- the exact center pixel lands
-# on the glyph itself, not the disc's blue fill.
 pad_r = config.LANDING_PAD_DIAMETER / 2
-check('landing pad disc pixel (off-glyph) is blue', is_blue(sample(cx + pad_r * 0.7, cy)))
+for field_id in config.FIELD_IDS:
+    y_off = config.FIELD_Y_OFFSETS[field_id]
+    # Sample off-center (within the disc but outside the "H" glyph
+    # strokes, which occupy the middle of the circle) -- the exact center
+    # pixel lands on the glyph itself, not the disc's blue fill.
+    check(f'field {field_id} landing pad disc pixel (off-glyph) is blue',
+          is_blue(sample(cx + pad_r * 0.7, cy + y_off)))
 
 # ---------------------------------------------------------------------------
 print()

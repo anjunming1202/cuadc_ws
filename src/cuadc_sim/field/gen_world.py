@@ -28,15 +28,13 @@ GROUND_TEX = '../models/cuadc_ground/materials/textures'
 PLACARD_TEX = '../models/hazmat_placard/materials/textures'
 TUBE_MESH = '../models/cuadc_tube/meshes'
 
-# Placard "up" (top of the diamond) is assumed to map to the plane's local
-# +Y in the generated texture (same up=+Y convention gen_textures.py uses
-# for the ground); rotating -90 deg about Z points that at world +X, the
-# flight direction from landing zone to drop/recon zones -- so a vehicle
-# flying +X and looking straight down sees the placard upright relative to
-# its direction of travel. UNVERIFIED against the actual renderer (no GUI
-# available in this environment) -- if it renders sideways/upside down
-# after launching, adjust this single constant, not each placard's pose.
+# Placard "up" should point down the field (+X). Unverified -- adjust if
+# it renders sideways/upside down.
 PLACARD_YAW_DEG = -90.0
+
+# Vehicle spawn yaw, empirically determined (not derived) -- re-check
+# visually if this model or its upstream deps ever change.
+VEHICLE_YAW_DEG = 0.0
 
 
 def plain_material(rgb):
@@ -135,7 +133,7 @@ def ground_model():
     return f"""
     <model name="cuadc_ground">
       <static>true</static>
-      <pose>{(config.GROUND_X_MIN + config.GROUND_X_MAX) / 2} 0 0 0 0 0</pose>
+      <pose>{(config.GROUND_X_MIN + config.GROUND_X_MAX) / 2} {(config.GROUND_Y_MIN + config.GROUND_Y_MAX) / 2} 0 0 0 0</pose>
       <link name="link">
         <collision name="collision">
           <geometry><plane><normal>0 0 1</normal></plane></geometry>
@@ -195,55 +193,63 @@ def chalk_line_along_y(name, x, y_min, y_max, rgb=(0.95, 0.95, 0.95)):
     </model>"""
 
 
-def build_chalk_lines():
+def build_chalk_lines(field_id, y_offset):
     """Zone boundary outlines + the takeoff line, as real thin-box geometry
     (see config.CHALK_LINE_WIDTH's comment for why not baked texture).
     Landing+drop zones are contiguous (no gap) so their shared boundary at
     x=DROP_ZONE_X_MIN is one line, not two overlapping ones; the
     transition zone has no boundary/side markings at all, per the rules
     doc (nothing distinguishes it -- its two ends ARE the drop-zone-far
-    and recon-zone-near cross lines below)."""
-    y0, y1 = config.FIELD_Y_MIN, config.FIELD_Y_MAX
+    and recon-zone-near cross lines below). Names are prefixed with
+    `field_id` (config.FIELD_IDS) since field B is the same layout
+    translated by `y_offset`, not a distinct set of coordinates -- object
+    names would otherwise collide between fields."""
+    p = f'field{field_id}_'
+    y0, y1 = config.FIELD_Y_MIN + y_offset, config.FIELD_Y_MAX + y_offset
     parts = [
         # Long edges (top/bottom), landing+drop zone run and recon zone run.
-        chalk_line_along_x('chalk_side_landing_drop_top',
+        chalk_line_along_x(f'{p}chalk_side_landing_drop_top',
                             config.LANDING_ZONE_X_MIN, config.DROP_ZONE_X_MAX, y1),
-        chalk_line_along_x('chalk_side_landing_drop_bottom',
+        chalk_line_along_x(f'{p}chalk_side_landing_drop_bottom',
                             config.LANDING_ZONE_X_MIN, config.DROP_ZONE_X_MAX, y0),
-        chalk_line_along_x('chalk_side_recon_top',
+        chalk_line_along_x(f'{p}chalk_side_recon_top',
                             config.RECON_ZONE_X_MIN, config.RECON_ZONE_X_MAX, y1),
-        chalk_line_along_x('chalk_side_recon_bottom',
+        chalk_line_along_x(f'{p}chalk_side_recon_bottom',
                             config.RECON_ZONE_X_MIN, config.RECON_ZONE_X_MAX, y0),
         # Cross lines at every zone boundary x-value (landing/drop share one).
-        chalk_line_along_y('chalk_cross_landing_rear', config.LANDING_ZONE_X_MIN, y0, y1),
-        chalk_line_along_y('chalk_cross_landing_drop', config.LANDING_ZONE_X_MAX, y0, y1),
-        chalk_line_along_y('chalk_cross_drop_far', config.DROP_ZONE_X_MAX, y0, y1),
-        chalk_line_along_y('chalk_cross_recon_near', config.RECON_ZONE_X_MIN, y0, y1),
-        chalk_line_along_y('chalk_cross_recon_far', config.RECON_ZONE_X_MAX, y0, y1),
+        chalk_line_along_y(f'{p}chalk_cross_landing_rear', config.LANDING_ZONE_X_MIN, y0, y1),
+        chalk_line_along_y(f'{p}chalk_cross_landing_drop', config.LANDING_ZONE_X_MAX, y0, y1),
+        chalk_line_along_y(f'{p}chalk_cross_drop_far', config.DROP_ZONE_X_MAX, y0, y1),
+        chalk_line_along_y(f'{p}chalk_cross_recon_near', config.RECON_ZONE_X_MIN, y0, y1),
+        chalk_line_along_y(f'{p}chalk_cross_recon_far', config.RECON_ZONE_X_MAX, y0, y1),
         # Takeoff line -- distinct color (yellow), not a zone boundary.
-        chalk_line_along_y('chalk_takeoff_line', config.TAKEOFF_LINE_X, y0, y1,
+        chalk_line_along_y(f'{p}chalk_takeoff_line', config.TAKEOFF_LINE_X, y0, y1,
                             rgb=(0.92, 0.78, 0.16)),
     ]
     return '\n'.join(parts)
 
 
-def build_drop_zone():
+def build_drop_zone(field_id, y_offset):
+    p = f'field{field_id}_'
     parts = []
     for label, diameter, height in config.DROP_CYLINDERS:
         x, y = config.DROP_CYLINDER_POSITIONS[label]
-        parts.append(ring_decal(f"drop_ring_{label}", x, y))
-        parts.append(tube_model(f"drop_tube_{label}", x, y, diameter, height))
+        y += y_offset
+        parts.append(ring_decal(f"{p}drop_ring_{label}", x, y))
+        parts.append(tube_model(f"{p}drop_tube_{label}", x, y, diameter, height))
     return '\n'.join(parts)
 
 
-def build_recon_zone():
+def build_recon_zone(field_id, y_offset):
+    p = f'field{field_id}_'
     parts = []
     for key, (x, y) in config.RECON_CYLINDER_POSITIONS.items():
-        name = f"recon_tube_{key}"
+        y += y_offset
+        name = f"{p}recon_tube_{key}"
         placard_key = config.RECON_CYLINDER_PLACARDS.get(key)
         if placard_key:
             assert placard_key in hazmat_placards.PLACARDS, f"unknown placard key {placard_key}"
-            parts.append(placard_decal(f"recon_placard_{key}", x, y, placard_key))
+            parts.append(placard_decal(f"{p}recon_placard_{key}", x, y, placard_key))
         parts.append(tube_model(name, x, y, config.RECON_CYLINDER_DIAMETER,
                                  config.RECON_CYLINDER_HEIGHT))
     return '\n'.join(parts)
@@ -262,6 +268,15 @@ WORLD_TEMPLATE = """<?xml version="1.0" ?>
     src/cuadc_sim/README.md). Drop/recon cylinders are hollow tubes
     (procedurally generated meshes, field/gen_tube_mesh.py), not solid
     discs: payloads go into them and placards sit inside them.
+
+    Two parallel fields (doc section 13, config.FIELD_IDS/FIELD_Y_OFFSETS):
+    field B is field A's layout translated in Y only. Only ONE vehicle
+    spawns, on field A's landing pad: this project's SITL/ArduPilot
+    integration is single-vehicle (one sim_vehicle.py instance), and
+    field B exists here for spatial/visual completeness (so field A
+    doesn't render as if it were alone on an empty range), not to
+    simulate the other team's aircraft: a second vehicle would need a
+    second SITL instance, out of scope for this change.
   -->
   <world name="cuadc_field">
     <physics name="1ms" type="ignore">
@@ -305,12 +320,10 @@ WORLD_TEMPLATE = """<?xml version="1.0" ?>
       <direction>-0.5 0.1 -0.9</direction>
     </light>
 {ground}
-{chalk_lines}
-{drop_zone}
-{recon_zone}
+{fields}
     <include>
       <uri>model://iris_with_gimbal</uri>
-      <pose degrees="true">{landing_x} {landing_y} 0.195 0 0 90</pose>
+      <pose degrees="true">{landing_x} {landing_y} 0.195 0 0 {vehicle_yaw}</pose>
     </include>
 
   </world>
@@ -318,16 +331,40 @@ WORLD_TEMPLATE = """<?xml version="1.0" ?>
 """
 
 
+def build_fields():
+    parts = []
+    for field_id in config.FIELD_IDS:
+        y_offset = config.FIELD_Y_OFFSETS[field_id]
+        parts.append(build_chalk_lines(field_id, y_offset))
+        parts.append(build_drop_zone(field_id, y_offset))
+        parts.append(build_recon_zone(field_id, y_offset))
+    return '\n'.join(parts)
+
+
 def main():
+    # Vehicle spawns on field A's landing pad specifically (offset 0.0),
+    # not a bare LANDING_PAD_CENTER that happens to equal that today --
+    # see the WORLD_TEMPLATE comment for why only field A gets a vehicle.
     landing_x, landing_y = config.LANDING_PAD_CENTER
+    landing_y += config.FIELD_Y_OFFSETS['A']
     out = WORLD_TEMPLATE.format(
         ground=ground_model(),
-        chalk_lines=build_chalk_lines(),
-        drop_zone=build_drop_zone(),
-        recon_zone=build_recon_zone(),
+        fields=build_fields(),
         landing_x=landing_x,
         landing_y=landing_y,
+        vehicle_yaw=VEHICLE_YAW_DEG,
     )
+    # XML forbids "--" anywhere inside a comment (only legal as the "-->"
+    # terminator) -- a mistake this file's own module-docstring comment
+    # has tripped on more than once while editing. Catch it here instead
+    # of relying on a manual `gz sdf --check` afterward every time.
+    import re
+    for comment in re.findall(r'<!--(.*?)-->', out, re.DOTALL):
+        assert '--' not in comment, (
+            'generated XML comment contains "--", which is invalid inside an '
+            'XML comment -- fix the offending text in WORLD_TEMPLATE above:\n'
+            + comment)
+
     os.makedirs(WORLDS, exist_ok=True)
     path = os.path.join(WORLDS, 'cuadc_field.sdf')
     with open(path, 'w') as f:

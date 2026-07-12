@@ -122,15 +122,31 @@ RECON_CYLINDER_PLACARDS = {
     "e": "biohazard",
 }
 
+# ---- Parallel fields (doc section 13) ----
+# Two identical fields side by side; only Y differs, per the doc's own
+# transform: (x,y) -> (x, y+y_k). Field A keeps the canonical centerline
+# (y=0) that every constant above is already defined against; field B is
+# the same layout translated by the doc's recommended minimum spacing
+# (edge gap >=5m, centerline gap >=13m for two 8m-wide fields). All the
+# DROP_CYLINDER_POSITIONS/RECON_CYLINDER_POSITIONS/etc. dicts above stay
+# field-A-local -- gen_world.py adds each field's offset when
+# instantiating that field's objects, rather than this file storing
+# already-shifted coordinates for field B.
+FIELD_IDS = ['A', 'B']
+FIELD_Y_OFFSETS = {'A': 0.0, 'B': 13.0}
+
 # ---- Ground plane extents ----
 # Covers the prep zone (using its engineering-placeholder depth) through
-# past the recon zone, with margin on all sides. Single source of truth
-# for both the ground texture's aspect ratio and the SDF plane's <size>.
-GROUND_MARGIN = 5.0
+# past the recon zone, and both fields' full lateral extent, with margin
+# on all sides -- generous enough that flying near a zone boundary still
+# shows ground-colored texture underneath, not the plane's raw edge.
+# Single source of truth for both the ground texture's aspect ratio and
+# the SDF plane's <size>.
+GROUND_MARGIN = 10.0
 GROUND_X_MIN = PREP_ZONE_BOUNDARY_X - PREP_ZONE_DEPTH - GROUND_MARGIN
 GROUND_X_MAX = RECON_ZONE_X_MAX + GROUND_MARGIN
-GROUND_Y_MIN = FIELD_Y_MIN - GROUND_MARGIN
-GROUND_Y_MAX = FIELD_Y_MAX + GROUND_MARGIN
+GROUND_Y_MIN = min(FIELD_Y_MIN + off for off in FIELD_Y_OFFSETS.values()) - GROUND_MARGIN
+GROUND_Y_MAX = max(FIELD_Y_MAX + off for off in FIELD_Y_OFFSETS.values()) + GROUND_MARGIN
 GROUND_LENGTH = GROUND_X_MAX - GROUND_X_MIN  # along X
 GROUND_WIDTH = GROUND_Y_MAX - GROUND_Y_MIN   # along Y
 

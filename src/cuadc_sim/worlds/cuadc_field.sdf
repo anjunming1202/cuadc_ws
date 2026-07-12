@@ -11,6 +11,15 @@
     src/cuadc_sim/README.md). Drop/recon cylinders are hollow tubes
     (procedurally generated meshes, field/gen_tube_mesh.py), not solid
     discs: payloads go into them and placards sit inside them.
+
+    Two parallel fields (doc section 13, config.FIELD_IDS/FIELD_Y_OFFSETS):
+    field B is field A's layout translated in Y only. Only ONE vehicle
+    spawns, on field A's landing pad: this project's SITL/ArduPilot
+    integration is single-vehicle (one sim_vehicle.py instance), and
+    field B exists here for spatial/visual completeness (so field A
+    doesn't render as if it were alone on an empty range), not to
+    simulate the other team's aircraft: a second vehicle would need a
+    second SITL instance, out of scope for this change.
   -->
   <world name="cuadc_field">
     <physics name="1ms" type="ignore">
@@ -56,14 +65,14 @@
 
     <model name="cuadc_ground">
       <static>true</static>
-      <pose>26.0 0 0 0 0 0</pose>
+      <pose>26.0 6.5 0 0 0 0</pose>
       <link name="link">
         <collision name="collision">
           <geometry><plane><normal>0 0 1</normal></plane></geometry>
         </collision>
         <visual name="base">
           <cast_shadows>false</cast_shadows>
-          <geometry><plane><normal>0 0 1</normal><size>78.0 18.0</size></plane></geometry>
+          <geometry><plane><normal>0 0 1</normal><size>88.0 41.0</size></plane></geometry>
           <material>
           <ambient>1 1 1 1</ambient>
           <diffuse>1 1 1 1</diffuse>
@@ -80,7 +89,7 @@
         <visual name="markings">
           <pose>0 0 0.001 0 0 0</pose>
           <cast_shadows>false</cast_shadows>
-          <geometry><plane><normal>0 0 1</normal><size>78.0 18.0</size></plane></geometry>
+          <geometry><plane><normal>0 0 1</normal><size>88.0 41.0</size></plane></geometry>
           <material>
           <ambient>1 1 1 1</ambient>
           <diffuse>1 1 1 1</diffuse>
@@ -97,7 +106,7 @@
       </link>
     </model>
 
-    <model name="chalk_side_landing_drop_top">
+    <model name="fieldA_chalk_side_landing_drop_top">
       <static>true</static>
       <pose>16.0 4.0 0.0005 0 0 0</pose>
       <link name="link">
@@ -113,7 +122,7 @@
       </link>
     </model>
 
-    <model name="chalk_side_landing_drop_bottom">
+    <model name="fieldA_chalk_side_landing_drop_bottom">
       <static>true</static>
       <pose>16.0 -4.0 0.0005 0 0 0</pose>
       <link name="link">
@@ -129,7 +138,7 @@
       </link>
     </model>
 
-    <model name="chalk_side_recon_top">
+    <model name="fieldA_chalk_side_recon_top">
       <static>true</static>
       <pose>57.5 4.0 0.0005 0 0 0</pose>
       <link name="link">
@@ -145,7 +154,7 @@
       </link>
     </model>
 
-    <model name="chalk_side_recon_bottom">
+    <model name="fieldA_chalk_side_recon_bottom">
       <static>true</static>
       <pose>57.5 -4.0 0.0005 0 0 0</pose>
       <link name="link">
@@ -161,7 +170,7 @@
       </link>
     </model>
 
-    <model name="chalk_cross_landing_rear">
+    <model name="fieldA_chalk_cross_landing_rear">
       <static>true</static>
       <pose>-3.0 0.0 0.0005 0 0 0</pose>
       <link name="link">
@@ -177,7 +186,7 @@
       </link>
     </model>
 
-    <model name="chalk_cross_landing_drop">
+    <model name="fieldA_chalk_cross_landing_drop">
       <static>true</static>
       <pose>30.0 0.0 0.0005 0 0 0</pose>
       <link name="link">
@@ -193,7 +202,7 @@
       </link>
     </model>
 
-    <model name="chalk_cross_drop_far">
+    <model name="fieldA_chalk_cross_drop_far">
       <static>true</static>
       <pose>35.0 0.0 0.0005 0 0 0</pose>
       <link name="link">
@@ -209,7 +218,7 @@
       </link>
     </model>
 
-    <model name="chalk_cross_recon_near">
+    <model name="fieldA_chalk_cross_recon_near">
       <static>true</static>
       <pose>55.0 0.0 0.0005 0 0 0</pose>
       <link name="link">
@@ -225,7 +234,7 @@
       </link>
     </model>
 
-    <model name="chalk_cross_recon_far">
+    <model name="fieldA_chalk_cross_recon_far">
       <static>true</static>
       <pose>60.0 0.0 0.0005 0 0 0</pose>
       <link name="link">
@@ -241,7 +250,7 @@
       </link>
     </model>
 
-    <model name="chalk_takeoff_line">
+    <model name="fieldA_chalk_takeoff_line">
       <static>true</static>
       <pose>2.0 0.0 0.0005 0 0 0</pose>
       <link name="link">
@@ -257,7 +266,7 @@
       </link>
     </model>
 
-    <model name="drop_ring_1">
+    <model name="fieldA_drop_ring_1">
       <static>true</static>
       <pose>31.0 -1.5 0.002 0 0 0</pose>
       <link name="link">
@@ -273,7 +282,7 @@
       </link>
     </model>
 
-    <model name="drop_tube_1">
+    <model name="fieldA_drop_tube_1">
       <static>true</static>
       <pose>31.0 -1.5 0 0 0 0</pose>
       <link name="link">
@@ -292,7 +301,7 @@
       </link>
     </model>
 
-    <model name="drop_ring_2">
+    <model name="fieldA_drop_ring_2">
       <static>true</static>
       <pose>32.5 1.5 0.002 0 0 0</pose>
       <link name="link">
@@ -308,7 +317,7 @@
       </link>
     </model>
 
-    <model name="drop_tube_2">
+    <model name="fieldA_drop_tube_2">
       <static>true</static>
       <pose>32.5 1.5 0 0 0 0</pose>
       <link name="link">
@@ -327,7 +336,7 @@
       </link>
     </model>
 
-    <model name="drop_ring_3">
+    <model name="fieldA_drop_ring_3">
       <static>true</static>
       <pose>34.0 0.0 0.002 0 0 0</pose>
       <link name="link">
@@ -343,7 +352,7 @@
       </link>
     </model>
 
-    <model name="drop_tube_3">
+    <model name="fieldA_drop_tube_3">
       <static>true</static>
       <pose>34.0 0.0 0 0 0 0</pose>
       <link name="link">
@@ -362,7 +371,7 @@
       </link>
     </model>
 
-    <model name="recon_placard_a">
+    <model name="fieldA_recon_placard_a">
       <static>true</static>
       <pose>55.8 -2.5 0.002 0 0 -1.570796</pose>
       <link name="link">
@@ -385,7 +394,7 @@
       </link>
     </model>
 
-    <model name="recon_tube_a">
+    <model name="fieldA_recon_tube_a">
       <static>true</static>
       <pose>55.8 -2.5 0 0 0 0</pose>
       <link name="link">
@@ -404,7 +413,7 @@
       </link>
     </model>
 
-    <model name="recon_tube_b">
+    <model name="fieldA_recon_tube_b">
       <static>true</static>
       <pose>56.6 1.8 0 0 0 0</pose>
       <link name="link">
@@ -423,7 +432,7 @@
       </link>
     </model>
 
-    <model name="recon_placard_c">
+    <model name="fieldA_recon_placard_c">
       <static>true</static>
       <pose>57.5 -0.3 0.002 0 0 -1.570796</pose>
       <link name="link">
@@ -446,7 +455,7 @@
       </link>
     </model>
 
-    <model name="recon_tube_c">
+    <model name="fieldA_recon_tube_c">
       <static>true</static>
       <pose>57.5 -0.3 0 0 0 0</pose>
       <link name="link">
@@ -465,7 +474,7 @@
       </link>
     </model>
 
-    <model name="recon_tube_d">
+    <model name="fieldA_recon_tube_d">
       <static>true</static>
       <pose>58.3 2.5 0 0 0 0</pose>
       <link name="link">
@@ -484,7 +493,7 @@
       </link>
     </model>
 
-    <model name="recon_placard_e">
+    <model name="fieldA_recon_placard_e">
       <static>true</static>
       <pose>59.2 -1.8 0.002 0 0 -1.570796</pose>
       <link name="link">
@@ -507,7 +516,7 @@
       </link>
     </model>
 
-    <model name="recon_tube_e">
+    <model name="fieldA_recon_tube_e">
       <static>true</static>
       <pose>59.2 -1.8 0 0 0 0</pose>
       <link name="link">
@@ -525,9 +534,438 @@
         </visual>
       </link>
     </model>
+
+    <model name="fieldB_chalk_side_landing_drop_top">
+      <static>true</static>
+      <pose>16.0 17.0 0.0005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <cast_shadows>false</cast_shadows>
+          <geometry><box><size>38.0 0.004 0.001</size></box></geometry>
+          <material>
+          <ambient>0.95 0.95 0.95 1</ambient>
+          <diffuse>0.95 0.95 0.95 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="fieldB_chalk_side_landing_drop_bottom">
+      <static>true</static>
+      <pose>16.0 9.0 0.0005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <cast_shadows>false</cast_shadows>
+          <geometry><box><size>38.0 0.004 0.001</size></box></geometry>
+          <material>
+          <ambient>0.95 0.95 0.95 1</ambient>
+          <diffuse>0.95 0.95 0.95 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="fieldB_chalk_side_recon_top">
+      <static>true</static>
+      <pose>57.5 17.0 0.0005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <cast_shadows>false</cast_shadows>
+          <geometry><box><size>5.0 0.004 0.001</size></box></geometry>
+          <material>
+          <ambient>0.95 0.95 0.95 1</ambient>
+          <diffuse>0.95 0.95 0.95 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="fieldB_chalk_side_recon_bottom">
+      <static>true</static>
+      <pose>57.5 9.0 0.0005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <cast_shadows>false</cast_shadows>
+          <geometry><box><size>5.0 0.004 0.001</size></box></geometry>
+          <material>
+          <ambient>0.95 0.95 0.95 1</ambient>
+          <diffuse>0.95 0.95 0.95 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="fieldB_chalk_cross_landing_rear">
+      <static>true</static>
+      <pose>-3.0 13.0 0.0005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <cast_shadows>false</cast_shadows>
+          <geometry><box><size>0.004 8.0 0.001</size></box></geometry>
+          <material>
+          <ambient>0.95 0.95 0.95 1</ambient>
+          <diffuse>0.95 0.95 0.95 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="fieldB_chalk_cross_landing_drop">
+      <static>true</static>
+      <pose>30.0 13.0 0.0005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <cast_shadows>false</cast_shadows>
+          <geometry><box><size>0.004 8.0 0.001</size></box></geometry>
+          <material>
+          <ambient>0.95 0.95 0.95 1</ambient>
+          <diffuse>0.95 0.95 0.95 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="fieldB_chalk_cross_drop_far">
+      <static>true</static>
+      <pose>35.0 13.0 0.0005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <cast_shadows>false</cast_shadows>
+          <geometry><box><size>0.004 8.0 0.001</size></box></geometry>
+          <material>
+          <ambient>0.95 0.95 0.95 1</ambient>
+          <diffuse>0.95 0.95 0.95 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="fieldB_chalk_cross_recon_near">
+      <static>true</static>
+      <pose>55.0 13.0 0.0005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <cast_shadows>false</cast_shadows>
+          <geometry><box><size>0.004 8.0 0.001</size></box></geometry>
+          <material>
+          <ambient>0.95 0.95 0.95 1</ambient>
+          <diffuse>0.95 0.95 0.95 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="fieldB_chalk_cross_recon_far">
+      <static>true</static>
+      <pose>60.0 13.0 0.0005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <cast_shadows>false</cast_shadows>
+          <geometry><box><size>0.004 8.0 0.001</size></box></geometry>
+          <material>
+          <ambient>0.95 0.95 0.95 1</ambient>
+          <diffuse>0.95 0.95 0.95 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="fieldB_chalk_takeoff_line">
+      <static>true</static>
+      <pose>2.0 13.0 0.0005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <cast_shadows>false</cast_shadows>
+          <geometry><box><size>0.004 8.0 0.001</size></box></geometry>
+          <material>
+          <ambient>0.92 0.78 0.16 1</ambient>
+          <diffuse>0.92 0.78 0.16 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="fieldB_drop_ring_1">
+      <static>true</static>
+      <pose>31.0 11.5 0.002 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <cast_shadows>false</cast_shadows>
+          <geometry><cylinder><radius>0.5</radius><length>0.001</length></cylinder></geometry>
+          <material>
+          <ambient>0.12 0.47 0.86 1</ambient>
+          <diffuse>0.12 0.47 0.86 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="fieldB_drop_tube_1">
+      <static>true</static>
+      <pose>31.0 11.5 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <pose>0 0 0.15 0 0 0</pose>
+          <geometry><cylinder><radius>0.075</radius><length>0.3</length></cylinder></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><mesh><uri>../models/cuadc_tube/meshes/tube_d150_h300.obj</uri></mesh></geometry>
+          <material>
+          <ambient>0.95 0.95 0.95 1</ambient>
+          <diffuse>0.95 0.95 0.95 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="fieldB_drop_ring_2">
+      <static>true</static>
+      <pose>32.5 14.5 0.002 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <cast_shadows>false</cast_shadows>
+          <geometry><cylinder><radius>0.5</radius><length>0.001</length></cylinder></geometry>
+          <material>
+          <ambient>0.12 0.47 0.86 1</ambient>
+          <diffuse>0.12 0.47 0.86 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="fieldB_drop_tube_2">
+      <static>true</static>
+      <pose>32.5 14.5 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <pose>0 0 0.15 0 0 0</pose>
+          <geometry><cylinder><radius>0.1</radius><length>0.3</length></cylinder></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><mesh><uri>../models/cuadc_tube/meshes/tube_d200_h300.obj</uri></mesh></geometry>
+          <material>
+          <ambient>0.95 0.95 0.95 1</ambient>
+          <diffuse>0.95 0.95 0.95 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="fieldB_drop_ring_3">
+      <static>true</static>
+      <pose>34.0 13.0 0.002 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <cast_shadows>false</cast_shadows>
+          <geometry><cylinder><radius>0.5</radius><length>0.001</length></cylinder></geometry>
+          <material>
+          <ambient>0.12 0.47 0.86 1</ambient>
+          <diffuse>0.12 0.47 0.86 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="fieldB_drop_tube_3">
+      <static>true</static>
+      <pose>34.0 13.0 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <pose>0 0 0.15 0 0 0</pose>
+          <geometry><cylinder><radius>0.125</radius><length>0.3</length></cylinder></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><mesh><uri>../models/cuadc_tube/meshes/tube_d250_h300.obj</uri></mesh></geometry>
+          <material>
+          <ambient>0.95 0.95 0.95 1</ambient>
+          <diffuse>0.95 0.95 0.95 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="fieldB_recon_placard_a">
+      <static>true</static>
+      <pose>55.8 10.5 0.002 0 0 -1.570796</pose>
+      <link name="link">
+        <visual name="visual">
+          <cast_shadows>false</cast_shadows>
+          <geometry><plane><normal>0 0 1</normal><size>0.12 0.12</size></plane></geometry>
+          <material>
+          <ambient>1 1 1 1</ambient>
+          <diffuse>1 1 1 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+          <pbr>
+            <metal>
+              <albedo_map>../models/hazmat_placard/materials/textures/flammable.png</albedo_map>
+              <roughness>0.8</roughness>
+              <metalness>0</metalness>
+            </metal>
+          </pbr>
+        </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="fieldB_recon_tube_a">
+      <static>true</static>
+      <pose>55.8 10.5 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <pose>0 0 0.075 0 0 0</pose>
+          <geometry><cylinder><radius>0.1</radius><length>0.15</length></cylinder></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><mesh><uri>../models/cuadc_tube/meshes/tube_d200_h150.obj</uri></mesh></geometry>
+          <material>
+          <ambient>0.95 0.95 0.95 1</ambient>
+          <diffuse>0.95 0.95 0.95 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="fieldB_recon_tube_b">
+      <static>true</static>
+      <pose>56.6 14.8 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <pose>0 0 0.075 0 0 0</pose>
+          <geometry><cylinder><radius>0.1</radius><length>0.15</length></cylinder></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><mesh><uri>../models/cuadc_tube/meshes/tube_d200_h150.obj</uri></mesh></geometry>
+          <material>
+          <ambient>0.95 0.95 0.95 1</ambient>
+          <diffuse>0.95 0.95 0.95 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="fieldB_recon_placard_c">
+      <static>true</static>
+      <pose>57.5 12.7 0.002 0 0 -1.570796</pose>
+      <link name="link">
+        <visual name="visual">
+          <cast_shadows>false</cast_shadows>
+          <geometry><plane><normal>0 0 1</normal><size>0.12 0.12</size></plane></geometry>
+          <material>
+          <ambient>1 1 1 1</ambient>
+          <diffuse>1 1 1 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+          <pbr>
+            <metal>
+              <albedo_map>../models/hazmat_placard/materials/textures/corrosive.png</albedo_map>
+              <roughness>0.8</roughness>
+              <metalness>0</metalness>
+            </metal>
+          </pbr>
+        </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="fieldB_recon_tube_c">
+      <static>true</static>
+      <pose>57.5 12.7 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <pose>0 0 0.075 0 0 0</pose>
+          <geometry><cylinder><radius>0.1</radius><length>0.15</length></cylinder></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><mesh><uri>../models/cuadc_tube/meshes/tube_d200_h150.obj</uri></mesh></geometry>
+          <material>
+          <ambient>0.95 0.95 0.95 1</ambient>
+          <diffuse>0.95 0.95 0.95 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="fieldB_recon_tube_d">
+      <static>true</static>
+      <pose>58.3 15.5 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <pose>0 0 0.075 0 0 0</pose>
+          <geometry><cylinder><radius>0.1</radius><length>0.15</length></cylinder></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><mesh><uri>../models/cuadc_tube/meshes/tube_d200_h150.obj</uri></mesh></geometry>
+          <material>
+          <ambient>0.95 0.95 0.95 1</ambient>
+          <diffuse>0.95 0.95 0.95 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="fieldB_recon_placard_e">
+      <static>true</static>
+      <pose>59.2 11.2 0.002 0 0 -1.570796</pose>
+      <link name="link">
+        <visual name="visual">
+          <cast_shadows>false</cast_shadows>
+          <geometry><plane><normal>0 0 1</normal><size>0.12 0.12</size></plane></geometry>
+          <material>
+          <ambient>1 1 1 1</ambient>
+          <diffuse>1 1 1 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+          <pbr>
+            <metal>
+              <albedo_map>../models/hazmat_placard/materials/textures/biohazard.png</albedo_map>
+              <roughness>0.8</roughness>
+              <metalness>0</metalness>
+            </metal>
+          </pbr>
+        </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="fieldB_recon_tube_e">
+      <static>true</static>
+      <pose>59.2 11.2 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <pose>0 0 0.075 0 0 0</pose>
+          <geometry><cylinder><radius>0.1</radius><length>0.15</length></cylinder></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><mesh><uri>../models/cuadc_tube/meshes/tube_d200_h150.obj</uri></mesh></geometry>
+          <material>
+          <ambient>0.95 0.95 0.95 1</ambient>
+          <diffuse>0.95 0.95 0.95 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+        </visual>
+      </link>
+    </model>
     <include>
       <uri>model://iris_with_gimbal</uri>
-      <pose degrees="true">0.0 0.0 0.195 0 0 90</pose>
+      <pose degrees="true">0.0 0.0 0.195 0 0 0.0</pose>
     </include>
 
   </world>
