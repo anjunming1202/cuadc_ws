@@ -59,7 +59,7 @@ def generate_launch_description():
             # GROUND_IDLE forever after arming and the vehicle auto-disarms
             # instead of climbing. TKOFF_RPM_MIN defaults to 0 so forcing
             # this on does not require real ESC RPM telemetry. See
-            # src/cuadc_sim/README.md "已知问题（未解决）".
+            # src/cuadc_sim/README.md "已解决问题".
             ' --configure-define=HAL_WITH_ESC_TELEM=1',
             ' --no-wsl2-network --use-dir ', LaunchConfiguration('sitl_run_dir'),
             ' -m "--out 127.0.0.1:14551"',

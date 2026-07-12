@@ -168,3 +168,18 @@
   会 source ROS2 官方/colcon 生成脚本的 wrapper，别带 `-u`，只留
   `set -eo pipefail` 就够（`-e` 捕获我们自己命令的真实错误，`pipefail`
   照旧）。
+
+- **pymavlink 的 `recv_match(type=...)` 按单一类型过滤时，会静默丢弃
+  等待期间收到的其它类型消息**：写 `flight_acceptance_test.py` 时，
+  同一个轮询循环里分别用 `recv_match(type='GLOBAL_POSITION_INT', ...)`
+  和 `recv_match(type='HEARTBEAT', ...)` 交替读，结果测试报
+  `vehicle never disarmed after LAND`，但飞控自己的日志明明显示已经
+  正常落地上锁——根因是 `recv_match` 内部为了找到匹配类型的消息，会
+  把等待期间收到的其它类型消息读出来直接丢弃（不是缓存起来留给下一次
+  调用），高频调用"只等 GLOBAL_POSITION_INT"的那次读取会把同一时间窗口
+  里的 HEARTBEAT 顺手吃掉扔了，导致"另一半"轮询永远等不到它要的类型。
+  **教训**：一个轮询循环里如果同时关心多种消息类型（比如同时要看位置
+  和武装状态），必须把所有关心的类型放进同一次 `recv_match(type=[...])`
+  调用里按 `msg.get_type()` 分支处理，不能分成多次单类型调用交替读——
+  后者天然会互相"饿死"对方。修复方式见 `flight_acceptance_test.py` 的
+  `_next_state()`。
