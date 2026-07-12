@@ -30,7 +30,7 @@ import os
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess
 from launch.conditions import IfCondition, UnlessCondition
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
 
 
@@ -54,8 +54,10 @@ def generate_launch_description():
         'world',
         default_value='iris_runway.sdf',
         description=(
-            'World file under <ardupilot_gazebo_path>/worlds/, with the vehicle already '
-            'statically included -- avoids the broken robot_state_publisher spawn path '
+            'Either a filename under <ardupilot_gazebo_path>/worlds/ (e.g. the upstream '
+            'iris_runway.sdf), or an absolute path to a world file elsewhere (e.g. one of '
+            "our own under cuadc_sim/worlds/) -- vehicle must already be statically "
+            'included in the world -- avoids the broken robot_state_publisher spawn path '
             '(see docs/lessons.md)'
         ),
     )
@@ -106,8 +108,16 @@ def generate_launch_description():
         ' ',
     ]
 
-    world_path = PathJoinSubstitution(
-        [LaunchConfiguration('ardupilot_gazebo_path'), 'worlds', LaunchConfiguration('world')])
+    # 'world' may be a bare filename (resolved under ardupilot_gazebo_path's
+    # worlds/ dir, the upstream-example case) or an absolute path (our own
+    # worlds under cuadc_sim/worlds/, which don't live there).
+    world_path = PythonExpression([
+        "'", LaunchConfiguration('world'), "' if '", LaunchConfiguration('world'),
+        "'.startswith('/') else '",
+        PathJoinSubstitution(
+            [LaunchConfiguration('ardupilot_gazebo_path'), 'worlds', LaunchConfiguration('world')]),
+        "'",
+    ])
 
     gz_sim_gui = ExecuteProcess(
         cmd=[gz_env_prefix + ['gz sim -v4 -r ', world_path]],
