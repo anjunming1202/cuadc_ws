@@ -27,6 +27,7 @@ First run in a fresh sitl_run_dir needs a EEPROM wipe, e.g.:
 """
 import os
 
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess
 from launch.conditions import IfCondition, UnlessCondition
@@ -52,13 +53,14 @@ def generate_launch_description():
     )
     world_arg = DeclareLaunchArgument(
         'world',
-        default_value='iris_runway.sdf',
+        default_value=os.path.join(
+            get_package_share_directory('cuadc_sim'), 'worlds', 'cuadc_field.sdf'),
         description=(
             'Either a filename under <ardupilot_gazebo_path>/worlds/ (e.g. the upstream '
-            'iris_runway.sdf), or an absolute path to a world file elsewhere (e.g. one of '
-            "our own under cuadc_sim/worlds/) -- vehicle must already be statically "
-            'included in the world -- avoids the broken robot_state_publisher spawn path '
-            '(see docs/lessons.md)'
+            'iris_runway.sdf -- pass that to get the generic ArduPilot demo world instead '
+            'of our own), or an absolute path to a world file elsewhere -- vehicle must '
+            'already be statically included in the world -- avoids the broken '
+            'robot_state_publisher spawn path (see docs/lessons.md)'
         ),
     )
     gui_arg = DeclareLaunchArgument(
@@ -73,13 +75,17 @@ def generate_launch_description():
     )
     camera_gz_topic_arg = DeclareLaunchArgument(
         'camera_gz_topic',
+        # Matches GIMBAL_CAMERA_TOPIC in field/gen_world.py -- keep both in
+        # sync by hand if the world name or vehicle model ever changes,
+        # they can't share an import (that module isn't installed).
         default_value=(
-            '/world/iris_runway/model/iris_with_gimbal/model/gimbal/link/pitch_link'
+            '/world/cuadc_field/model/iris_with_gimbal/model/gimbal/link/pitch_link'
             '/sensor/camera/image'
         ),
         description=(
             "Gazebo camera image topic to bridge into ROS2 -- specific to the "
-            "iris_with_gimbal model in iris_runway.sdf; override if 'world' is changed"
+            "iris_with_gimbal model in cuadc_field.sdf; override (e.g. to the "
+            "iris_runway topic) if 'world' is changed"
         ),
     )
     # Exported inline on gz sim's own command line (rather than via

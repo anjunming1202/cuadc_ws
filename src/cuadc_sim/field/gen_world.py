@@ -36,6 +36,311 @@ PLACARD_YAW_DEG = -90.0
 # visually if this model or its upstream deps ever change.
 VEHICLE_YAW_DEG = 0.0
 
+WORLD_NAME = 'cuadc_field'
+
+# Gimbal camera's image topic, for the GUI's ImageDisplay panel below. The
+# path is dictated by upstream model/link/sensor names (iris_with_gimbal /
+# gimbal_small_3d), not anything defined in this project -- re-derive if
+# that upstream model ever changes. Also hardcoded (can't share an import)
+# as launch/gazebo_bringup.launch.py's camera_gz_topic default -- keep both
+# in sync by hand.
+GIMBAL_CAMERA_TOPIC = (
+    f'/world/{WORLD_NAME}/model/iris_with_gimbal/model/gimbal/'
+    'link/pitch_link/sensor/camera/image'
+)
+
+# Default GUI camera: straight overhead (pitch = pi/2), high enough to fit
+# the whole field span, centered on it. Roll/yaw are 0 -- unverified which
+# way ends up "up" on screen at that pitch; adjust yaw if it looks rotated.
+GUI_CAMERA_HEIGHT_FACTOR = 0.5
+
+# Copied verbatim from gz-sim's own generated default (~/.gz/sim/8/gui.config,
+# written on first launch) rather than a demo world's -- an SDF world's <gui>
+# block replaces the default entirely instead of layering on top of it, so
+# this is what it takes to keep the usual panels/style and only add our
+# camera_pose. Only that one value (below) differs from the stock default.
+GUI_BLOCK_TEMPLATE = """
+    <gui fullscreen='0'>
+      <!-- Quick start dialog -->
+      <dialog name="quick_start" show_again="true"/>
+
+      <!-- Window -->
+      <window>
+        <width>1000</width>
+        <height>845</height>
+        <style
+          material_theme="Light"
+          material_primary="DeepOrange"
+          material_accent="LightBlue"
+          toolbar_color_light="#f3f3f3"
+          toolbar_text_color_light="#111111"
+          toolbar_color_dark="#414141"
+          toolbar_text_color_dark="#f3f3f3"
+          plugin_toolbar_color_light="#bbdefb"
+          plugin_toolbar_text_color_light="#111111"
+          plugin_toolbar_color_dark="#607d8b"
+          plugin_toolbar_text_color_dark="#eeeeee"
+        />
+        <menus>
+          <drawer default="false">
+          </drawer>
+        </menus>
+        <dialog_on_exit>true</dialog_on_exit>
+      </window>
+
+      <!-- GUI plugins -->
+
+      <!-- 3D scene -->
+      <plugin filename="MinimalScene" name="3D View">
+        <gz-gui>
+          <title>3D View</title>
+          <property type="bool" key="showTitleBar">false</property>
+          <property type="string" key="state">docked</property>
+        </gz-gui>
+
+        <engine>ogre2</engine>
+        <scene>scene</scene>
+        <ambient_light>0.4 0.4 0.4</ambient_light>
+        <background_color>0.8 0.8 0.8</background_color>
+        <camera_pose>{camera_pose}</camera_pose>
+      </plugin>
+
+      <!-- Plugins that add functionality to the scene -->
+      <plugin filename="EntityContextMenuPlugin" name="Entity context menu">
+        <gz-gui>
+          <property key="state" type="string">floating</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="GzSceneManager" name="Scene Manager">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="InteractiveViewControl" name="Interactive view control">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="CameraTracking" name="Camera Tracking">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="MarkerManager" name="Marker manager">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="SelectEntities" name="Select Entities">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+
+      <plugin filename="Spawn" name="Spawn Entities">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+
+      <plugin filename="VisualizationCapabilities" name="Visualization Capabilities">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+
+      <!-- World control -->
+      <plugin filename="WorldControl" name="World control">
+        <gz-gui>
+          <title>World control</title>
+          <property type="bool" key="showTitleBar">false</property>
+          <property type="bool" key="resizable">false</property>
+          <property type="double" key="height">72</property>
+          <property type="double" key="z">1</property>
+
+          <property type="string" key="state">floating</property>
+          <anchors target="3D View">
+            <line own="left" target="left"/>
+            <line own="bottom" target="bottom"/>
+          </anchors>
+        </gz-gui>
+
+        <play_pause>true</play_pause>
+        <step>true</step>
+        <start_paused>true</start_paused>
+        <use_event>true</use_event>
+
+      </plugin>
+
+      <!-- World statistics -->
+      <plugin filename="WorldStats" name="World stats">
+        <gz-gui>
+          <title>World stats</title>
+          <property type="bool" key="showTitleBar">false</property>
+          <property type="bool" key="resizable">false</property>
+          <property type="double" key="height">110</property>
+          <property type="double" key="width">290</property>
+          <property type="double" key="z">1</property>
+
+          <property type="string" key="state">floating</property>
+          <anchors target="3D View">
+            <line own="right" target="right"/>
+            <line own="bottom" target="bottom"/>
+          </anchors>
+        </gz-gui>
+
+        <sim_time>true</sim_time>
+        <real_time>true</real_time>
+        <real_time_factor>true</real_time_factor>
+        <iterations>true</iterations>
+      </plugin>
+
+      <!-- Insert simple shapes -->
+      <plugin filename="Shapes" name="Shapes">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="x" type="double">0</property>
+          <property key="y" type="double">0</property>
+          <property key="width" type="double">300</property>
+          <property key="height" type="double">50</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+          <property key="cardBackground" type="string">#666666</property>
+        </gz-gui>
+      </plugin>
+
+      <!-- Insert lights -->
+      <plugin filename="Lights" name="Lights">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="x" type="double">300</property>
+          <property key="y" type="double">0</property>
+          <property key="width" type="double">150</property>
+          <property key="height" type="double">50</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+          <property key="cardBackground" type="string">#666666</property>
+        </gz-gui>
+      </plugin>
+
+      <!-- Translate / rotate -->
+      <plugin filename="TransformControl" name="Transform control">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="x" type="double">0</property>
+          <property key="y" type="double">50</property>
+          <property key="width" type="double">250</property>
+          <property key="height" type="double">50</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+          <property key="cardBackground" type="string">#777777</property>
+        </gz-gui>
+      </plugin>
+
+      <!-- Screenshot -->
+      <plugin filename="Screenshot" name="Screenshot">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="x" type="double">250</property>
+          <property key="y" type="double">50</property>
+          <property key="width" type="double">50</property>
+          <property key="height" type="double">50</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+          <property key="cardBackground" type="string">#777777</property>
+        </gz-gui>
+      </plugin>
+
+      <!-- Copy/Paste -->
+      <plugin filename="CopyPaste" name="CopyPaste">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="x" type="double">300</property>
+          <property key="y" type="double">50</property>
+          <property key="width" type="double">100</property>
+          <property key="height" type="double">50</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+          <property key="cardBackground" type="string">#777777</property>
+        </gz-gui>
+      </plugin>
+
+      <!-- Inspector -->
+      <plugin filename="ComponentInspector" name="Component inspector">
+        <gz-gui>
+          <property type="bool" key="showTitleBar">false</property>
+          <property type="string" key="state">docked</property>
+        </gz-gui>
+      </plugin>
+
+      <!-- Entity tree -->
+      <plugin filename="EntityTree" name="Entity tree">
+        <gz-gui>
+          <property type="bool" key="showTitleBar">false</property>
+          <property type="string" key="state">docked</property>
+        </gz-gui>
+      </plugin>
+
+      <!-- Not part of the stock default config: added so the vehicle's
+      gimbal camera feed can be viewed in-GUI without picking a topic by
+      hand every launch (GIMBAL_CAMERA_TOPIC above). -->
+
+      <plugin filename="ImageDisplay" name="Image Display">
+        <gz-gui>
+          <property type="string" key="state">docked_collapsed</property>
+        </gz-gui>
+        <topic>{gimbal_camera_topic}</topic>
+      </plugin>
+    </gui>"""
+
+
+def gui_block():
+    """Overhead camera_pose centered on the whole (both-fields) span --
+    derived from config, not a hardcoded guess, so it stays right if the
+    field layout changes."""
+    import math
+    field_x_min = config.GROUND_X_MIN + config.GROUND_MARGIN
+    field_x_max = config.GROUND_X_MAX - config.GROUND_MARGIN
+    field_y_min = config.GROUND_Y_MIN + config.GROUND_MARGIN
+    field_y_max = config.GROUND_Y_MAX - config.GROUND_MARGIN
+    cx = (field_x_min + field_x_max) / 2
+    cy = (field_y_min + field_y_max) / 2
+    height = max(field_x_max - field_x_min, field_y_max - field_y_min) * GUI_CAMERA_HEIGHT_FACTOR
+    camera_pose = f"{cx} {cy} {height:.1f} 0 {math.pi / 2:.6f} 0"
+    return GUI_BLOCK_TEMPLATE.format(camera_pose=camera_pose,
+                                      gimbal_camera_topic=GIMBAL_CAMERA_TOPIC)
+
 
 def plain_material(rgb):
     r, g, b = rgb
@@ -278,7 +583,7 @@ WORLD_TEMPLATE = """<?xml version="1.0" ?>
     simulate the other team's aircraft: a second vehicle would need a
     second SITL instance, out of scope for this change.
   -->
-  <world name="cuadc_field">
+  <world name="{world_name}">
     <physics name="1ms" type="ignore">
       <max_step_size>0.001</max_step_size>
       <real_time_factor>1.0</real_time_factor>
@@ -297,6 +602,7 @@ WORLD_TEMPLATE = """<?xml version="1.0" ?>
       <ambient>1.0 1.0 1.0</ambient>
       <background>0.8 0.8 0.8</background>
     </scene>
+{gui}
 
     <spherical_coordinates>
       <latitude_deg>-35.363262</latitude_deg>
@@ -348,6 +654,8 @@ def main():
     landing_x, landing_y = config.LANDING_PAD_CENTER
     landing_y += config.FIELD_Y_OFFSETS['A']
     out = WORLD_TEMPLATE.format(
+        world_name=WORLD_NAME,
+        gui=gui_block(),
         ground=ground_model(),
         fields=build_fields(),
         landing_x=landing_x,
