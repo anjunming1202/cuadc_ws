@@ -51,14 +51,11 @@
 
 ## 已解决、迁移进正式文档的问题
 
-- **接口层要不要独立成一个模块/包**：已决定独立，见
+- **接口层要不要独立成一个模块/包**：已决定独立，含"仿真 vs 真机不是
+  两套代码，只是 launch 传入的 MAVLink 连接目标不同"这条推论，见
   [ADR-0001](adr/0001-interface-layer-separate-module.md) 和
-  [`00-index.md`](00-index.md)。落到 launch 文件层面的具体推论：
-  `cuadc_sim` 的 launch 文件（如 `gazebo_bringup.launch.py`）只负责
-  搭建仿真专属的基础设施（Gazebo、SITL），不部署到真机；接口层/规划
-  模块以后会是独立的包和 launch 文件，仿真和真机用同一份代码、同一份
-  launch，区别只是运行时传入的 MAVLink 连接目标不同（仿真指向 SITL 的
-  端口，真机指向真飞控的串口/网口）。
+  [`00-index.md`](00-index.md)"仿真 vs 真机不是两套代码"一节，不在此
+  重复。
 - **`docs/spec/00-index.md` 大纲**：已经写成正式文档，见
   [`00-index.md`](00-index.md)，本文件不再重复维护大纲提案。
 - **"机载计算" vs "地面站自动计算"**：已拍板为"机载计算，无地面站计算

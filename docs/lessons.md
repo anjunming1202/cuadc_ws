@@ -169,6 +169,23 @@
   `set -eo pipefail` 就够（`-e` 捕获我们自己命令的真实错误，`pipefail`
   照旧）。
 
+## 2026-07-11
+
+- **GUIDED 起飞指令被接受，但电机从不真正爬升，几十秒后自动上锁**：根因
+  是 SITL 默认编译 `HAL_WITH_ESC_TELEM` 为假（没有 CAN/串口 RCOut），
+  导致 `ArduCopter/takeoff_check.cpp` 里唯一负责解除电机 `spool-up
+  block` 的函数整个函数体被编译掉，block 永远解不开——指令层面看起来
+  完全正常（`COMMAND_ACK` 是 `ACCEPTED`），只有电机推力这一层是假的。
+  **修复**：`sim_vehicle.py` 命令行加
+  `--configure-define=HAL_WITH_ESC_TELEM=1`（两个 bringup launch 文件
+  已经固定加了这个参数，见文件里对应的行内注释），已验证起飞后约 8 秒
+  内爬升到目标高度并稳定悬停，不再自动上锁。首次生效需要 SITL 完整
+  重新编译（waf define 变了会触发 clean rebuild），后续正常增量编译。
+  **教训**：`COMMAND_ACK: ACCEPTED` 只证明指令被接受，不证明物理世界
+  真的有反应——协议层测试（发指令、读 ACK）测不出这类"接受了但没执行"
+  的 bug，必须另外写断言真实物理状态变化（高度、姿态随时间变化）的
+  验收测试，`flight_acceptance_test` 就是为此而加的。
+
 - **pymavlink 的 `recv_match(type=...)` 按单一类型过滤时，会静默丢弃
   等待期间收到的其它类型消息**：写 `flight_acceptance_test.py` 时，
   同一个轮询循环里分别用 `recv_match(type='GLOBAL_POSITION_INT', ...)`

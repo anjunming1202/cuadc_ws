@@ -1,9 +1,10 @@
 # cuadc_sim
 
-仿真资产：比赛场地世界文件、投放区/灾情侦察区的圆筒与危险化学品标识
-模型（还没做，见下方"现状"）、spawn 和话题桥接的 launch 文件（已完成）。
-仓库范围/仿真资产归属的决策见
-[`docs/spec/working-notes.md`](../../docs/spec/working-notes.md)。
+仿真资产：比赛场地世界文件（`field/`，config 驱动生成，已完成）、投放区/
+灾情侦察区的圆筒与危险化学品标识模型（已完成）、spawn 和话题桥接的
+launch 文件（已完成）。仓库范围/仿真资产归属的决策见
+[`docs/spec/working-notes.md`](../../docs/spec/working-notes.md)。场地
+的几何设计依据见 [`docs/spec/field-layout.md`](../../docs/spec/field-layout.md)。
 
 ## 外部依赖（不 vendor 进本仓库）
 
@@ -39,8 +40,9 @@
   验证端到端可用——Gazebo 物理 + 可视化、SITL 通过 JSON 协议连上 Gazebo
   飞行、QGroundControl 显示正常（`Ready to Fly`，正确的机架参数）、
   摄像头画面通过 `ros_gz_bridge` 桥接到 ROS2 话题 `/camera/image_raw`。
-  目前用的是 `ardupilot_gazebo` 仓库自带的示例场景/机体（`iris_runway.sdf`
-  + `iris_with_gimbal`），不是我们自己的比赛场地/机体。
+  默认加载的是我们自己的比赛场地 `field/cuadc_field.sdf`（`iris_runway.sdf`
+  这个 `ardupilot_gazebo` 自带的示例场景仍然可以通过 `world` 参数手动
+  切换回去，但已经不是默认值）。
 
 **这个 launch 文件没有使用 `ardupilot_gz` 官方自带的 launch 文件**（如
 `iris_runway.launch.py`）——那一套在本机环境下必现崩溃，是上游一个未
@@ -49,25 +51,31 @@
 "用法"）——"搭仿真世界"和"在这个世界里做什么"永远是两条独立的命令，
 任务/规划模块以后也遵循这个边界。
 
-**还没做**：我们自己的比赛场地 world 文件、圆筒/危险化学品标识模型。
+**比赛场地（`field/`）**：`config.py` 是场地每个尺寸的唯一权威来源
+（跟 [`docs/spec/field-layout.md`](../../docs/spec/field-layout.md) 里
+的设计对齐），`gen_world.py`/`gen_textures.py`/`gen_tube_mesh.py` 都从
+它生成，不手抄数字；投放/侦察圆筒是程序生成的空心筒网格（不是实心
+圆盘）；危险化学品标识是从原始 PDF 里逐像素提取的贴图；地面标线是真实
+薄方块几何体；`check_dimensions.py` 能直接校验生成出来的世界跟规则文档
+是否一致，不用靠肉眼在 GUI 里比对。已支持双场地并行布置（规则第 13
+节），场地 A/B 用独立命名的对象，共享一块加宽的地面。`camera_view.py`
+提供预置机位（overview/field/landing/drop/recon/flyover）方便调试时
+快速切视角。
 
 （此前怀疑的"跑道贴图渲染成灰色网格"问题已排查：跑道贴图其实是正常
 渲染的，当时因为贴图尺寸大/画面模糊没认出来；看到的网格是 Gazebo 自带
-的地面网格叠加显示，不是渲染失败，不是真的问题。）
+的地面网格叠加显示，不是渲染失败，不是真的问题——这条记录针对的是已
+弃用的 `iris_runway.sdf` 示例场景，现在默认场景是我们自己的
+`cuadc_field.sdf`。）
 
 ## 已解决问题
 
 - **GUIDED 起飞指令被接受，但电机从不真正爬升，几十秒后自动上锁**（已
-  修复）：根因已确认——SITL 默认编译 `HAL_WITH_ESC_TELEM` 为假（没有
-  CAN/串口 RCOut），导致 `ArduCopter/takeoff_check.cpp` 里唯一负责解除
-  电机 `spool-up block` 的函数整个函数体被编译掉，block 永远解不开。
-  两个 launch 文件现在都在 `sim_vehicle.py` 命令行里固定加了
-  `--configure-define=HAL_WITH_ESC_TELEM=1`（具体原因见两个 launch
-  文件里对应的行内注释），已验证起飞后飞机能在约 8 秒内爬升到目标
-  高度并稳定悬停，不再自动上锁。首次生效需要 SITL 完整重新编译（waf
-  define 变了会触发 clean rebuild），后续正常增量编译。`flight_acceptance_test`
-  已经针对 `gazebo_bringup`（不只是 `sitl_bringup`）实际跑通过，证实了
-  这个修复和"后端无关"的测试设计在 Gazebo 物理下同样成立。
+  修复）：根因和修复方式见 `docs/lessons.md` 2026-07-11 条目，两个
+  launch 文件都已经固定加了修复用的 `sim_vehicle.py` 参数。
+  `flight_acceptance_test` 已经针对 `gazebo_bringup`（不只是
+  `sitl_bringup`）实际跑通过，证实了这个修复和"后端无关"的测试设计在
+  Gazebo 物理下同样成立。
 
 ## 用法
 
