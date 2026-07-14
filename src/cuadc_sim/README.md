@@ -41,11 +41,12 @@
   级飞控指令接口沙盒，不需要 GPU/渲染，启动快。适合单独验证"发指令、
   读遥测"这条 MAVLink 通信逻辑，不涉及摄像头/感知。
 - **`gazebo_bringup.launch.py`**（接 Gazebo 物理）：完整仿真闭环，已
-  验证端到端可用——Gazebo 物理 + 可视化、SITL 通过 JSON 协议连上 Gazebo
-  飞行、QGroundControl 显示正常、摄像头画面通过 `ros_gz_bridge` 桥接到
-  ROS2 话题 `/camera/image_raw`。默认加载我们自己的比赛场地
+  验证端到端可用——Gazebo 物理 + 可视化（跟官方 world 一样流畅）、
+  SITL 通过 JSON 协议连上 Gazebo 飞行、`flight_acceptance_test` 完整
+  跑通起飞/悬停/降落/上锁。默认加载我们自己的比赛场地
   `field/cuadc_field.sdf`（`iris_runway.sdf` 这个 `ardupilot_gazebo`
-  自带的示例场景仍可通过 `world` 参数手动切换回去）。
+  自带的示例场景仍可通过 `world` 参数手动切换回去）。摄像头画面桥接
+  到 ROS2 话题 `/camera/image_raw`，见下方"用法"。
 
   这个 launch 文件没有使用 `ardupilot_gz` 官方自带的 launch 文件（如
   `iris_runway.launch.py`）——那一套在本机环境下必现崩溃，是上游一个

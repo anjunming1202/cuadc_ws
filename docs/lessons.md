@@ -97,10 +97,11 @@
   `ArduPilotPlugin.cc:1599 ArduPilot controller has reset` 是新客户端
   连上时的正常握手确认，不是报错。**教训**：(a) Gazebo 物理要
   `-f gazebo-iris --model JSON`，跟内置物理的 `-f quad` 是两条路；
-  (b) WSL2 下永远带 `--no-wsl2-network`，否则 MAVProxy 的 `--out` 会被
+  (b) WSL2 下永远带 `--no-wsl2-network`，否则 MAVProxy 的 `--out` 会
   悄悄改到 Windows 宿主 IP；(c) 排查阶段用 `-s`（headless）+
   `--no-mavproxy` 摘掉渲染和转发两个变量，能一刀切定位问题在物理桥
-  还是外围。
+  还是外围——但 `-s` 本身还有另一个独立的摄像头渲染 bug，见
+  2026-07-14 记录，排查时别把两层混在一起看。
 
 - **`ardupilot_gz_bringup` 官方 launch（`iris_runway.launch.py` 等）在
   本机必现崩溃，是上游未解决的已知 bug**：这些 launch 靠
@@ -200,3 +201,69 @@
   调用里按 `msg.get_type()` 分支处理，不能分成多次单类型调用交替读——
   后者天然会互相"饿死"对方。修复方式见 `flight_acceptance_test.py` 的
   `_next_state()`。
+
+## 2026-07-14
+
+- **诊断"`gazebo_bringup.launch.py` 卡住"时，用了一个跟真实路径不
+  等价的简化写法，把自己制造出的假象当成产品 bug 查了一整天**——
+  产品代码全程没有问题，这个方法论错误怎么发生、怎么发现的，比"卡住"
+  这个表象本身更值得记住。
+
+  诊断时为了方便直接抓 ArduCopter 的控制台输出，给
+  `run_in_terminal_window.sh` 设了 `SITL_RITW_TERMINAL=bash`，让它
+  不开真正的 `xterm` 终端窗口、直接把 ArduCopter 当 `bash` 的普通子
+  进程跑（用户实际操作、`sim_vehicle.py` 默认行为，都是通过
+  `xterm -e ...` 分配一个真实伪终端 pty 去跑 ArduCopter）。**这个
+  替代写法本身会导致 ArduCopter 卡在收到 Gazebo 第一个 JSON 物理包、
+  打印完 `validate_structures: Validating structures` 之后再也不发
+  MAVLink 心跳**，跟真实路径完全不是同一回事。用这个写法测了一整天
+  （换 ArduPilot 版本、换场地文件、清空/复用 EEPROM、手动调 Gazebo
+  物理步进速率……），每次都稳定复现同一个卡死，一度被当成"确认成立
+  的产品 bug"写进了文档和记忆。
+
+  最后靠同一时刻、同一份代码的对照实验才发现真相：走真实路径
+  （`./scripts/run_gazebo_demo.sh`，`xterm` 起 ArduCopter）连续两次
+  完整跑通（心跳 0.1 秒内收到，起飞爬升到 9.53m、悬停、`LAND`、
+  上锁，`flight_acceptance_test` PASSED）；只切换 `SITL_RITW_TERMINAL
+  =bash` 这一个变量，立刻又复现卡死；把顺手加的 `< /dev/null` 标准
+  输入重定向去掉、只留"不开真终端"这一个变量，仍然复现——确认真正的
+  变量是"有没有真实 pty"，不是喂了什么当 stdin。具体是 ArduCopter
+  内部哪一步依赖 `isatty()`/真实终端，没有定位到代码行（本机
+  `strace`/`gdb` 被沙盒权限挡住，见下一条），但触发条件已经用对照
+  实验锁死。
+
+  **教训**：诊断时为了方便换一种"看起来等价"的进程拉起方式（不开真
+  终端、直接 pipe 标准输出），不能默认它跟真实路径行为一致——尤其是
+  跟终端/pty 相关的行为差异极不直观，容易被忽略。正确顺序永远是
+  **先跑一次跟用户实际操作完全一致的路径当基线**，简化写法只能用来
+  加速复现"已经在基线上确认过"的现象，不能反过来拿简化写法自己的
+  复现结果去推断产品本身有没有 bug——本次连续测了一整天"都复现"，
+  恰恰是因为方法论错误本身是确定性的，不代表现象本身是真的；越是
+  "稳定复现、怎么测都一样"，越应该先怀疑测试方法本身有没有系统性
+  偏差，而不是越测越确信结论。二次验证（重启电脑后）：`gazebo launch
+  + flight_acceptance_test + QGroundControl` 三个终端一起跑，结论
+  不变——流畅、起飞/悬停/降落正常。
+
+- **Gazebo 渲染流畅不需要任何额外 GPU 配置**：`~/.gz/rendering/ogre2.log`
+  显示用的是 WSLg 默认的 D3D12→NVIDIA GPU 直通
+  （`GL_RENDERER = D3D12 (NVIDIA GeForce RTX 4060 Laptop GPU)`），全程
+  没做过任何手动调优。之前排查"卡"时在 GPU 加速方向上折腾过、卡在某
+  一步没解决，现在看那条路线不是必须的——默认直通本身就够流畅。
+
+- **这台机器排查工具受限，遇到需要看进程内部行为的问题这条路走不通**：
+  `strace`（含只 trace 自己起的子进程）报
+  `ptrace(PTRACE_SEIZE...): Operation not permitted`，`tcpdump` 报
+  `Operation not permitted`，都是沙盒/容器权限限制，不是装的方式
+  不对；`gdb` 没装。只能靠黑盒对照实验（每次只换一个变量，看现象
+  变不变）定位，定位不到具体代码行。
+
+- **Gazebo `-s`（headless）模式下，带摄像头传感器的 world 会卡死，
+  是真实存在、跟上面那条方法论错误无关的独立 bug**：任何带摄像头
+  传感器的 world（包括 upstream 最简单的官方示例 `camera_sensor.sdf`）
+  用 `-s` 起，都会在 `~/.gz/rendering/ogre2.log` 里报
+  `Texture memory budget exceeded. Stalling GPU.` 然后卡死。跟
+  `gazebo_bringup.launch.py` 无关（它用的是 GUI 模式，从不走 `-s`），
+  GUI 模式（含摄像头传感器）不受影响，跟官方 world 一样流畅；但以后
+  如果哪个场景需要用 headless 模式会踩到。**教训**：`-s` headless
+  和 GUI 模式在传感器渲染这条路上行为不等价，拿 `-s` 的复现结果去
+  推断 GUI 模式的问题，前提本身可能不成立。
