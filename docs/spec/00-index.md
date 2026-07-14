@@ -94,7 +94,7 @@ ArduPilot（GUIDED 模式为主）
 
 ## 开放问题
 
-当前尚未拍板的开放问题（危险化学品标识种类是否完整、仿真保真度等）不在
-本文档下结论，最新讨论状态见 [`working-notes.md`](working-notes.md)。
+当前尚未拍板的开放问题不在本文档下结论，最新讨论状态见
+[`working-notes.md`](working-notes.md)。
 机载/地面计算之争已拍板（结论：机载计算，无地面站计算路径），见
 [ADR-0002](adr/0002-onboard-inference-only.md)。
