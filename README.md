@@ -16,7 +16,7 @@ Computer）软件，飞控为 Pixhawk + ArduPilot（ArduCopter）。本仓库仅
 
 `src/cuadc_sim` 已跑通 Gazebo+SITL 端到端仿真闭环（物理、摄像头画面桥接
 到 ROS2、QGroundControl 验证正常），感知/规划/接口层这几个正式模块还
-未开始实现，详见 `src/cuadc_sim/README.md`"现状"一节。
+未开始实现，详见 `src/cuadc_sim/README.md`。
 
 外部时间约束：飞控组 phase 1（人工飞行 + 按软件组模拟指令调试控制器）
 需要在 2026-08-01 前完成，依赖本仓库尽早给出稳定的指令接口。

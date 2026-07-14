@@ -18,6 +18,15 @@ Single source of truth: every fact is maintained in exactly one place.
 Don't restate project facts (mission, architecture, status) here — this
 file is operating conventions only.
 
+Cross-references ("详见 X" / "see Y") exist to prevent two places from
+drifting out of sync — use them only where that risk is real: durable
+facts substantial enough to actually get duplicated and go stale.
+Don't add one by reflex for every fact that lives elsewhere, and never
+for minor or transient details (a one-off note, a passing rationale,
+something nobody will need to find again) — just state it once, in
+whichever place a reader would naturally look, and leave it at that.
+When in doubt, prefer no pointer over one more pointer.
+
 ## Where to find things
 
 See `README.md` — it has the project overview and directory structure.

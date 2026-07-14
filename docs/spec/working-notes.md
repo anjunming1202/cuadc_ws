@@ -72,8 +72,8 @@
     解决不了算力瓶颈（要在目标硬件上测）和真实物理扰动（风、传感器
     噪声这些需要额外配置，Gazebo 本身不会自动模拟）。
   - 当前验证进度、还没做的部分，权威版本在
-    [`src/cuadc_sim/README.md`](../../src/cuadc_sim/README.md)"现状"
-    一节，不在本文件重复维护（避免和 README 变成两个事实来源）。
+    [`src/cuadc_sim/README.md`](../../src/cuadc_sim/README.md)，不在
+    本文件重复维护（避免和 README 变成两个事实来源）。
   - 暂不写 ADR——这条决策本身记在这里已经够用，等真正搭完整套、
     形成稳定架构后再评估要不要正式写成 spec/ADR。
 
