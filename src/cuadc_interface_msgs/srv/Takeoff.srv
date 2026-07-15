@@ -1,0 +1,6 @@
+# 起飞到目标相对高度，底层对应 MAV_CMD_NAV_TAKEOFF；ArduCopter GUIDED
+# 模式必须先收到这个才会真正离地，单发 Go To Location/Set Velocity
+# 对地面上的飞机不生效（2026-07-15 SITL 实测确认，见 docs/spec/04-interfaces.md）
+float64 alt
+---
+bool success

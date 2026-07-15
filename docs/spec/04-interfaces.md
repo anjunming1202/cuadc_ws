@@ -62,9 +62,10 @@ Set Home Position、Air Speed（多旋翼不适用）。
 |---|---|---|---|---|
 | Arm / Disarm | service | `~/arm` | 自定义 `Arm.srv`（bool arm → bool success, string message） | 一次性动作，需要明确的成功/失败反馈 |
 | Set Mode | service | `~/set_mode` | 自定义 `SetMode.srv`（string mode → bool success） | 模式名用字符串（`GUIDED`/`RTL`/`LAND`/`LOITER`…），跟 ArduCopter 模式表直接对应，不建 ROS 枚举，避免和飞控模式表脱节 |
-| Go To Location | service | `~/goto_location` | 自定义 `GotoLocation.srv`（lat/lon/alt → bool success） | 目标点式指令；是否需要持续发送见下方"待验证事项" |
+| Takeoff | service | `~/takeoff` | 自定义 `Takeoff.srv`（float64 alt → bool success） | 底层 `MAV_CMD_NAV_TAKEOFF`。2026-07-15 SITL 实测确认：光发 `Go To Location`/`Set Velocity` 不会让停在地面的飞机爬升，ArduCopter GUIDED 模式必须先收到这个指令才会真正起飞——原契约漏了这一项，任务状态机的 `ARM_AND_TAKEOFF` 步骤离不开它 |
+| Go To Location | service | `~/goto_location` | 自定义 `GotoLocation.srv`（lat/lon/alt → bool success） | 目标点式指令，假设已在空中（先 Takeoff）；2026-07-15 SITL 实测确认单次调用即可，不需要持续发送（见"待验证事项"） |
 | Set Position Target | topic | `~/cmd/position_target` | 自定义 `PositionTarget.msg`（局部坐标 x/y/z） | 精确悬停微调用（对准圆筒/降落点），规划/决策按需持续发布 |
-| Set Velocity | topic | `~/cmd/velocity` | `geometry_msgs/TwistStamped` | 速度向量控制；发送频率下限见"待验证事项" |
+| Set Velocity | topic | `~/cmd/velocity` | `geometry_msgs/TwistStamped` | 速度向量控制；2026-07-15 SITL 实测确认停止发送后飞机会安全悬停、不会持续漂移（见"待验证事项"） |
 | Set Yaw | topic | `~/cmd/yaw` | `std_msgs/Float64`（目标偏航角，弧度） | 摄像头对位/环视用；topic vs service 的取舍见"待验证事项" |
 | 投放机构输出 | service | `~/set_relay` | 自定义 `SetRelay.srv`（uint8 channel, bool state → bool success） | 底层用 `MAV_CMD_DO_SET_RELAY`，布尔开关量（2026-07-15 已定，不用 PWM Servo） |
 
@@ -96,17 +97,22 @@ Set Home Position、Air Speed（多旋翼不适用）。
 
 ## 待验证事项（实现阶段用 SITL 验证，不在这里下结论）
 
-- **Go To Location 是否需要持续发送才能维持效果**：目前按"一次性
-  指令，ArduPilot 收到后自主飞过去并悬停"设计（对应 service，而非
-  topic）；如果实测发现 GUIDED 模式需要持续 setpoint 流才不会超时，
-  需要改成 topic。
-- **Set Velocity / Set Position Target 的发送频率下限**：ArduPilot
-  GUIDED 模式对 setpoint 超时判定的具体阈值需要实测确认，规划/决策
-  按这个频率持续发布。
+- ~~Go To Location 是否需要持续发送才能维持效果~~——**已用 SITL 实测
+  确认（2026-07-15）**：起飞后单次调用 `goto_location`（目标点 50m
+  外），飞机自主飞过去并稳定悬停在目标点，全程只发了一次，不需要
+  持续重发。维持 service（一次性指令）这个设计，契约不用改。
+- ~~Set Velocity 的发送频率下限~~——**已用 SITL 实测确认
+  （2026-07-15）**：发 3 秒速度指令后停止发送，飞机没有按最后一次
+  速度持续漂移，而是停下并稳定悬停——ArduPilot GUIDED 模式对速度
+  setpoint 有内建的丢失保护，不会无限期沿用旧指令。规划/决策不需要
+  为了"安全兜底"专门维护一个持续重发的看门狗逻辑，但仍建议按合理
+  频率（比如几 Hz）持续发布，让控制更平滑，不是协议要求的安全刚需。
+  精确的超时阈值这次没测（不是这次要回答的问题），需要更细的频率
+  才知道。
 - **Set Yaw 用 topic 还是 service**：如果只是"转到某个角度就不用管
   了"，one-shot service 更合适；如果需要连续追踪（比如摄像头持续
   扫描目标），topic 更合适——取决于感知/视觉模块的实际用法，待该
-  模块设计时再对齐。
+  模块设计时再对齐。仍未验证。
 
 ## 包名
 

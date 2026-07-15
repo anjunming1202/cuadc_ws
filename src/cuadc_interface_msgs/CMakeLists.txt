@@ -14,6 +14,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/CommandAck.msg"
   "srv/Arm.srv"
   "srv/SetMode.srv"
+  "srv/Takeoff.srv"
   "srv/GotoLocation.srv"
   "srv/SetRelay.srv"
 )

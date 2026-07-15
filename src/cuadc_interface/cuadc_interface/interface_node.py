@@ -25,7 +25,7 @@ from cuadc_interface_msgs.msg import (
     PositionTarget,
     RelayState,
 )
-from cuadc_interface_msgs.srv import Arm, GotoLocation, SetMode, SetRelay
+from cuadc_interface_msgs.srv import Arm, GotoLocation, SetMode, SetRelay, Takeoff
 from geometry_msgs.msg import PoseStamped, TwistStamped
 from sensor_msgs.msg import BatteryState, Imu, NavSatFix
 from std_msgs.msg import Bool, Float64, String
@@ -96,6 +96,7 @@ class InterfaceNode(Node):
         """决策 <-> 飞控接口层，双向、要等回应：一次性动作，需确认成不成功。"""
         self.create_service(Arm, '~/arm', self._on_arm)
         self.create_service(SetMode, '~/set_mode', self._on_set_mode)
+        self.create_service(Takeoff, '~/takeoff', self._on_takeoff)
         self.create_service(GotoLocation, '~/goto_location', self._on_goto_location)
         self.create_service(SetRelay, '~/set_relay', self._on_set_relay)
 
@@ -350,6 +351,17 @@ class InterfaceNode(Node):
                     response.success = True
                     return response
         response.success = False
+        return response
+
+    def _on_takeoff(self, request, response):
+        # ArduCopter GUIDED 模式必须先收到 MAV_CMD_NAV_TAKEOFF 才会真正
+        # 离地，Go To Location/Set Velocity 对停在地面的飞机不生效
+        # （2026-07-15 SITL 实测确认，见 04-interfaces.md）。
+        ok = self._send_command_and_wait_ack(
+            mavutil.mavlink.MAV_CMD_NAV_TAKEOFF,
+            (0, 0, 0, 0, 0, 0, request.alt),
+            self._command_ack_timeout)
+        response.success = ok
         return response
 
     def _on_goto_location(self, request, response):

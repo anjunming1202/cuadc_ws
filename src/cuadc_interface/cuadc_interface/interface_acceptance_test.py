@@ -13,13 +13,14 @@ src/cuadc_sim/README.md）。
   ros2 launch cuadc_interface interface_bringup.launch.py   # 另一个终端
   ros2 run cuadc_interface interface_acceptance_test
 """
+import math
 import time
 
 import rclpy
 from rclpy.node import Node
 
 from cuadc_interface_msgs.msg import EkfStatus
-from cuadc_interface_msgs.srv import Arm, GotoLocation, SetMode, SetRelay
+from cuadc_interface_msgs.srv import Arm, GotoLocation, SetMode, SetRelay, Takeoff
 from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import Bool, String
 
@@ -31,12 +32,19 @@ class InterfaceAcceptanceTest(Node):
         self.declare_parameter('service_timeout_sec', 10.0)
         self.declare_parameter('ekf_ready_timeout_sec', 60.0)
         self.declare_parameter('telemetry_timeout_sec', 10.0)
+        self.declare_parameter('takeoff_altitude_m', 10.0)
+        self.declare_parameter('takeoff_timeout_sec', 30.0)
+        self.declare_parameter('land_timeout_sec', 60.0)
         self._service_timeout = self.get_parameter('service_timeout_sec').value
         self._ekf_ready_timeout = self.get_parameter('ekf_ready_timeout_sec').value
         self._telemetry_timeout = self.get_parameter('telemetry_timeout_sec').value
+        self._takeoff_altitude = self.get_parameter('takeoff_altitude_m').value
+        self._takeoff_timeout = self.get_parameter('takeoff_timeout_sec').value
+        self._land_timeout = self.get_parameter('land_timeout_sec').value
 
         self._arm_client = self.create_client(Arm, '/cuadc_interface/arm')
         self._set_mode_client = self.create_client(SetMode, '/cuadc_interface/set_mode')
+        self._takeoff_client = self.create_client(Takeoff, '/cuadc_interface/takeoff')
         self._goto_client = self.create_client(GotoLocation, '/cuadc_interface/goto_location')
         self._relay_client = self.create_client(SetRelay, '/cuadc_interface/set_relay')
 
@@ -55,13 +63,14 @@ class InterfaceAcceptanceTest(Node):
         self._wait_for_ekf_ready()
         self._check_set_mode()
         self._check_arm()
+        self._check_takeoff()
         self._check_goto_location()
         self._check_set_relay()
-        self._check_disarm()
+        self._check_land_and_disarm()
 
         self.get_logger().info(
-            'interface acceptance test PASSED: set_mode/arm/goto_location/'
-            'set_relay all confirmed against a live vehicle via the ROS2 contract')
+            'interface acceptance test PASSED: set_mode/arm/takeoff/goto_location/'
+            'set_relay/land all confirmed against a live vehicle via the ROS2 contract')
         rclpy.shutdown()
 
     def _on_mode(self, msg):
@@ -80,6 +89,7 @@ class InterfaceAcceptanceTest(Node):
         for name, client in (
             ('arm', self._arm_client),
             ('set_mode', self._set_mode_client),
+            ('takeoff', self._takeoff_client),
             ('goto_location', self._goto_client),
             ('set_relay', self._relay_client),
         ):
@@ -131,25 +141,59 @@ class InterfaceAcceptanceTest(Node):
             lambda: self._latest_armed is True, 'armed telemetry confirming True')
         self.get_logger().info('arm(True) confirmed via telemetry')
 
+    def _check_takeoff(self):
+        # 2026-07-15 SITL 实测确认：光发 Go To Location/Set Velocity 不会
+        # 让停在地面的飞机爬升，必须先调这个——见 04-interfaces.md。
+        self._wait_for_condition(
+            lambda: self._latest_position is not None, 'a global_position sample')
+        base_alt = self._latest_position.altitude
+        self.get_logger().info(
+            f'calling takeoff(alt={self._takeoff_altitude}) from base_alt={base_alt:.2f} ...')
+        result = self._call(self._takeoff_client, Takeoff.Request(alt=self._takeoff_altitude), 'takeoff')
+        if not result.success:
+            raise RuntimeError('takeoff returned success=False')
+        self._wait_for_condition(
+            lambda: (self._latest_position.altitude - base_alt) >=
+            self._takeoff_altitude - 1.0,
+            'altitude telemetry confirming climb', timeout=self._takeoff_timeout)
+        self.get_logger().info('takeoff confirmed via telemetry (climbed to target altitude)')
+
     def _check_goto_location(self):
-        # SET_POSITION_TARGET_GLOBAL_INT 没有协议层 ack（04-interfaces.md
-        # 已经标了这一点），这里只能确认"服务返回成功"，不能像
-        # set_mode/arm 那样靠遥测反向确认真的到没到。目标点相对当前位置
-        # 算一个小偏移（同 cuadc_sim/sitl_smoke_test.py 的做法），不写死
-        # 绝对坐标——这样换一个 SITL 起飞点/换场地世界文件都不用改这个脚本。
+        # SET_POSITION_TARGET_GLOBAL_INT 没有协议层 ack，service 返回
+        # success=True 只代表"发出去了"，不代表飞控真的执行了，所以要靠
+        # 遥测算实际移动距离确认，不能只看服务返回值就往下走——距离本身
+        # 选多大不是关键，等不等飞机真的飞到才是关键。目标点相对当前
+        # 位置算偏移（不写死绝对坐标，换起飞点/场地世界文件不用改这个
+        # 脚本），高度维持跟起飞一致，不同时变高度，避免爬升掩盖水平
+        # 位移的判断。假设已经在空中（先 _check_takeoff）——地面上发这个
+        # 不生效。
         self._wait_for_condition(
             lambda: self._latest_position is not None, 'a global_position sample')
         pos = self._latest_position
-        target_lat = pos.latitude + 0.00003  # ~3m north
-        target_lon = pos.longitude
+        base_lat, base_lon = pos.latitude, pos.longitude
+        target_lat = base_lat + 0.000045  # ~5m north
+        target_lon = base_lon
         self.get_logger().info(
-            f'calling goto_location(lat={target_lat:.7f}, lon={target_lon:.7f}, alt=20) ...')
-        request = GotoLocation.Request(lat=target_lat, lon=target_lon, alt=20.0)
+            f'calling goto_location(lat={target_lat:.7f}, lon={target_lon:.7f}, '
+            f'alt={self._takeoff_altitude}) ...')
+        request = GotoLocation.Request(
+            lat=target_lat, lon=target_lon, alt=self._takeoff_altitude)
         result = self._call(self._goto_client, request, 'goto_location')
         if not result.success:
             raise RuntimeError('goto_location returned success=False')
+
+        def distance_from_base():
+            dlat = self._latest_position.latitude - base_lat
+            dlon = self._latest_position.longitude - base_lon
+            return math.hypot(dlat, dlon) * 111320  # 粗略换算成米
+
+        self._wait_for_condition(
+            lambda: distance_from_base() >= 4.0,
+            'position telemetry confirming the vehicle actually moved ~5m',
+            timeout=15.0)
         self.get_logger().info(
-            'goto_location accepted (no protocol-level ack to confirm further)')
+            f'goto_location confirmed via telemetry (moved '
+            f'{distance_from_base():.1f}m from base)')
 
     def _check_set_relay(self):
         self.get_logger().info('calling set_relay(channel=0, state=True) ...')
@@ -159,14 +203,19 @@ class InterfaceAcceptanceTest(Node):
             raise RuntimeError('set_relay returned success=False')
         self.get_logger().info('set_relay accepted')
 
-    def _check_disarm(self):
-        self.get_logger().info('calling arm(False) to clean up ...')
-        result = self._call(self._arm_client, Arm.Request(arm=False), 'arm')
+    def _check_land_and_disarm(self):
+        # 空中直接 arm(False) 等于断电摔机——flight_acceptance_test.py 把
+        # 这种情况当失败条件，不是合法收尾方式。必须先 LAND，落地后
+        # ArduCopter 会自己 disarm，靠遥测确认，不主动发 disarm 指令。
+        self.get_logger().info('calling set_mode(LAND) to clean up ...')
+        result = self._call(self._set_mode_client, SetMode.Request(mode='LAND'), 'set_mode')
         if not result.success:
-            raise RuntimeError('disarm returned success=False')
+            raise RuntimeError('set_mode(LAND) returned success=False')
         self._wait_for_condition(
-            lambda: self._latest_armed is False, 'armed telemetry confirming False')
-        self.get_logger().info('disarm confirmed via telemetry')
+            lambda: self._latest_armed is False,
+            'armed telemetry confirming auto-disarm after landing',
+            timeout=self._land_timeout)
+        self.get_logger().info('landed and disarmed (confirmed via telemetry)')
 
 
 def main(args=None):
