@@ -1,0 +1,5 @@
+# 解锁/上锁，见 docs/spec/04-interfaces.md
+bool arm
+---
+bool success
+string message

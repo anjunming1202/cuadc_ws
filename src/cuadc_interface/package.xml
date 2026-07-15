@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>cuadc_interface</name>
+  <version>0.0.0</version>
+  <description>接口层：与 ArduPilot 的 MAVLink 通信桥接节点，契约见 docs/spec/04-interfaces.md</description>
+  <maintainer email="anjunming0819@outlook.com">Junming An</maintainer>
+  <license>MIT</license>
+
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>cuadc_interface_msgs</depend>
+  <depend>launch</depend>
+  <depend>launch_ros</depend>
+
+  <!-- pymavlink 是外部、不 vendor 进本仓库的依赖（见
+       docs/spec/working-notes.md），用 `pip3 install --user pymavlink`
+       装，不走 apt/rosdep（Ubuntu 没有 python3-pymavlink 这个 rosdep
+       key，cuadc_sim 的 package.xml 也是同样处理）。目前 interface_node.py
+       还没实现协议逻辑，暂未 import。 -->
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

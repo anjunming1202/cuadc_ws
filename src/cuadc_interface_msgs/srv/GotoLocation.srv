@@ -1,0 +1,6 @@
+# 一次性目标点指令，见 docs/spec/04-interfaces.md（是否需要持续发送待 SITL 验证）
+float64 lat
+float64 lon
+float64 alt
+---
+bool success

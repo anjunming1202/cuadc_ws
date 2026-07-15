@@ -1,0 +1,5 @@
+# 切换飞控模式；mode 用 ArduCopter 模式名字符串（GUIDED/RTL/LAND/LOITER...），
+# 见 docs/spec/04-interfaces.md
+string mode
+---
+bool success
