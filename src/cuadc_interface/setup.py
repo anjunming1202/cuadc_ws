@@ -24,6 +24,7 @@ setup(
     entry_points={
         'console_scripts': [
             'interface_node = cuadc_interface.interface_node:main',
+            'interface_acceptance_test = cuadc_interface.interface_acceptance_test:main',
         ],
     },
 )

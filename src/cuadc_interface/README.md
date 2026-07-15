@@ -7,11 +7,9 @@
 
 ## 当前状态
 
-`interface_node.py` 是契约骨架——按 `04-interfaces.md` 声明了全部
-话题/服务，但没有 MAVLink 连接、没有协议实现，指令服务调用会直接抛
-`NotImplementedError`。这是刻意的：先把接口形状定下来，规划/决策可以
-先对着这份骨架搭桩测试，接口层的真实协议实现（pymavlink 连接管理、
-编解码）随后再补。
+`interface_node.py` 已实现 `04-interfaces.md` 里的全部话题/服务，
+接过真实 SITL 验证过（`set_mode`/`arm`/`goto_location`/`set_relay`
+及全部遥测）。
 
 ## 外部依赖（不 vendor 进本仓库）
 
@@ -24,4 +22,11 @@
 ```
 ros2 launch cuadc_interface interface_bringup.launch.py
 ros2 launch cuadc_interface interface_bringup.launch.py connection:=udp:127.0.0.1:14550
+```
+
+验收测试（需要先起好上面的节点并连上 SITL/真机，不在 launch 文件里，
+单独手动跑）：
+
+```
+ros2 run cuadc_interface interface_acceptance_test
 ```

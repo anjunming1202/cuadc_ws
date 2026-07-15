@@ -93,18 +93,21 @@ class InterfaceNode(Node):
     # -- 建图/发布/订阅声明 --
 
     def _create_services(self):
+        """决策 <-> 飞控接口层，双向、要等回应：一次性动作，需确认成不成功。"""
         self.create_service(Arm, '~/arm', self._on_arm)
         self.create_service(SetMode, '~/set_mode', self._on_set_mode)
         self.create_service(GotoLocation, '~/goto_location', self._on_goto_location)
         self.create_service(SetRelay, '~/set_relay', self._on_set_relay)
 
     def _create_subscriptions(self):
+        """决策 -> 飞控接口层，单向、不等回应：持续流式下发的指令。"""
         self.create_subscription(
             PositionTarget, '~/cmd/position_target', self._on_position_target, 10)
         self.create_subscription(TwistStamped, '~/cmd/velocity', self._on_velocity, 10)
         self.create_subscription(Float64, '~/cmd/yaw', self._on_yaw, 10)
 
     def _create_publishers(self):
+        """飞控接口层 -> 决策，单向、不等回应：遥测广播。"""
         self.connected_pub = self.create_publisher(Bool, '~/status/connected', 10)
         self.armed_pub = self.create_publisher(Bool, '~/status/armed', 10)
         self.mode_pub = self.create_publisher(String, '~/status/mode', 10)
@@ -425,7 +428,8 @@ def main(args=None):
         node._shutdown.set()
         node._io_thread.join(timeout=3.0)
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':
