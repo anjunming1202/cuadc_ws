@@ -19,13 +19,16 @@
 
 ## 用法
 
+每个终端先 `source scripts/activate_env.sh`（工作区通用的环境准备，
+跟 `cuadc_sim` 共用同一份，见该脚本注释），再执行：
+
 ```
 ros2 launch cuadc_interface interface_bringup.launch.py
 ros2 launch cuadc_interface interface_bringup.launch.py connection:=udp:127.0.0.1:14550
 ```
 
-验收测试（需要先起好上面的节点并连上 SITL/真机，不在 launch 文件里，
-单独手动跑）：
+验收测试（需要先在另一个终端起好上面的节点并连上 SITL/真机，不在
+launch 文件里，单独手动跑）：
 
 ```
 ros2 run cuadc_interface interface_acceptance_test
