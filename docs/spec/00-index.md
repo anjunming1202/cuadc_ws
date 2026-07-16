@@ -18,8 +18,7 @@
   与确认、投放/动作决策。
 - **接口层**——与 ArduPilot 的 MAVLink 通信，独立于规划/决策模块（见
   [ADR-0001](adr/0001-interface-layer-separate-module.md)）。对外
-  话题/服务契约见 [`04-interfaces.md`](04-interfaces.md)（草案，待
-  确认）。
+  话题/服务契约见 [`04-interfaces.md`](04-interfaces.md)。
 - **日志**（横向能力，机制未定，见下方"横向关注点"）。
 
 感知/视觉、规划/决策目前还没有独立的详细设计文档，等设计内容长到

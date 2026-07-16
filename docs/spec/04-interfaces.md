@@ -1,11 +1,5 @@
 # 04. 接口层——ROS2 契约
 
-> **本文档状态：草案，待用户签字确认**。标"待确认"的地方是设计草案，
-> 不是拍板的决策；确认后再删掉这个提示，且在正式建包（写代码）之前
-> 必须先确认——这是 [ADR-0001](adr/0001-interface-layer-separate-module.md)
-> 明确要求的顺序（先有契约，规划/决策才能用桩测试，接口层实现才有
-> 明确目标）。
-
 ## 范围与定位
 
 接口层是**纯粹的 ROS2 ↔ MAVLink 翻译层**，只做协议转换，不包含任何
@@ -24,9 +18,8 @@
 
 ## 技术路线
 
-自研，基于 `pymavlink`（不用 MAVROS 2）。原因见
-[`working-notes.md`](working-notes.md) 2026-07-15 决策记录：两人团队
-+ 外部时限下，`pymavlink` 已是现有依赖且 `cuadc_sim` 的
+自研，基于 `pymavlink`（不用 MAVROS 2）。原因：两人团队 + 外部时限下，
+`pymavlink` 已是现有依赖且 `cuadc_sim` 的
 `sitl_smoke_test`/`flight_acceptance_test` 已验证过核心协议动作，
 增量工作量小于新增 MAVROS 依赖的配置/学习成本。
 
@@ -63,11 +56,11 @@ Set Home Position、Air Speed（多旋翼不适用）。
 | Arm / Disarm | service | `~/arm` | 自定义 `Arm.srv`（bool arm → bool success, string message） | 一次性动作，需要明确的成功/失败反馈 |
 | Set Mode | service | `~/set_mode` | 自定义 `SetMode.srv`（string mode → bool success） | 模式名用字符串（`GUIDED`/`RTL`/`LAND`/`LOITER`…），跟 ArduCopter 模式表直接对应，不建 ROS 枚举，避免和飞控模式表脱节 |
 | Takeoff | service | `~/takeoff` | 自定义 `Takeoff.srv`（float64 alt → bool success） | 底层 `MAV_CMD_NAV_TAKEOFF`。2026-07-15 SITL 实测确认：光发 `Go To Location`/`Set Velocity` 不会让停在地面的飞机爬升，ArduCopter GUIDED 模式必须先收到这个指令才会真正起飞——原契约漏了这一项，任务状态机的 `ARM_AND_TAKEOFF` 步骤离不开它。**`alt` 是相对起飞点的高度，不是海拔**（见下方"高度基准"） |
-| Go To Location | service | `~/goto_location` | 自定义 `GotoLocation.srv`（lat/lon/alt → bool success） | 目标点式指令，假设已在空中（先 Takeoff）；2026-07-15 SITL 实测确认单次调用即可，不需要持续发送（见"待验证事项"）。**`alt` 是相对起飞点的高度，不是海拔**（见下方"高度基准"） |
+| Go To Location | service | `~/goto_location` | 自定义 `GotoLocation.srv`（lat/lon/alt → bool success） | 目标点式指令，假设已在空中（先 Takeoff）；2026-07-15 SITL 实测确认单次调用即可，不需要持续发送。**`alt` 是相对起飞点的高度，不是海拔**（见下方"高度基准"） |
 | Set Position Target | topic | `~/cmd/position_target` | 自定义 `PositionTarget.msg`（局部坐标 x/y/z） | 精确悬停微调用（对准圆筒/降落点），规划/决策按需持续发布。**x/y/z 是相对当前位置和当前朝向的偏移量**（前/右/下，`MAV_FRAME_BODY_OFFSET_NED`）——调用方不需要读当前位置再加，飞控收到指令那一刻用自己最新状态现算，避免遥测往返延迟导致目标基于过时位置。**不会自动转向**，见下方"自动朝向行为" |
 | Set Position Target (Local) | topic | `~/cmd/position_target_local` | 复用 `PositionTarget.msg`（局部坐标 x/y/z） | 跟上面那个区别是坐标系：**x/y/z 是绝对局部坐标**（相对起飞点，`MAV_FRAME_LOCAL_NED`），不随发指令时机身朝向变化——适合"目标点在一个不随机身转动的局部坐标里已知"的场景（比如回到一个之前记下的局部坐标点，不用每次重新算相对偏移）。同样**不会自动转向**，见下方"自动朝向行为" |
-| Set Velocity | topic | `~/cmd/velocity` | `geometry_msgs/TwistStamped` | 速度向量控制。**`linear.x/y/z` 是相对当前朝向的机身系速度**（前/右/下，`MAV_FRAME_BODY_OFFSET_NED`），不是地理北/东/地——跟 `Set Position Target` 同样的理由；yaw 未改动，仍保留默认自动朝向。2026-07-16 SITL 实测确认：停止发送后飞机不会一直按最后速度漂移，但 ArduCopter `GUID_TIMEOUT`（默认 3.0s）之内还是会按惯性继续飞，之后才真正清零速度目标——观察"是否安全停下"要给够超过 3s 的等待时间，否则会误判 |
-| Set Yaw | topic | `~/cmd/yaw` | `std_msgs/Float64`（目标偏航角，弧度） | 摄像头对位/环视用；topic vs service 的取舍见"待验证事项"。**只有飞机静止（没有并发的位置类指令）时才是独立可控的**，见下方"自动朝向行为"。接口层内部会把弧度转度并归一化到 `[0,360)` 再发送——ArduCopter 收到负数会直接拒绝该指令（2026-07-16 SITL 实测确认） |
+| Set Velocity | topic | `~/cmd/velocity` | `geometry_msgs/TwistStamped` | 速度向量控制。**`linear.x/y/z` 是相对当前朝向的机身系速度**（前/右/下，`MAV_FRAME_BODY_OFFSET_NED`），不是地理北/东/地——跟 `Set Position Target` 同样的理由；yaw 未改动，仍保留默认自动朝向。2026-07-16 SITL 实测确认：停止发送后飞机不会一直按最后速度漂移，但 ArduCopter `GUID_TIMEOUT`（默认 3.0s）之内还是会按惯性继续飞，之后才真正清零速度目标——观察"是否安全停下"要给够超过 3s 的等待时间，否则会误判。**规划/决策不需要为了安全兜底专门维护持续重发的看门狗逻辑**（丢失保护已经内建），但仍建议按合理频率（比如几 Hz）持续发布让控制更平滑——这是体验建议，不是协议要求的安全刚需 |
+| Set Yaw | topic | `~/cmd/yaw` | `std_msgs/Float64`（目标偏航角，弧度） | 摄像头对位/环视用；用 topic 是因为跟 `Set Position Target`/`Set Velocity` 这两个精细控制类原语用法一致（连续流式发布、不用等回应），三者保持统一，方便视觉模块同一套调用风格。**只有飞机静止（没有并发的位置类指令）时才是独立可控的**，见下方"自动朝向行为"。接口层内部会把弧度转度并归一化到 `[0,360)` 再发送——ArduCopter 收到负数会直接拒绝该指令（2026-07-16 SITL 实测确认） |
 | 投放机构输出 | service | `~/set_relay` | 自定义 `SetRelay.srv`（uint8 channel, bool state → bool success） | 底层用 `MAV_CMD_DO_SET_RELAY`，布尔开关量（2026-07-15 已定，不用 PWM Servo） |
 
 ## 契约总览：遥测（ArduPilot → 接口层 → 规划/决策）
@@ -104,8 +97,7 @@ Set Home Position、Air Speed（多旋翼不适用）。
 "离地高度"这个量，用 `local_position` 的 `-position.z`，它本来就是
 相对起飞点的，不用换算。**
 
-## 自动朝向行为：位置类指令会自动改 yaw（`Go To Location`），`Set
-## Position Target` 已锁定不受影响
+## 自动朝向行为
 
 ArduCopter `WP_YAW_BEHAVIOR` 参数默认是"面向飞行方向"，位置类指令不
 主动带 yaw 信息的话飞控会自己接管朝向、转向飞行方向。2026-07-16
@@ -127,25 +119,6 @@ ArduCopter `WP_YAW_BEHAVIOR` 参数默认是"面向飞行方向"，位置类指�
 对指令返回简单的确认。桩不需要理解 MAVLink 或 ArduPilot 的任何细节，
 只要符合这份契约即可（这是 [ADR-0001](adr/0001-interface-layer-separate-module.md)
 "规划/决策可用桩替代真实/仿真飞控测试"的落地方式）。
-
-## 待验证事项（实现阶段用 SITL 验证，不在这里下结论）
-
-- ~~Go To Location 是否需要持续发送才能维持效果~~——**已用 SITL 实测
-  确认（2026-07-15）**：起飞后单次调用 `goto_location`（目标点 50m
-  外），飞机自主飞过去并稳定悬停在目标点，全程只发了一次，不需要
-  持续重发。维持 service（一次性指令）这个设计，契约不用改。
-- ~~Set Velocity 的发送频率下限~~——**已用 SITL 实测确认
-  （2026-07-15）**：发 3 秒速度指令后停止发送，飞机没有按最后一次
-  速度持续漂移，而是停下并稳定悬停——ArduPilot GUIDED 模式对速度
-  setpoint 有内建的丢失保护，不会无限期沿用旧指令。规划/决策不需要
-  为了"安全兜底"专门维护一个持续重发的看门狗逻辑，但仍建议按合理
-  频率（比如几 Hz）持续发布，让控制更平滑，不是协议要求的安全刚需。
-  精确的超时阈值这次没测（不是这次要回答的问题），需要更细的频率
-  才知道。
-- **Set Yaw 用 topic 还是 service**：如果只是"转到某个角度就不用管
-  了"，one-shot service 更合适；如果需要连续追踪（比如摄像头持续
-  扫描目标），topic 更合适——取决于感知/视觉模块的实际用法，待该
-  模块设计时再对齐。仍未验证。
 
 ## 包名
 

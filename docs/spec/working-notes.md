@@ -51,28 +51,11 @@
 
 ## 已解决、迁移进正式文档的问题
 
-- **接口层要不要独立成一个模块/包**：已决定独立，含"仿真 vs 真机不是
-  两套代码，只是 launch 传入的 MAVLink 连接目标不同"这条推论，见
-  [ADR-0001](adr/0001-interface-layer-separate-module.md) 和
-  [`00-index.md`](00-index.md)"仿真 vs 真机不是两套代码"一节，不在此
-  重复。
-- **接口层用什么库跟 ArduPilot 通信（MAVROS 2 vs 自研 pymavlink）**：
-  已拍板走**自研 pymavlink** 路线，不引入 MAVROS。原因：两人团队 +
-  2026-08-01 外部时限下，MAVROS 需要在每台机器上新增一个系统级依赖
-  （apt 包 + GeographicLib 数据集）、多学一套 plugin/config 体系，
-  调试时多一层要懂的东西；而 `pymavlink` 已经是现有依赖（见
-  `docs/reference/tech-stack.md`），且 `cuadc_sim` 的
-  `sitl_smoke_test`/`flight_acceptance_test` 已经用它验证过心跳检测、
-  解锁、切 GUIDED、发送位置目标这些核心操作——接口层是把这些验证过的
-  逻辑整理成正式的、契约化的 ROS2 包，是增量工作，不是从零开始。先做
-  满足任务状态机需要的最小契约，功能不够再扩展，不追求一次覆盖
-  `ardupilot-interface-overview.md` 里的全部能力。
-  - ADR-0001 里"暂定包名 `mavros_bridge`"是基于会用 MAVROS 的假设，
-    现在不成立了，最终包名待定（同 ADR-0001 的处理方式，留到实际
-    建包时再定）。
-  - 分支 `feature/interface-layer`（2026-07-15 从 `master` 切出）。
-- **`docs/spec/00-index.md` 大纲**：已经写成正式文档，见
-  [`00-index.md`](00-index.md)，本文件不再重复维护大纲提案。
+接口层的模块边界、技术路线（自研 pymavlink，不用 MAVROS）、话题/服务
+契约已经全部迁移进 [`04-interfaces.md`](04-interfaces.md) 和
+[ADR-0001](adr/0001-interface-layer-separate-module.md)，本文件不再
+重复维护。
+
 - **"机载计算" vs "地面站自动计算"**：已拍板为"机载计算，无地面站计算
   路径"，见 [ADR-0002](adr/0002-onboard-inference-only.md)（决策依据）
   和 `docs/lessons.md` 2026-07-09 条目（此前推理为什么反复横跳过）。
@@ -129,13 +112,6 @@
   - 暂不写 ADR，跟上面"仿真到底要搭多真"一致的处理方式——等真正开始
     实现 `03-planning.md` 时再评估是否需要正式 ADR。
 
-- **接口层的功能边界**：接口层是纯粹的 ROS2 ↔ MAVLink 翻译层，只提供
-  不带任务语义的通用原语（Arm/Disarm、Set Mode、Go To Location、Set
-  Position Target、Set Velocity、Set Yaw、投放机构 Relay 输出，以及
-  对应的遥测读出）。"该去投放区还是侦察区""什么时候判定到了切下一个
-  状态"这类任务语义完全是规划/决策模块的逻辑，接口层对此无感——这是
-  对 ADR-0001"接口层独立于规划/决策"的具体化，不是新决策。契约细节
-  见 [`04-interfaces.md`](04-interfaces.md)。
 - **三个物理开关信号各自怎么接**（在"规划模块任务如何触发"那条已定的
   三开关分工基础上，进一步明确信号路径）：
   - **任务开关**：直连伴随计算机 GPIO，软件直接读电平触发
@@ -152,14 +128,10 @@
     跟飞控自己的硬 Failsafe 是两层不冲突的机制。
   - 结论：安全/触发信号是分布式的，不是"都在伴随计算机上"，也不是
     "都走接口层"——四层各管一段，见 `00-index.md`"横向关注点"。
-- **投放机构驱动方式**：定为 GPIO/Relay 布尔量（不用 PWM Servo），
-  MAVLink 层面对应 `MAV_CMD_DO_SET_RELAY`。
 
 ## 还没决定、需要讨论的开放问题
 
-目前没有待讨论的开放问题——`04-interfaces.md` 契约草案待用户签字确认
-（见该文件"待确认"标注的部分），确认后才能开始写接口层包的代码，是
-下一步，不是开放问题。
+目前没有待讨论的开放问题。
 
 ## 早期架构草案里可复用的部分（已按现在的范围重新解读）
 

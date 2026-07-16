@@ -8,8 +8,9 @@
 ## 当前状态
 
 `interface_node.py` 已实现 `04-interfaces.md` 里的全部话题/服务，
-接过真实 SITL 验证过（`set_mode`/`arm`/`goto_location`/`set_relay`
-及全部遥测）。
+全部指令原语（Arm/Set Mode/Takeoff/Go To Location/两个 Set Position
+Target/Set Velocity/Set Yaw/Set Relay）和全部遥测都过真实 SITL 验证过，
+见下方四个测试脚本。
 
 ## 外部依赖（不 vendor 进本仓库）
 
