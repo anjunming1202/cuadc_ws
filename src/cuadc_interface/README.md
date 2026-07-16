@@ -47,3 +47,10 @@ ros2 run cuadc_interface interface_maneuver_test
 ```
 ros2 run cuadc_interface interface_precision_test
 ```
+
+速度测试（Set Velocity 快速验证：发速度真的会动、停止发送真的会停，
+比其它测试脚本简单很多，见文件顶部说明）：
+
+```
+ros2 run cuadc_interface interface_velocity_test
+```

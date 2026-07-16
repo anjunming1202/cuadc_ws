@@ -437,9 +437,13 @@ class InterfaceNode(Node):
         master = self._master
         if master is None:
             return
+        # MAV_FRAME_BODY_OFFSET_NED：vx/vy/vz 是相对当前朝向的机身系速度
+        # （前/右/下），不是地理北/东/地——跟 Set Position Target 同样的
+        # 理由（遥控/视觉伺服场景天然是机身系直觉）。yaw 没有改动，仍然
+        # 忽略，保留默认自动朝向，见 04-interfaces.md"自动朝向行为"一节。
         master.mav.set_position_target_local_ned_send(
             0, master.target_system, master.target_component,
-            mavutil.mavlink.MAV_FRAME_LOCAL_NED,
+            mavutil.mavlink.MAV_FRAME_BODY_OFFSET_NED,
             0b0000111111000111,
             0, 0, 0,
             msg.twist.linear.x, msg.twist.linear.y, msg.twist.linear.z,
