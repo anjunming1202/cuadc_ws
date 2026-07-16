@@ -33,3 +33,10 @@ launch 文件里，单独手动跑）：
 ```
 ros2 run cuadc_interface interface_acceptance_test
 ```
+
+机动测试（更完整的多段路径，覆盖水平/爬升/下降组合、转向、连续换
+目标，跑得比验收测试慢，见文件顶部说明）：
+
+```
+ros2 run cuadc_interface interface_maneuver_test
+```

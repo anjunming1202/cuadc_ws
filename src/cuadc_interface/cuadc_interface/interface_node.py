@@ -420,11 +420,14 @@ class InterfaceNode(Node):
         if master is None:
             return
         # MAV_CMD_CONDITION_YAW 的 param1 单位是度，契约里 ~/cmd/yaw 是
-        # 弧度（ROS 惯例），这里要转一次单位，不能直接透传。
+        # 弧度（ROS 惯例），这里要转一次单位；还要归一化到 [0,360)——
+        # ArduCopter 收到负数 param1 会直接拒绝该指令（源码校验
+        # param1>=0），不归一化的话负角度目标会被飞控静默丢弃。
+        yaw_deg = math.degrees(msg.data) % 360.0
         master.mav.command_long_send(
             master.target_system, master.target_component,
             mavutil.mavlink.MAV_CMD_CONDITION_YAW, 0,
-            math.degrees(msg.data), 0, 0, 0, 0, 0, 0)
+            yaw_deg, 0, 0, 0, 0, 0, 0)
 
 
 def main(args=None):

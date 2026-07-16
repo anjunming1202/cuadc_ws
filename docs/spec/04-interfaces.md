@@ -62,11 +62,11 @@ Set Home Position、Air Speed（多旋翼不适用）。
 |---|---|---|---|---|
 | Arm / Disarm | service | `~/arm` | 自定义 `Arm.srv`（bool arm → bool success, string message） | 一次性动作，需要明确的成功/失败反馈 |
 | Set Mode | service | `~/set_mode` | 自定义 `SetMode.srv`（string mode → bool success） | 模式名用字符串（`GUIDED`/`RTL`/`LAND`/`LOITER`…），跟 ArduCopter 模式表直接对应，不建 ROS 枚举，避免和飞控模式表脱节 |
-| Takeoff | service | `~/takeoff` | 自定义 `Takeoff.srv`（float64 alt → bool success） | 底层 `MAV_CMD_NAV_TAKEOFF`。2026-07-15 SITL 实测确认：光发 `Go To Location`/`Set Velocity` 不会让停在地面的飞机爬升，ArduCopter GUIDED 模式必须先收到这个指令才会真正起飞——原契约漏了这一项，任务状态机的 `ARM_AND_TAKEOFF` 步骤离不开它 |
-| Go To Location | service | `~/goto_location` | 自定义 `GotoLocation.srv`（lat/lon/alt → bool success） | 目标点式指令，假设已在空中（先 Takeoff）；2026-07-15 SITL 实测确认单次调用即可，不需要持续发送（见"待验证事项"） |
+| Takeoff | service | `~/takeoff` | 自定义 `Takeoff.srv`（float64 alt → bool success） | 底层 `MAV_CMD_NAV_TAKEOFF`。2026-07-15 SITL 实测确认：光发 `Go To Location`/`Set Velocity` 不会让停在地面的飞机爬升，ArduCopter GUIDED 模式必须先收到这个指令才会真正起飞——原契约漏了这一项，任务状态机的 `ARM_AND_TAKEOFF` 步骤离不开它。**`alt` 是相对起飞点的高度，不是海拔**（见下方"高度基准"） |
+| Go To Location | service | `~/goto_location` | 自定义 `GotoLocation.srv`（lat/lon/alt → bool success） | 目标点式指令，假设已在空中（先 Takeoff）；2026-07-15 SITL 实测确认单次调用即可，不需要持续发送（见"待验证事项"）。**`alt` 是相对起飞点的高度，不是海拔**（见下方"高度基准"） |
 | Set Position Target | topic | `~/cmd/position_target` | 自定义 `PositionTarget.msg`（局部坐标 x/y/z） | 精确悬停微调用（对准圆筒/降落点），规划/决策按需持续发布 |
 | Set Velocity | topic | `~/cmd/velocity` | `geometry_msgs/TwistStamped` | 速度向量控制；2026-07-15 SITL 实测确认停止发送后飞机会安全悬停、不会持续漂移（见"待验证事项"） |
-| Set Yaw | topic | `~/cmd/yaw` | `std_msgs/Float64`（目标偏航角，弧度） | 摄像头对位/环视用；topic vs service 的取舍见"待验证事项" |
+| Set Yaw | topic | `~/cmd/yaw` | `std_msgs/Float64`（目标偏航角，弧度） | 摄像头对位/环视用；topic vs service 的取舍见"待验证事项"。**只有飞机静止（没有并发的位置类指令）时才是独立可控的**，见下方"自动朝向行为"。接口层内部会把弧度转度并归一化到 `[0,360)` 再发送——ArduCopter 收到负数会直接拒绝该指令（2026-07-16 SITL 实测确认） |
 | 投放机构输出 | service | `~/set_relay` | 自定义 `SetRelay.srv`（uint8 channel, bool state → bool success） | 底层用 `MAV_CMD_DO_SET_RELAY`，布尔开关量（2026-07-15 已定，不用 PWM Servo） |
 
 ## 契约总览：遥测（ArduPilot → 接口层 → 规划/决策）
@@ -76,8 +76,8 @@ Set Home Position、Air Speed（多旋翼不适用）。
 | 心跳/连接状态 | `~/status/connected` | `std_msgs/Bool` | |
 | Armed State | `~/status/armed` | `std_msgs/Bool` | |
 | Current Mode | `~/status/mode` | `std_msgs/String` | |
-| Global Position | `~/telemetry/global_position` | `sensor_msgs/NavSatFix` | |
-| Local Position + Relative Altitude | `~/telemetry/local_position` | `geometry_msgs/PoseStamped` | |
+| Global Position | `~/telemetry/global_position` | `sensor_msgs/NavSatFix` | `altitude` 是**海拔**（MSL），不是相对起飞点高度，见下方"高度基准" |
+| Local Position + Relative Altitude | `~/telemetry/local_position` | `geometry_msgs/PoseStamped` | `position.z` 是局部 NED 坐标，**相对起飞点**，且 z 轴向下为正——"离地高度"要用 `-position.z`，见下方"高度基准" |
 | Velocity | `~/telemetry/velocity` | `geometry_msgs/TwistStamped` | |
 | Attitude/Heading | `~/telemetry/attitude` | 自定义或复用 `sensor_msgs/Imu` 的姿态部分 | 待实现时定 |
 | Battery | `~/telemetry/battery` | `sensor_msgs/BatteryState` | 任务逻辑安全响应（提前 RTL）依赖这个 |
@@ -86,6 +86,31 @@ Set Home Position、Air Speed（多旋翼不适用）。
 | Failsafe State | `~/status/failsafe` | 自定义（区分具体哪种 failsafe，不只是 bool） | 任务逻辑安全响应依赖这个 |
 | 投放机构状态反馈 | `~/status/relay_state` | 自定义（uint8 channel, bool state） | 确认投放动作真的执行了 |
 | Command ACK | `~/status/command_ack` | 自定义（string command, bool result） | |
+
+## 高度基准：相对高度 vs 海拔，不能混用
+
+**指令里的 `alt`（`Takeoff.alt`、`GotoLocation.alt`）都是相对起飞点的
+高度**，底层用的是 `MAV_FRAME_GLOBAL_RELATIVE_ALT_INT`/
+`MAV_CMD_NAV_TAKEOFF` 的相对高度语义。**但 `~/telemetry/global_position`
+的 `altitude` 是海拔**（MSL，SITL 默认场地大约 584m）。这两个不是同一个
+基准，直接相加/相减会算出错得离谱的数字。
+
+2026-07-16 实测踩过这个坑：拿海拔（约 584）加 10 算出"目标高度"
+（约 594），当成相对高度传给 `GotoLocation.alt`，飞控理解成"爬升到
+离地 594m"，飞机全程持续爬升不停——不是 `interface_node.py` 的 bug，
+是调用方把两种高度基准算混了。**结论：算相对高度目标时直接用小数字
+（比如 10、20），不要拿 `global_position.altitude` 做加减；如果需要
+"离地高度"这个量，用 `local_position` 的 `-position.z`，它本来就是
+相对起飞点的，不用换算。**
+
+## 自动朝向行为：位置类指令会自动改 yaw
+
+ArduCopter `WP_YAW_BEHAVIOR` 参数默认是"面向飞行方向"，`Go To
+Location`/`Set Position Target` 这些位置类指令都不带 yaw 信息，飞控
+会自己接管朝向、转向飞行方向，跟发没发 `Set Yaw` 无关。2026-07-16
+拍板：接受这个默认行为，不改飞控参数——`Set Yaw` 只在飞机静止（没有
+并发的位置类指令）时才是真正独立可控的，需要飞行中独立朝向的场景不
+在当前任务范围内。
 
 ## 与测试桩（stub）的关系
 
