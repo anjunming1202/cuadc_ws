@@ -40,3 +40,10 @@ ros2 run cuadc_interface interface_acceptance_test
 ```
 ros2 run cuadc_interface interface_maneuver_test
 ```
+
+精细机动测试（Set Position Target 局部坐标精调 + Set Relay 投放模拟，
+见文件顶部说明）：
+
+```
+ros2 run cuadc_interface interface_precision_test
+```

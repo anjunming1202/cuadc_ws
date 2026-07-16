@@ -64,7 +64,8 @@ Set Home Position、Air Speed（多旋翼不适用）。
 | Set Mode | service | `~/set_mode` | 自定义 `SetMode.srv`（string mode → bool success） | 模式名用字符串（`GUIDED`/`RTL`/`LAND`/`LOITER`…），跟 ArduCopter 模式表直接对应，不建 ROS 枚举，避免和飞控模式表脱节 |
 | Takeoff | service | `~/takeoff` | 自定义 `Takeoff.srv`（float64 alt → bool success） | 底层 `MAV_CMD_NAV_TAKEOFF`。2026-07-15 SITL 实测确认：光发 `Go To Location`/`Set Velocity` 不会让停在地面的飞机爬升，ArduCopter GUIDED 模式必须先收到这个指令才会真正起飞——原契约漏了这一项，任务状态机的 `ARM_AND_TAKEOFF` 步骤离不开它。**`alt` 是相对起飞点的高度，不是海拔**（见下方"高度基准"） |
 | Go To Location | service | `~/goto_location` | 自定义 `GotoLocation.srv`（lat/lon/alt → bool success） | 目标点式指令，假设已在空中（先 Takeoff）；2026-07-15 SITL 实测确认单次调用即可，不需要持续发送（见"待验证事项"）。**`alt` 是相对起飞点的高度，不是海拔**（见下方"高度基准"） |
-| Set Position Target | topic | `~/cmd/position_target` | 自定义 `PositionTarget.msg`（局部坐标 x/y/z） | 精确悬停微调用（对准圆筒/降落点），规划/决策按需持续发布 |
+| Set Position Target | topic | `~/cmd/position_target` | 自定义 `PositionTarget.msg`（局部坐标 x/y/z） | 精确悬停微调用（对准圆筒/降落点），规划/决策按需持续发布。**x/y/z 是相对当前位置和当前朝向的偏移量**（前/右/下，`MAV_FRAME_BODY_OFFSET_NED`）——调用方不需要读当前位置再加，飞控收到指令那一刻用自己最新状态现算，避免遥测往返延迟导致目标基于过时位置。**不会自动转向**，见下方"自动朝向行为" |
+| Set Position Target (Local) | topic | `~/cmd/position_target_local` | 复用 `PositionTarget.msg`（局部坐标 x/y/z） | 跟上面那个区别是坐标系：**x/y/z 是绝对局部坐标**（相对起飞点，`MAV_FRAME_LOCAL_NED`），不随发指令时机身朝向变化——适合"目标点在一个不随机身转动的局部坐标里已知"的场景（比如回到一个之前记下的局部坐标点，不用每次重新算相对偏移）。同样**不会自动转向**，见下方"自动朝向行为" |
 | Set Velocity | topic | `~/cmd/velocity` | `geometry_msgs/TwistStamped` | 速度向量控制；2026-07-15 SITL 实测确认停止发送后飞机会安全悬停、不会持续漂移（见"待验证事项"） |
 | Set Yaw | topic | `~/cmd/yaw` | `std_msgs/Float64`（目标偏航角，弧度） | 摄像头对位/环视用；topic vs service 的取舍见"待验证事项"。**只有飞机静止（没有并发的位置类指令）时才是独立可控的**，见下方"自动朝向行为"。接口层内部会把弧度转度并归一化到 `[0,360)` 再发送——ArduCopter 收到负数会直接拒绝该指令（2026-07-16 SITL 实测确认） |
 | 投放机构输出 | service | `~/set_relay` | 自定义 `SetRelay.srv`（uint8 channel, bool state → bool success） | 底层用 `MAV_CMD_DO_SET_RELAY`，布尔开关量（2026-07-15 已定，不用 PWM Servo） |
@@ -103,14 +104,21 @@ Set Home Position、Air Speed（多旋翼不适用）。
 "离地高度"这个量，用 `local_position` 的 `-position.z`，它本来就是
 相对起飞点的，不用换算。**
 
-## 自动朝向行为：位置类指令会自动改 yaw
+## 自动朝向行为：位置类指令会自动改 yaw（`Go To Location`），`Set
+## Position Target` 已锁定不受影响
 
-ArduCopter `WP_YAW_BEHAVIOR` 参数默认是"面向飞行方向"，`Go To
-Location`/`Set Position Target` 这些位置类指令都不带 yaw 信息，飞控
-会自己接管朝向、转向飞行方向，跟发没发 `Set Yaw` 无关。2026-07-16
-拍板：接受这个默认行为，不改飞控参数——`Set Yaw` 只在飞机静止（没有
-并发的位置类指令）时才是真正独立可控的，需要飞行中独立朝向的场景不
-在当前任务范围内。
+ArduCopter `WP_YAW_BEHAVIOR` 参数默认是"面向飞行方向"，位置类指令不
+主动带 yaw 信息的话飞控会自己接管朝向、转向飞行方向。2026-07-16
+拍板：`Go To Location` 接受这个默认行为，不改飞控参数——`Set Yaw`
+只在飞机静止（没有并发的 `Go To Location`）时才是真正独立可控的。
+
+`Set Position Target`（两个版本）都是例外，不会自动转向，但实现方式
+不同：机身相对版用 `MAV_FRAME_BODY_OFFSET_NED`，这个 frame 下 yaw
+字段是相对量，固定发 `yaw=0` 就是"不转"；局部绝对版用
+`MAV_FRAME_LOCAL_NED`，yaw 字段是绝对量，`interface_node.py` 会显式
+回填当前朝向来锁定，不能发 0（发 0 会被解读成"转到航向 0"）。精细对准
+场景（靠视觉对准投放点）不希望位置微调的同时飞机还在转头，两个版本都
+刻意跟 `Go To Location` 区分开。
 
 ## 与测试桩（stub）的关系
 

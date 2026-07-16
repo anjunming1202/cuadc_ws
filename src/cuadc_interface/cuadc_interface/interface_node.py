@@ -77,7 +77,7 @@ class InterfaceNode(Node):
         self._mode_ids = {}
         self._mode_names = {}
         self._state_lock = threading.Lock()
-        self._state = {'connected': False, 'armed': False, 'mode': ''}
+        self._state = {'connected': False, 'armed': False, 'mode': '', 'yaw': 0.0}
         self._ack_lock = threading.Lock()
         self._pending_acks = {}  # command id -> threading.Event
         self._ack_results = {}  # command id -> COMMAND_ACK.result
@@ -104,6 +104,8 @@ class InterfaceNode(Node):
         """决策 -> 飞控接口层，单向、不等回应：持续流式下发的指令。"""
         self.create_subscription(
             PositionTarget, '~/cmd/position_target', self._on_position_target, 10)
+        self.create_subscription(
+            PositionTarget, '~/cmd/position_target_local', self._on_position_target_local, 10)
         self.create_subscription(TwistStamped, '~/cmd/velocity', self._on_velocity, 10)
         self.create_subscription(Float64, '~/cmd/yaw', self._on_yaw, 10)
 
@@ -244,6 +246,11 @@ class InterfaceNode(Node):
         self._safe_publish(self.velocity_pub, twist)
 
     def _handle_attitude(self, master, msg):
+        # MAV_FRAME_LOCAL_NED 下 yaw 字段是绝对量，_on_position_target_local
+        # 锁定当前朝向时需要拿这个值回填——不是给 BODY_OFFSET_NED 用的
+        # （那个 frame 下发 0 就够了，不需要读这个）。
+        with self._state_lock:
+            self._state['yaw'] = msg.yaw
         imu = Imu()
         imu.header.stamp = self.get_clock().now().to_msg()
         imu.angular_velocity.x = msg.rollspeed
@@ -396,12 +403,35 @@ class InterfaceNode(Node):
         master = self._master
         if master is None:
             return
+        # MAV_FRAME_BODY_OFFSET_NED：x/y/z 是相对当前位置和当前朝向的
+        # 偏移量（前/右/下），飞控收到指令那一刻用自己最新状态现算，不是
+        # 我们这边读一次遥测再加——避免遥测往返延迟导致目标基于过时位置
+        # 算出来。yaw=0（这个 frame 下 yaw 也是相对量）就是"不转"，不需要
+        # 额外锁定当前朝向；Go To Location 保留绝对坐标 + 默认自动朝向，
+        # 刻意跟这个区分开，见 04-interfaces.md"自动朝向行为"一节。
+        master.mav.set_position_target_local_ned_send(
+            0, master.target_system, master.target_component,
+            mavutil.mavlink.MAV_FRAME_BODY_OFFSET_NED,
+            0b0000101111111000,
+            msg.x, msg.y, msg.z,
+            0, 0, 0, 0, 0, 0, 0.0, 0)
+
+    def _on_position_target_local(self, msg):
+        master = self._master
+        if master is None:
+            return
+        # MAV_FRAME_LOCAL_NED：x/y/z 是绝对局部坐标（相对起飞点），跟
+        # _on_position_target 的机身相对偏移是两回事——这个 frame 下 yaw
+        # 字段是绝对量，锁定当前朝向要显式回填当前角度（不能像
+        # BODY_OFFSET_NED 那样发 0），不然会落回默认的 WP_YAW_BEHAVIOR。
+        with self._state_lock:
+            yaw = self._state['yaw']
         master.mav.set_position_target_local_ned_send(
             0, master.target_system, master.target_component,
             mavutil.mavlink.MAV_FRAME_LOCAL_NED,
-            0b0000111111111000,
+            0b0000101111111000,
             msg.x, msg.y, msg.z,
-            0, 0, 0, 0, 0, 0, 0, 0)
+            0, 0, 0, 0, 0, 0, yaw, 0)
 
     def _on_velocity(self, msg):
         master = self._master

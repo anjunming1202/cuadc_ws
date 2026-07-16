@@ -26,6 +26,7 @@ setup(
             'interface_node = cuadc_interface.interface_node:main',
             'interface_acceptance_test = cuadc_interface.interface_acceptance_test:main',
             'interface_maneuver_test = cuadc_interface.interface_maneuver_test:main',
+            'interface_precision_test = cuadc_interface.interface_precision_test:main',
         ],
     },
 )
