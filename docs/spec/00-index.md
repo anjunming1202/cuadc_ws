@@ -13,16 +13,22 @@
 
 ## 模块划分
 
-- **感知/视觉**——相机图像 → 目标识别、目标定位、识别结果的滤波/跟踪。
-- **规划/决策**——任务状态机、任务流程管理、航点/路径生成、目标选择
-  与确认、投放/动作决策。
+- **感知/视觉**——相机图像 → 目标（圆筒）检测与定位，无状态、逐帧
+  发布，不做识别结果的时序滤波/跟踪（这部分归决策模块）。危险化学品
+  标识的具体类别不在机载职责范围，由机组通过图传人工肉眼识别（见
+  [ADR-0003](adr/0003-recon-identification-visual-downlink.md)）。
+- **规划/决策**——任务状态机、任务流程管理、航点/路径生成、识别结果的
+  时序融合与去重、目标选择与确认、投放/动作决策。
 - **接口层**——与 ArduPilot 的 MAVLink 通信，独立于规划/决策模块（见
   [ADR-0001](adr/0001-interface-layer-separate-module.md)）。对外
   话题/服务契约见 [`04-interfaces.md`](04-interfaces.md)。
 - **日志**（横向能力，机制未定，见下方"横向关注点"）。
 
-感知/视觉、规划/决策目前还没有独立的详细设计文档，等设计内容长到
-需要拆分时再拆成独立文件（拆分规则见 [`docs/spec/README.md`](README.md)）。
+感知/视觉、规划/决策各自的详细设计文档还没有，两者之间的契约边界
+（消息格式、职责划分、通信模式）见
+[`05-perception-decision-interface.md`](05-perception-decision-interface.md)；
+等各自内部设计内容长到需要拆分时再拆成独立文件（拆分规则见
+[`docs/spec/README.md`](README.md)）。
 
 **仿真 vs 真机不是两套代码**：感知/视觉、规划/决策、接口层这些模块面对
 的是 MAVLink 协议，这个协议不区分对面是 ArduPilot SITL 还是真的 Pixhawk
@@ -98,4 +104,6 @@ ArduPilot（GUIDED 模式为主）
 当前尚未拍板的开放问题不在本文档下结论，最新讨论状态见
 [`working-notes.md`](working-notes.md)。
 机载/地面计算之争已拍板（结论：机载计算，无地面站计算路径），见
-[ADR-0002](adr/0002-onboard-inference-only.md)。
+[ADR-0002](adr/0002-onboard-inference-only.md)；侦察区标识识别改为
+机组人工图传识别的收窄澄清见
+[ADR-0003](adr/0003-recon-identification-visual-downlink.md)。
