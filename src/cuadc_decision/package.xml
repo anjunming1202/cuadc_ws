@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>cuadc_decision</name>
+  <version>0.0.0</version>
+  <description>规划/决策模块：任务状态机，契约见 docs/spec/06-planning.md，与感知/接口层的边界见 docs/spec/05-perception-decision-interface.md 和 docs/spec/04-interfaces.md</description>
+  <maintainer email="anjunming0819@outlook.com">Junming An</maintainer>
+  <license>MIT</license>
+
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>cuadc_interface_msgs</depend>
+  <depend>cuadc_perception_msgs</depend>
+  <depend>launch</depend>
+  <depend>launch_ros</depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

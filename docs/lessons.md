@@ -267,3 +267,38 @@
   如果哪个场景需要用 headless 模式会踩到。**教训**：`-s` headless
   和 GUI 模式在传感器渲染这条路上行为不等价，拿 `-s` 的复现结果去
   推断 GUI 模式的问题，前提本身可能不成立。
+
+## 2026-07-19
+
+- **场地世界坐标 (X, Y) 不能直接当 NED (north, east) 用，两者是对调
+  关系，不是恒等映射**：`cuadc_perception`（桩感知）、`cuadc_decision`
+  （导航目标点）第一版实现都想当然地把 `cuadc_sim/field/config.py` 的
+  场地坐标（x=飞行前进方向、y=侧向）直接塞进接口层
+  `telemetry/local_position`/`cmd/position_target_local` 的 x/y 字段，
+  依据是仿真世界文件 `cuadc_sim/worlds/cuadc_field.sdf` 的
+  `<spherical_coordinates><heading_deg>0</heading_deg>`——想当然认为
+  这意味着"世界系 +X 对齐正北"。代码注释里当时确实写了"这个假设需要
+  重新核实"，但没有在合入前真的核实过。SITL+Gazebo 第一次实机测试，
+  飞机一路往侧边飞（该往投放区飞却垂直于场地长轴飞出去），现象跟这条
+  没验证的假设错了完全对得上；纯逻辑单元测试和不带 Gazebo 画面的
+  SITL 遥测数字自洽性检查都测不出这个问题——遥测数字自洽（发 x=32，
+  local_position.x 收敛到 32）只能证明飞控内部控制环闭环了，证明不了
+  这个数字对应世界里正确的物理位置。
+
+  真正的换算依据在**飞行器模型自己的插件配置**里，不在世界文件的
+  `spherical_coordinates`（那个只管地理经纬度朝向，不管 Gazebo 世界
+  坐标系本身怎么定义）：`~/ardupilot_gazebo/models/iris_with_gimbal/
+  model.sdf` 的 `ArduPilotPlugin` 里
+  `<gazeboXYZToNED degrees="true">0 0 0 180 0 90</gazeboXYZToNED>`
+  （roll=180°, yaw=90°）算出来是 `NED north = Gazebo 世界系 Y`、
+  `NED east = Gazebo 世界系 X`——X/Y 对调，Z 取负（Gazebo Z 朝上，
+  NED Z 朝下）。
+
+  **教训**：Gazebo/ArduPilot 集成里"世界坐标"和"飞控 NED 坐标"的换算
+  关系，要去查飞行器模型自己的 `ArduPilotPlugin` 配置
+  （`gazeboXYZToNED`/`modelXYZToAirplaneXForwardZDown` 这两个参数），
+  不要从世界文件的 `heading_deg` 或者"看起来应该是这样"去猜；任何
+  "把一个世界坐标发给飞控"的代码，写完不能只看遥测数字自洽就当作
+  验证过了，至少要在 Gazebo 画面里肉眼确认一次飞机真的往预期方向飞
+  ——最好是先发一个小步长的单方向位移、肉眼确认方向对了，再跑完整
+  任务，不要一次性发一个跨越几十米的完整任务再回头看结果对不对。

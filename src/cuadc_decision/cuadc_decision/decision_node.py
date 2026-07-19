@@ -1,0 +1,167 @@
+"""决策层的 ROS2 接线层：只做订阅/发布/service 调用这些 ROS2 相关的
+事，不含任何任务判断逻辑——真正的状态机、每个阶段该做什么，都在
+`mission_logic.py`（纯 Python，不依赖 rclpy，可以脱离节点单独测试）。
+这里的职责只是每个 tick 把订阅到的最新遥测/检测组装成
+`mission_logic.MissionContext`，调 `mission_logic.tick()`，再把返回的
+`TickResult` 翻译成真正的 service 调用/话题发布。
+
+对接的接口层契约见 docs/spec/04-interfaces.md，感知契约见
+docs/spec/05-perception-decision-interface.md，状态机设计见
+docs/spec/06-planning.md。
+
+service 调用用 `call_async` 而不是阻塞式调用/`spin_until_future_complete`
+——本节点是默认单线程 executor，阻塞式调用会卡住整个 tick 循环（同一
+个节点上没有 cuadc_interface 那种独立 io 线程兜底），detail 见
+docs/spec/06-planning.md 前置讨论。同一时刻只允许一个 service 调用
+在途，`mission_logic.py` 的状态机本来就是线性的，不需要并发调用。
+"""
+
+import time
+
+import rclpy
+from geometry_msgs.msg import PoseStamped
+from rclpy.node import Node
+from sensor_msgs.msg import BatteryState
+from std_msgs.msg import Bool, Empty, String
+
+from cuadc_interface_msgs.msg import FailsafeState, GpsStatus, EkfStatus, PositionTarget
+from cuadc_interface_msgs.srv import Arm, SetMode, Takeoff, SetRelay
+from cuadc_perception_msgs.msg import DetectionArray
+
+from cuadc_decision import mission_logic
+
+_INTERFACE_NS = '/cuadc_interface'
+
+_SERVICE_SPECS = {
+    'set_mode': (SetMode, f'{_INTERFACE_NS}/set_mode'),
+    'arm': (Arm, f'{_INTERFACE_NS}/arm'),
+    'takeoff': (Takeoff, f'{_INTERFACE_NS}/takeoff'),
+    'set_relay': (SetRelay, f'{_INTERFACE_NS}/set_relay'),
+}
+
+
+class DecisionNode(Node):
+
+    def __init__(self):
+        super().__init__('cuadc_decision')
+
+        self._ctx = mission_logic.MissionContext()
+        self._pending_service_name = None
+        self._pending_service_future = None
+
+        self._service_clients = {
+            name: self.create_client(request_cls, topic)
+            for name, (request_cls, topic) in _SERVICE_SPECS.items()
+        }
+
+        self._position_target_pub = self.create_publisher(
+            PositionTarget, f'{_INTERFACE_NS}/cmd/position_target_local', 10)
+        self._status_pub = self.create_publisher(String, '~/mission_state', 10)
+
+        self.create_subscription(Bool, f'{_INTERFACE_NS}/status/connected', self._on_connected, 10)
+        self.create_subscription(Bool, f'{_INTERFACE_NS}/status/armed', self._on_armed, 10)
+        self.create_subscription(FailsafeState, f'{_INTERFACE_NS}/status/failsafe', self._on_failsafe, 10)
+        self.create_subscription(
+            PoseStamped, f'{_INTERFACE_NS}/telemetry/local_position', self._on_local_position, 10)
+        self.create_subscription(BatteryState, f'{_INTERFACE_NS}/telemetry/battery', self._on_battery, 10)
+        self.create_subscription(GpsStatus, f'{_INTERFACE_NS}/telemetry/gps_status', self._on_gps_status, 10)
+        self.create_subscription(EkfStatus, f'{_INTERFACE_NS}/telemetry/ekf_status', self._on_ekf_status, 10)
+        self.create_subscription(DetectionArray, '/perception/detections', self._on_detections, 10)
+        # 仿真/开发环境用来替代物理 GPIO 任务开关的触发话题（见
+        # docs/spec/06-planning.md"任务触发与准备"）——真机部署时这里
+        # 应该换成真实 GPIO 读取，不是 ROS2 话题；现在没有硬件目标，
+        # 先用一个话题占位，方便仿真里手动/脚本触发。
+        self.create_subscription(Empty, '~/sim/task_start_trigger', self._on_task_start_trigger, 10)
+
+        self.declare_parameter('tick_rate_hz', 10.0)
+        rate_hz = self.get_parameter('tick_rate_hz').value
+        self._timer = self.create_timer(1.0 / rate_hz, self._on_timer)
+
+    # ---- 订阅回调：只管更新 context，不做任何判断 ----
+
+    def _on_connected(self, msg):
+        self._ctx.connected = msg.data
+
+    def _on_armed(self, msg):
+        self._ctx.armed = msg.data
+
+    def _on_failsafe(self, msg):
+        self._ctx.failsafe_active = msg.active
+
+    def _on_local_position(self, msg):
+        self._ctx.local_position_xy = (msg.pose.position.x, msg.pose.position.y)
+        self._ctx.local_position_z = msg.pose.position.z
+
+    def _on_battery(self, msg):
+        self._ctx.battery_fraction = msg.percentage
+
+    def _on_gps_status(self, msg):
+        self._ctx.gps_fix_type = msg.fix_type
+
+    def _on_ekf_status(self, msg):
+        self._ctx.ekf_healthy = msg.healthy
+
+    def _on_detections(self, msg):
+        self._ctx.detections = list(msg.detections)
+
+    def _on_task_start_trigger(self, msg):
+        self._ctx.task_start_triggered = True
+
+    # ---- service 调用的异步收发，见文件头说明 ----
+
+    def _poll_pending_service_result(self):
+        if self._pending_service_future is None or not self._pending_service_future.done():
+            return None
+        response = self._pending_service_future.result()
+        result = mission_logic.ServiceResult(self._pending_service_name, bool(response.success))
+        self._pending_service_future = None
+        self._pending_service_name = None
+        return result
+
+    def _maybe_dispatch_service_call(self, call):
+        if self._pending_service_name == call.name and self._pending_service_future is not None:
+            return  # 已经在途，不重复发起
+        service_type, _ = _SERVICE_SPECS[call.name]
+        client = self._service_clients[call.name]
+        self._pending_service_name = call.name
+        self._pending_service_future = client.call_async(service_type.Request(**call.kwargs))
+
+    # ---- 主循环 ----
+
+    def _on_timer(self):
+        self._ctx.last_service_result = self._poll_pending_service_result()
+
+        result = mission_logic.tick(self._ctx)
+
+        if result.next_state is not None and result.next_state != self._ctx.current_state:
+            self.get_logger().info(f'{self._ctx.current_state} -> {result.next_state}')
+            self._ctx.current_state = result.next_state
+            self._ctx.command_dispatched = False
+            self._ctx.state_entered_monotonic = time.monotonic()
+
+        if result.position_target is not None:
+            x, y, z = result.position_target
+            target_msg = PositionTarget()
+            target_msg.x = x
+            target_msg.y = y
+            target_msg.z = z
+            self._position_target_pub.publish(target_msg)
+
+        if result.service_call is not None:
+            self._maybe_dispatch_service_call(result.service_call)
+
+        self._status_pub.publish(String(data=self._ctx.current_state))
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = DecisionNode()
+    try:
+        rclpy.spin(node)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()

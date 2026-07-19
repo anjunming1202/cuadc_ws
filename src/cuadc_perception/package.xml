@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>cuadc_perception</name>
+  <version>0.0.0</version>
+  <description>感知/视觉模块：目标（圆筒）检测与定位，契约见 docs/spec/05-perception-decision-interface.md。当前只有桩感知节点（发布场地已知坐标），真实 CV 检测算法在后续分支实现。</description>
+  <maintainer email="anjunming0819@outlook.com">Junming An</maintainer>
+  <license>MIT</license>
+
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>cuadc_perception_msgs</depend>
+  <depend>launch</depend>
+  <depend>launch_ros</depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
