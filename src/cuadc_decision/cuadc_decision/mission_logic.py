@@ -71,6 +71,13 @@ _COARSE_APPROACH_RADIUS_M = 1.0  # 占位待真实 FOV 定，先靠近到这个�
 # 按当前偏航角旋转的机体系偏移。
 _DROP_MECHANISM_OFFSET_M = (0.0, 0.0)
 
+# 投放前的"真正对齐"判定：位置/高度到位只是必要条件，姿态没摆平、还在
+# 动的话不算真正稳住——单个 tick 摸到容差边缘不算数，见 _tick_approach_drop_target。
+_LEVEL_TOLERANCE_RAD = 0.1  # 约 5.7°，roll/pitch 都要在这个范围内才算摆平
+_HORIZONTAL_SPEED_TOLERANCE_MPS = 0.2
+_VERTICAL_SPEED_TOLERANCE_MPS = 0.2
+_STABLE_HOLD_SECONDS = 1.0  # 上面这些条件要连续满足这么久才触发投放
+
 
 def _world_xy_to_ned(world_x, world_y):
     """场地坐标（cuadc_sim/field/config.py 的 x=飞行前进方向、y=侧向）
@@ -145,6 +152,7 @@ class DropTaskState:
     phase_entered_monotonic: Optional[float] = None
     waypoint_index: int = 0
     approach_step: str = 'close_in'  # 'close_in' -> 'converge'，见 _tick_approach_drop_target
+    stable_since_monotonic: Optional[float] = None  # 持续稳定判定用，见 _tick_approach_drop_target
 
 
 @dataclass
@@ -173,6 +181,10 @@ class MissionContext:
     failsafe_active: bool = False
     local_position_xy: Optional[Tuple[float, float]] = None
     local_position_z: Optional[float] = None  # NED，向下为正
+    horizontal_speed: Optional[float] = None  # 水平合速度，米/秒
+    vertical_speed: Optional[float] = None  # NED vz，向下为正，米/秒
+    roll_rad: Optional[float] = None
+    pitch_rad: Optional[float] = None
     detections: list = field(default_factory=list)  # 元素需要有 .target_type/.position.x/.position.y/.apparent_size
     task_start_triggered: bool = False
     stop_after_drop: bool = False  # 硬件单点测试用：投完两次直接 RTL，不去侦察区
@@ -354,6 +366,7 @@ def _tick_search_drop_targets(ctx):
             if target is not None:
                 ctx.drop_task.selected_target = target
                 ctx.drop_task.approach_step = 'close_in'
+                ctx.drop_task.stable_since_monotonic = None
                 return TickResult(next_state=State.APPROACH_DROP_TARGET)
 
     return TickResult(position_target=(waypoint[0], waypoint[1], -_CRUISE_ALTITUDE_M))
@@ -371,12 +384,26 @@ def _tick_approach_drop_target(ctx):
             return TickResult(position_target=(aim_x, aim_y, -_CRUISE_ALTITUDE_M))
         ctx.drop_task.approach_step = 'converge'
 
-    # converge：水平和高度一起收敛，不分先后——离得越近估计越准
-    horizontal_ok = _arrived(ctx.local_position_xy, (aim_x, aim_y), _APPROACH_TOLERANCE_M)
-    altitude_ok = (ctx.local_position_z is not None
-                   and -ctx.local_position_z <= _DROP_ALTITUDE_M + _DROP_ALTITUDE_TOLERANCE_M)
-    if horizontal_ok and altitude_ok:
-        return TickResult(next_state=State.DROP_PAYLOAD)
+    # converge：水平和高度一起收敛，不分先后——离得越近估计越准。真正
+    # "对齐"除了位置/高度到位，姿态也要摆平、飞机也要基本停住，而且这些
+    # 条件要连续满足一段时间才算数——单个 tick 摸到容差边缘不算（抖动的
+    # 时候偶然经过目标点不代表真的稳住了，实测踩过这个坑）。
+    stable_now = (
+        _arrived(ctx.local_position_xy, (aim_x, aim_y), _APPROACH_TOLERANCE_M)
+        and ctx.local_position_z is not None
+        and -ctx.local_position_z <= _DROP_ALTITUDE_M + _DROP_ALTITUDE_TOLERANCE_M
+        and ctx.roll_rad is not None and abs(ctx.roll_rad) <= _LEVEL_TOLERANCE_RAD
+        and ctx.pitch_rad is not None and abs(ctx.pitch_rad) <= _LEVEL_TOLERANCE_RAD
+        and ctx.horizontal_speed is not None and ctx.horizontal_speed <= _HORIZONTAL_SPEED_TOLERANCE_MPS
+        and ctx.vertical_speed is not None and abs(ctx.vertical_speed) <= _VERTICAL_SPEED_TOLERANCE_MPS
+    )
+    if stable_now:
+        if ctx.drop_task.stable_since_monotonic is None:
+            ctx.drop_task.stable_since_monotonic = time.monotonic()
+        elif time.monotonic() - ctx.drop_task.stable_since_monotonic >= _STABLE_HOLD_SECONDS:
+            return TickResult(next_state=State.DROP_PAYLOAD)
+    else:
+        ctx.drop_task.stable_since_monotonic = None
     return TickResult(position_target=(aim_x, aim_y, -_DROP_ALTITUDE_M))
 
 

@@ -16,12 +16,13 @@ docs/spec/06-planning.md 前置讨论。同一时刻只允许一个 service 调�
 在途，`mission_logic.py` 的状态机本来就是线性的，不需要并发调用。
 """
 
+import math
 import time
 
 import rclpy
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, TwistStamped
 from rclpy.node import Node
-from sensor_msgs.msg import BatteryState
+from sensor_msgs.msg import BatteryState, Imu
 from std_msgs.msg import Bool, Empty, String
 
 from cuadc_interface_msgs.msg import FailsafeState, GpsStatus, EkfStatus, PositionTarget
@@ -38,6 +39,12 @@ _SERVICE_SPECS = {
     'takeoff': (Takeoff, f'{_INTERFACE_NS}/takeoff'),
     'set_relay': (SetRelay, f'{_INTERFACE_NS}/set_relay'),
 }
+
+
+def _roll_pitch_from_quaternion(x, y, z, w):
+    roll = math.atan2(2.0 * (w * x + y * z), 1.0 - 2.0 * (x * x + y * y))
+    pitch = math.asin(max(-1.0, min(1.0, 2.0 * (w * y - z * x))))
+    return roll, pitch
 
 
 class DecisionNode(Node):
@@ -70,6 +77,9 @@ class DecisionNode(Node):
         self.create_subscription(FailsafeState, f'{_INTERFACE_NS}/status/failsafe', self._on_failsafe, 10)
         self.create_subscription(
             PoseStamped, f'{_INTERFACE_NS}/telemetry/local_position', self._on_local_position, 10)
+        self.create_subscription(
+            TwistStamped, f'{_INTERFACE_NS}/telemetry/velocity', self._on_velocity, 10)
+        self.create_subscription(Imu, f'{_INTERFACE_NS}/telemetry/attitude', self._on_attitude, 10)
         self.create_subscription(BatteryState, f'{_INTERFACE_NS}/telemetry/battery', self._on_battery, 10)
         self.create_subscription(GpsStatus, f'{_INTERFACE_NS}/telemetry/gps_status', self._on_gps_status, 10)
         self.create_subscription(EkfStatus, f'{_INTERFACE_NS}/telemetry/ekf_status', self._on_ekf_status, 10)
@@ -99,6 +109,14 @@ class DecisionNode(Node):
     def _on_local_position(self, msg):
         self._ctx.local_position_xy = (msg.pose.position.x, msg.pose.position.y)
         self._ctx.local_position_z = msg.pose.position.z
+
+    def _on_velocity(self, msg):
+        self._ctx.horizontal_speed = math.hypot(msg.twist.linear.x, msg.twist.linear.y)
+        self._ctx.vertical_speed = msg.twist.linear.z
+
+    def _on_attitude(self, msg):
+        q = msg.orientation
+        self._ctx.roll_rad, self._ctx.pitch_rad = _roll_pitch_from_quaternion(q.x, q.y, q.z, q.w)
 
     def _on_battery(self, msg):
         self._ctx.battery_fraction = msg.percentage
@@ -174,6 +192,14 @@ class DecisionNode(Node):
             self.get_logger().info(
                 f'[DETECT] n={len(self._ctx.detections)} sizes=[{sizes}]',
                 throttle_duration_sec=1.0)
+
+        if self._ctx.current_state == mission_logic.State.APPROACH_DROP_TARGET:
+            # 诊断进近阶段抖动用，节流稍快（0.3s）才看得出振荡，不是 1Hz 那种
+            # 状态概览级别的日志。
+            self.get_logger().info(
+                f'[ATTITUDE] roll={self._ctx.roll_rad} pitch={self._ctx.pitch_rad} '
+                f'hspeed={self._ctx.horizontal_speed} vspeed={self._ctx.vertical_speed}',
+                throttle_duration_sec=0.3)
 
         self._status_pub.publish(String(data=self._ctx.current_state))
 
