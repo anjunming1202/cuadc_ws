@@ -32,6 +32,18 @@ When in doubt, prefer no pointer over one more pointer.
 See `README.md` — it has the project overview and directory structure.
 Don't duplicate that list here.
 
+## Code comments on variables/constants
+
+Put the comment on the same line as the variable, after the value —
+not wrapped across multiple lines. If a comment genuinely needs more
+than a short trailing note, put it on the line(s) above the variable
+instead of wrapping the trailing comment — but prefer trimming the
+comment down to fit on one line over doing this.
+
+```python
+_APPROACH_TOLERANCE_M = 0.15  # 精细对准的水平容差
+```
+
 ## Working mode
 
 - Human: system design, architecture, technical decisions.

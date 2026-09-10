@@ -58,22 +58,18 @@ _SEARCH_SETTLE_SECONDS = 1.5
 _CLUSTER_MATCH_THRESHOLD_M = 0.6
 _MIN_CLUSTER_SAMPLES = 3
 _DROP_COUNT_TARGET = 2
-_DROP_CYLINDER_COUNT = 3  # 投放区规则保证固定 3 个筒（位置随机，数量不随机）
+_DROP_CYLINDER_COUNT = 3  # 投放区规则保证固定 3 个筒，位置随机数量不随机
 _DROP_RELAY_CHANNEL = 0
-_MIN_DETECTION_CONFIDENCE = 0.5  # 桩节点永远发 1.0，暂时用不上，但真实 CV
-    # 上线后会有实际意义——先把过滤点占住
+_MIN_DETECTION_CONFIDENCE = 0.5  # 桩节点恒发 1.0 用不上，先占住真实 CV 的过滤点
 
 _DROP_ALTITUDE_M = 3.0  # 占位：先等于巡航高度，真实投放高度待实机确定
 _DROP_ALTITUDE_TOLERANCE_M = 0.3
-_APPROACH_REFINE_THRESHOLD_M = 0.4  # 进近阶段"这帧检测是不是已选中目标"的
-    # 匹配半径，比 SEARCH 聚类的 0.6m 更紧，避免飞近了吸附到旁边的筒
-_COARSE_APPROACH_RADIUS_M = 1.0  # 占位，待真实 FOV 数据定——先在巡航高度
-    # 靠近到这个范围内，再开始水平+高度一起收敛，避免太远就降高度导致
-    # 过早丢视野
-_DROP_MECHANISM_OFFSET_M = (0.0, 0.0)  # 相机视线中心跟投放机构的固定偏移
-    # （世界系 NED，米），占位 0，装机后实测标定。假设任务全程机头朝向
-    # 基本不变（现有状态机从没发过偏航指令）；如果偏航会漂移，这里要改成
-    # 按当前偏航角旋转的机体系偏移
+_APPROACH_REFINE_THRESHOLD_M = 0.4  # 进近目标匹配半径，比 SEARCH 聚类的 0.6m 更紧，避免吸附到旁边的筒
+_COARSE_APPROACH_RADIUS_M = 1.0  # 占位待真实 FOV 定，先靠近到这个范围内再开始水平+高度一起收敛，避免过早丢视野
+# 相机到投放机构的固定偏移（世界系 NED，米）。占位 0，待装机实测标定；
+# 假设全程偏航基本不变（现有状态机不发偏航指令），偏航会漂移则要改成
+# 按当前偏航角旋转的机体系偏移。
+_DROP_MECHANISM_OFFSET_M = (0.0, 0.0)
 
 
 def _world_xy_to_ned(world_x, world_y):
@@ -92,8 +88,8 @@ def _world_xy_to_ned(world_x, world_y):
 # 再统一转成 NED——不要直接改这些 _WORLD 常量成"看起来对的数字"，
 # 要改就去 field/config.py 对应的圆筒/区域坐标，这里跟着重新算。
 _DROP_ZONE_CENTER_WORLD = (32.5, 0.0)  # field-layout.md §8.1 C_drop
-_DROP_SCAN_OFFSETS = [   # 相对中心点的 (dx, dy)，占位间距，等真实相机
-    (-1.0, -2.0), (-1.0, 2.0),   # FOV/俯仰角/投放高度定下来再调
+_DROP_SCAN_OFFSETS = [  # 相对中心点的 (dx, dy)，占位间距，等真实相机 FOV 定下来再调
+    (-1.0, -2.0), (-1.0, 2.0),
     (0.0, 2.0), (0.0, -2.0),
     (1.0, -2.0), (1.0, 2.0),
 ]
