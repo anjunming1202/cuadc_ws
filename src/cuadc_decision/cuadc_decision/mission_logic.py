@@ -50,7 +50,7 @@ class State:
 
 
 # ---- 占位常量（见文件头说明） ----
-_CRUISE_ALTITUDE_M = 3.0
+_CRUISE_ALTITUDE_M = 2.0
 _ALTITUDE_TOLERANCE_M = 0.5
 _POSITION_TOLERANCE_M = 0.5
 _APPROACH_TOLERANCE_M = 0.15
@@ -62,7 +62,7 @@ _DROP_CYLINDER_COUNT = 3  # 投放区规则保证固定 3 个筒，位置随机�
 _DROP_RELAY_CHANNEL = 0
 _MIN_DETECTION_CONFIDENCE = 0.5  # 桩节点恒发 1.0 用不上，先占住真实 CV 的过滤点
 
-_DROP_ALTITUDE_M = 3.0  # 占位：先等于巡航高度，真实投放高度待实机确定
+_DROP_ALTITUDE_M = 1.0  # 占位：真实投放高度待实机确定
 _DROP_ALTITUDE_TOLERANCE_M = 0.3
 _APPROACH_REFINE_THRESHOLD_M = 0.4  # 进近目标匹配半径，比 SEARCH 聚类的 0.6m 更紧，避免吸附到旁边的筒
 _COARSE_APPROACH_RADIUS_M = 1.0  # 占位待真实 FOV 定，先靠近到这个范围内再开始水平+高度一起收敛，避免过早丢视野
