@@ -5,6 +5,7 @@
 
 import math
 import random
+import time
 
 import rclpy
 from geometry_msgs.msg import PoseStamped
@@ -89,6 +90,7 @@ class StubPerceptionNode(Node):
         if self._current_xy is None:
             return
 
+        started = time.monotonic()
         cur_north, cur_east = self._current_xy
         radius = self.get_parameter('visibility_radius_m').value
         noise_stddev = self.get_parameter('position_noise_stddev').value
@@ -108,6 +110,13 @@ class StubPerceptionNode(Node):
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.detections = detections
         self._publisher.publish(msg)
+
+        # 桩节点开销可忽略，先把日志形状搭好——换真实 CV 后这里量出来的
+        # 才是真正有意义的耗时。
+        elapsed_ms = (time.monotonic() - started) * 1000.0
+        self.get_logger().info(
+            f'[PERF] frame built in {elapsed_ms:.2f}ms, n={len(detections)}',
+            throttle_duration_sec=1.0)
 
     @staticmethod
     def _make_detection(north, east, radius, noise_stddev):

@@ -45,7 +45,14 @@ class DecisionNode(Node):
     def __init__(self):
         super().__init__('cuadc_decision')
 
-        self._ctx = mission_logic.MissionContext()
+        # initial_state/stop_after_drop 是硬件单点测试用的入口，默认值下
+        # 跟正常任务流程完全一样（见 docs/spec/06-planning.md）。
+        self.declare_parameter('initial_state', 'INIT')
+        self.declare_parameter('stop_after_drop', False)
+        self._ctx = mission_logic.MissionContext(
+            current_state=self.get_parameter('initial_state').value,
+            stop_after_drop=self.get_parameter('stop_after_drop').value,
+        )
         self._pending_service_name = None
         self._pending_service_future = None
 
@@ -75,6 +82,7 @@ class DecisionNode(Node):
 
         self.declare_parameter('tick_rate_hz', 10.0)
         rate_hz = self.get_parameter('tick_rate_hz').value
+        self._tick_budget_ms = 1000.0 / rate_hz
         self._timer = self.create_timer(1.0 / rate_hz, self._on_timer)
 
     # ---- 订阅回调：只管更新 context，不做任何判断 ----
@@ -131,10 +139,19 @@ class DecisionNode(Node):
     def _on_timer(self):
         self._ctx.last_service_result = self._poll_pending_service_result()
 
+        tick_started = time.monotonic()
         result = mission_logic.tick(self._ctx)
+        tick_elapsed_ms = (time.monotonic() - tick_started) * 1000.0
+        # tick() 预算是一个 tick 周期（1/tick_rate_hz），只在接近/超过时才
+        # 有意义地报警——纯 Python 状态机正常不会触发，是给以后决策层逻辑
+        # 变重时的预警。
+        if tick_elapsed_ms > self._tick_budget_ms * 0.5:
+            self.get_logger().warn(
+                f'[PERF] tick() took {tick_elapsed_ms:.1f}ms (budget {self._tick_budget_ms:.1f}ms)',
+                throttle_duration_sec=1.0)
 
         if result.next_state is not None and result.next_state != self._ctx.current_state:
-            self.get_logger().info(f'{self._ctx.current_state} -> {result.next_state}')
+            self.get_logger().info(f'[STATE] {self._ctx.current_state} -> {result.next_state}')
             self._ctx.current_state = result.next_state
             self._ctx.command_dispatched = False
             self._ctx.state_entered_monotonic = time.monotonic()
@@ -149,6 +166,14 @@ class DecisionNode(Node):
 
         if result.service_call is not None:
             self._maybe_dispatch_service_call(result.service_call)
+
+        if self._ctx.current_state in (mission_logic.State.SEARCH_DROP_TARGETS,
+                                        mission_logic.State.APPROACH_DROP_TARGET):
+            sizes = ', '.join(f'{d.apparent_size:.2f}' for d in self._ctx.detections
+                               if d.target_type == 'cylinder')
+            self.get_logger().info(
+                f'[DETECT] n={len(self._ctx.detections)} sizes=[{sizes}]',
+                throttle_duration_sec=1.0)
 
         self._status_pub.publish(String(data=self._ctx.current_state))
 

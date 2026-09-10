@@ -8,19 +8,29 @@ docs/spec/05-perception-decision-interface.md。
 `TickResult` 翻译成真正的 service 调用/话题发布。这里的函数只接收/
 返回普通数据，不认识任何 ROS 消息类型。
 
+"tick"：decision_node.py 起一个定时器（tick_rate_hz），每次触发调一次
+`tick()`，类似游戏循环的一帧——"当前状态+最新遥测/检测，这一轮该做
+什么"。每个状态自己的 `_tick_xxx(ctx)` 就是"处于这个状态时，一个 tick
+该做的事"。
+
 以下几个常量是明确的占位假设，实机测试或跟硬件/场地细节确认后需要
 调整，不是最终定案：`CRUISE_ALTITUDE_M`（巡航高度）、
 `DROP_RELAY_CHANNEL`（投放机构用哪个 relay 通道，需要跟投放机构硬件
-设计确认）、`DROP_ZONE_CENTER`/`RECON_SCAN_WAYPOINTS`（导航目标点，
+设计确认）、`DROP_SCAN_WAYPOINTS`/`RECON_SCAN_WAYPOINTS`（导航目标点，
 基于 cuadc_sim/field/config.py 的开发用固定场地坐标算出来的，真实
 比赛随机布局下这套写死的坐标不适用，需要在感知模块做实际检测/搜索
 后再替换）、各种超时/容差数值。
+
+投放目标怎么选（哪个筒先投）不在这个文件里，见 drop_strategy.py。
 """
 
 import math
 import time
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
+
+from cuadc_decision import drop_strategy
+from cuadc_decision.drop_strategy import Candidate
 
 
 class State:
@@ -48,7 +58,22 @@ _SEARCH_SETTLE_SECONDS = 1.5
 _CLUSTER_MATCH_THRESHOLD_M = 0.6
 _MIN_CLUSTER_SAMPLES = 3
 _DROP_COUNT_TARGET = 2
+_DROP_CYLINDER_COUNT = 3  # 投放区规则保证固定 3 个筒（位置随机，数量不随机）
 _DROP_RELAY_CHANNEL = 0
+_MIN_DETECTION_CONFIDENCE = 0.5  # 桩节点永远发 1.0，暂时用不上，但真实 CV
+    # 上线后会有实际意义——先把过滤点占住
+
+_DROP_ALTITUDE_M = 3.0  # 占位：先等于巡航高度，真实投放高度待实机确定
+_DROP_ALTITUDE_TOLERANCE_M = 0.3
+_APPROACH_REFINE_THRESHOLD_M = 0.4  # 进近阶段"这帧检测是不是已选中目标"的
+    # 匹配半径，比 SEARCH 聚类的 0.6m 更紧，避免飞近了吸附到旁边的筒
+_COARSE_APPROACH_RADIUS_M = 1.0  # 占位，待真实 FOV 数据定——先在巡航高度
+    # 靠近到这个范围内，再开始水平+高度一起收敛，避免太远就降高度导致
+    # 过早丢视野
+_DROP_MECHANISM_OFFSET_M = (0.0, 0.0)  # 相机视线中心跟投放机构的固定偏移
+    # （世界系 NED，米），占位 0，装机后实测标定。假设任务全程机头朝向
+    # 基本不变（现有状态机从没发过偏航指令）；如果偏航会漂移，这里要改成
+    # 按当前偏航角旋转的机体系偏移
 
 
 def _world_xy_to_ned(world_x, world_y):
@@ -63,11 +88,20 @@ def _world_xy_to_ned(world_x, world_y):
     return (world_y, world_x)
 
 
-# 下面这两个导航目标，先用场地坐标写（好对照 field/config.py 肉眼核对），
-# 再统一转成 NED——不要直接改这两个 _WORLD 常量成"看起来对的数字"，
+# 下面这些导航目标，先用场地坐标写（好对照 field/config.py 肉眼核对），
+# 再统一转成 NED——不要直接改这些 _WORLD 常量成"看起来对的数字"，
 # 要改就去 field/config.py 对应的圆筒/区域坐标，这里跟着重新算。
-_DROP_ZONE_CENTER_WORLD = (32.5, 0.0)
-_DROP_ZONE_CENTER = _world_xy_to_ned(*_DROP_ZONE_CENTER_WORLD)
+_DROP_ZONE_CENTER_WORLD = (32.5, 0.0)  # field-layout.md §8.1 C_drop
+_DROP_SCAN_OFFSETS = [   # 相对中心点的 (dx, dy)，占位间距，等真实相机
+    (-1.0, -2.0), (-1.0, 2.0),   # FOV/俯仰角/投放高度定下来再调
+    (0.0, 2.0), (0.0, -2.0),
+    (1.0, -2.0), (1.0, 2.0),
+]
+_DROP_SCAN_WAYPOINTS_WORLD = [
+    (_DROP_ZONE_CENTER_WORLD[0] + dx, _DROP_ZONE_CENTER_WORLD[1] + dy)
+    for dx, dy in _DROP_SCAN_OFFSETS
+]
+_DROP_SCAN_WAYPOINTS = [_world_xy_to_ned(wx, wy) for wx, wy in _DROP_SCAN_WAYPOINTS_WORLD]
 
 _RECON_SCAN_WAYPOINTS_WORLD = [
     (56.0, -2.0), (56.0, 2.0),
@@ -107,19 +141,14 @@ class TickResult:
 
 
 @dataclass
-class Candidate:
-    x: float
-    y: float
-    size: float
-
-
-@dataclass
 class DropTaskState:
     clusters: List[list] = field(default_factory=list)  # 每个元素是 [(x, y, size), ...] 采样列表
     used_positions: List[Tuple[float, float]] = field(default_factory=list)
     drop_count: int = 0
     selected_target: Optional[Candidate] = None
     phase_entered_monotonic: Optional[float] = None
+    waypoint_index: int = 0
+    approach_step: str = 'close_in'  # 'close_in' -> 'converge'，见 _tick_approach_drop_target
 
 
 @dataclass
@@ -150,6 +179,7 @@ class MissionContext:
     local_position_z: Optional[float] = None  # NED，向下为正
     detections: list = field(default_factory=list)  # 元素需要有 .target_type/.position.x/.position.y/.apparent_size
     task_start_triggered: bool = False
+    stop_after_drop: bool = False  # 硬件单点测试用：投完两次直接 RTL，不去侦察区
 
     drop_task: DropTaskState = field(default_factory=DropTaskState)
     recon_task: ReconTaskState = field(default_factory=ReconTaskState)
@@ -183,17 +213,20 @@ def _dispatch_and_await(ctx, service_name, kwargs, on_success):
     return TickResult()
 
 
-# ---- 投放策略：单独一个函数，预期实机测试后会调整，不掺进状态转移逻辑里 ----
+# ---- 投放目标选哪个：见 drop_strategy.py，这里只负责调用 ----
 
-def select_drop_target(candidates, used_positions, match_threshold=_CLUSTER_MATCH_THRESHOLD_M):
-    """从候选目标里挑一个投放对象：排除已经投过的位置，按视在尺寸从小
-    到大选——尺寸越小命中得分越高（1 号筒 15cm 命中 A 区 +500，3 号筒
-    25cm 只有 +100，见 docs/spec/06-planning.md）。没有候选时返回 None。
-    """
-    remaining = [c for c in candidates if not _is_near_any(c.x, c.y, used_positions, match_threshold)]
-    if not remaining:
-        return None
-    return min(remaining, key=lambda c: c.size)
+def _refine_target(target, detections, match_threshold):
+    """进近阶段用：用离当前估计最近的检测替换掉它——离得越近信得越准，
+    不固守 SEARCH 阶段离得远时候算出来的均值。本帧没匹配上（比如快到
+    正上方视野盲区）就保持上一个估计不变。"""
+    best, best_dist = None, match_threshold
+    for d in detections:
+        if d.target_type != 'cylinder' or d.confidence < _MIN_DETECTION_CONFIDENCE:
+            continue
+        dist = math.hypot(d.position.x - target.x, d.position.y - target.y)
+        if dist < best_dist:
+            best_dist, best = dist, d
+    return Candidate(best.position.x, best.position.y, best.apparent_size) if best else target
 
 
 def _update_clusters(clusters, points, match_threshold):
@@ -281,10 +314,11 @@ def _tick_arm_and_takeoff(ctx):
 
 
 def _tick_navigate_to_drop_zone(ctx):
-    if _arrived(ctx.local_position_xy, _DROP_ZONE_CENTER, _POSITION_TOLERANCE_M):
+    first_waypoint = _DROP_SCAN_WAYPOINTS[0]
+    if _arrived(ctx.local_position_xy, first_waypoint, _POSITION_TOLERANCE_M):
         ctx.drop_task.phase_entered_monotonic = time.monotonic()
         return TickResult(next_state=State.SEARCH_DROP_TARGETS)
-    return TickResult(position_target=(_DROP_ZONE_CENTER[0], _DROP_ZONE_CENTER[1], -_CRUISE_ALTITUDE_M))
+    return TickResult(position_target=(first_waypoint[0], first_waypoint[1], -_CRUISE_ALTITUDE_M))
 
 
 def _tick_search_drop_targets(ctx):
@@ -296,9 +330,19 @@ def _tick_search_drop_targets(ctx):
     points = [
         (d.position.x, d.position.y, d.apparent_size)
         for d in ctx.detections
-        if d.target_type == 'cylinder' and d.position.y < 45.0
+        if d.target_type == 'cylinder' and d.confidence >= _MIN_DETECTION_CONFIDENCE and d.position.y < 45.0
     ]
     _update_clusters(ctx.drop_task.clusters, points, _CLUSTER_MATCH_THRESHOLD_M)
+
+    # 候选还不够/还没扫完，按扫描航点继续飞，攒更多样本
+    index = min(ctx.drop_task.waypoint_index, len(_DROP_SCAN_WAYPOINTS) - 1)
+    waypoint = _DROP_SCAN_WAYPOINTS[index]
+    scan_complete = index == len(_DROP_SCAN_WAYPOINTS) - 1 and _arrived(
+        ctx.local_position_xy, waypoint, _POSITION_TOLERANCE_M)
+    if _arrived(ctx.local_position_xy, waypoint, _POSITION_TOLERANCE_M):
+        if index < len(_DROP_SCAN_WAYPOINTS) - 1:
+            ctx.drop_task.waypoint_index = index + 1
+            waypoint = _DROP_SCAN_WAYPOINTS[ctx.drop_task.waypoint_index]
 
     if time.monotonic() - ctx.state_entered_monotonic >= _SEARCH_SETTLE_SECONDS:
         candidates = [
@@ -306,19 +350,38 @@ def _tick_search_drop_targets(ctx):
             for c in ctx.drop_task.clusters
             if len(c) >= _MIN_CLUSTER_SAMPLES
         ]
-        target = select_drop_target(candidates, ctx.drop_task.used_positions)
-        if target is not None:
-            ctx.drop_task.selected_target = target
-            return TickResult(next_state=State.APPROACH_DROP_TARGET)
+        # 3 个筒都找齐了，或者已经飞完整条扫描路径都没能找齐——两种情况
+        # 才允许选目标，不能"随便凑够一个候选就选"：不然可能锁死在第一眼
+        # 看到的筒上，从没飞去比较过其它候选（2026-09-11 SITL 实测踩过）。
+        if len(candidates) >= _DROP_CYLINDER_COUNT or scan_complete:
+            target = drop_strategy.ACTIVE_STRATEGY(candidates, ctx.drop_task.used_positions, ctx.drop_task.drop_count)
+            if target is not None:
+                ctx.drop_task.selected_target = target
+                ctx.drop_task.approach_step = 'close_in'
+                return TickResult(next_state=State.APPROACH_DROP_TARGET)
 
-    return TickResult(position_target=(_DROP_ZONE_CENTER[0], _DROP_ZONE_CENTER[1], -_CRUISE_ALTITUDE_M))
+    return TickResult(position_target=(waypoint[0], waypoint[1], -_CRUISE_ALTITUDE_M))
 
 
 def _tick_approach_drop_target(ctx):
+    ctx.drop_task.selected_target = _refine_target(
+        ctx.drop_task.selected_target, ctx.detections, _APPROACH_REFINE_THRESHOLD_M)
     target = ctx.drop_task.selected_target
-    if _arrived(ctx.local_position_xy, (target.x, target.y), _APPROACH_TOLERANCE_M):
+    aim_x = target.x + _DROP_MECHANISM_OFFSET_M[0]
+    aim_y = target.y + _DROP_MECHANISM_OFFSET_M[1]
+
+    if ctx.drop_task.approach_step == 'close_in':
+        if not _arrived(ctx.local_position_xy, (aim_x, aim_y), _COARSE_APPROACH_RADIUS_M):
+            return TickResult(position_target=(aim_x, aim_y, -_CRUISE_ALTITUDE_M))
+        ctx.drop_task.approach_step = 'converge'
+
+    # converge：水平和高度一起收敛，不分先后——离得越近估计越准
+    horizontal_ok = _arrived(ctx.local_position_xy, (aim_x, aim_y), _APPROACH_TOLERANCE_M)
+    altitude_ok = (ctx.local_position_z is not None
+                   and -ctx.local_position_z <= _DROP_ALTITUDE_M + _DROP_ALTITUDE_TOLERANCE_M)
+    if horizontal_ok and altitude_ok:
         return TickResult(next_state=State.DROP_PAYLOAD)
-    return TickResult(position_target=(target.x, target.y, -_CRUISE_ALTITUDE_M))
+    return TickResult(position_target=(aim_x, aim_y, -_DROP_ALTITUDE_M))
 
 
 def _tick_drop_payload(ctx):
@@ -327,8 +390,9 @@ def _tick_drop_payload(ctx):
         ctx.drop_task.used_positions.append((target.x, target.y))
         ctx.drop_task.drop_count += 1
         ctx.drop_task.selected_target = None
-        ctx.drop_task.clusters = []
         if ctx.drop_task.drop_count >= _DROP_COUNT_TARGET:
+            if ctx.stop_after_drop:
+                return TickResult(next_state=State.RTL_OR_LAND)
             return TickResult(next_state=State.NAVIGATE_TO_RECON_ZONE)
         return TickResult(next_state=State.SEARCH_DROP_TARGETS)
 

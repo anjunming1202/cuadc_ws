@@ -20,4 +20,16 @@ set -eo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$REPO_ROOT/scripts/activate_env.sh"
 
-exec ros2 launch "$REPO_ROOT/launch/mission_bringup.launch.py" "$@"
+# 接口/感知/决策三个节点的日志会挤在同一个终端里。要只看某一类，改这个
+# 正则（纯 shell 脚本，改完直接跑，不用 rebuild），或者不改文件、临时用
+# 环境变量覆盖一次：LOG_FILTER='\[STATE\]' ./scripts/run_task_nodes.sh
+#   LOG_FILTER='\[STATE\]'            只看状态切换
+#   LOG_FILTER='\[STATE\]|\[PERF\]'   状态切换 + 耗时监控
+# 留空 = 不过滤，全部日志都显示（默认）。
+LOG_FILTER="${LOG_FILTER:-}"
+
+if [[ -n "$LOG_FILTER" ]]; then
+    ros2 launch "$REPO_ROOT/launch/mission_bringup.launch.py" "$@" 2>&1 | grep --line-buffered -E "$LOG_FILTER"
+else
+    exec ros2 launch "$REPO_ROOT/launch/mission_bringup.launch.py" "$@"
+fi
