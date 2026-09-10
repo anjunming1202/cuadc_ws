@@ -21,9 +21,10 @@ First run in a fresh sitl_run_dir needs a EEPROM wipe, e.g.:
 """
 import os
 
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 
 
 def generate_launch_description():
@@ -52,6 +53,13 @@ def generate_launch_description():
         cmd=[[
             LaunchConfiguration('ardupilot_path'), '/Tools/autotest/sim_vehicle.py',
             ' -v ArduCopter -f ', LaunchConfiguration('frame'),
+            # Our own param overrides (e.g. RTL_ALT_M), layered on top of
+            # whatever frame defaults sim_vehicle.py loads -- kept in sync
+            # with gazebo_bringup.launch.py's identical override so RTL
+            # behavior doesn't depend on which sandbox is used.
+            ' --add-param-file ',
+            PathJoinSubstitution([get_package_share_directory('cuadc_sim'),
+                                   'config', 'mission_defaults.parm']),
             # SITL's default build has HAL_WITH_ESC_TELEM=0 (no CAN/serial
             # RCOut), which compiles out the entire body of
             # Copter::takeoff_check() -- the only place that ever clears

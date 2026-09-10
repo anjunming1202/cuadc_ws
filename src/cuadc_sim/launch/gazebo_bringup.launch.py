@@ -181,6 +181,13 @@ def generate_launch_description():
             # see docs/lessons.md.
             ' --add-param-file ', LaunchConfiguration('ardupilot_path'),
             '/Tools/autotest/default_params/gazebo-iris.parm',
+            # Our own overrides layered on top (--add-param-file is
+            # repeatable and later files win, see sim_vehicle.py). Only
+            # holds params we deliberately deviate from upstream's
+            # defaults for -- e.g. RTL_ALT_M, see the file itself.
+            ' --add-param-file ',
+            PathJoinSubstitution([get_package_share_directory('cuadc_sim'),
+                                   'config', 'mission_defaults.parm']),
             # SITL's default build has HAL_WITH_ESC_TELEM=0 (no CAN/serial
             # RCOut), which compiles out the entire body of
             # Copter::takeoff_check() -- the only place that ever clears

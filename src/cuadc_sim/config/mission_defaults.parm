@@ -1,0 +1,10 @@
+# 项目自己的 SITL 参数覆盖，叠加在 ArduPilot 自带的
+# Tools/autotest/default_params/gazebo-iris.parm 之上（用 sim_vehicle.py
+# 的 --add-param-file 按顺序两次叠加，后加的覆盖先加的）。ArduPilot 自带
+# 默认值不在我们仓库版本控制范围内，这里只放偏离默认值、跟本项目任务相关
+# 的参数，别处改了默认值不会静默丢失。
+
+# RTL 返航前爬升到的目标高度（米），默认 15m 远高于任务巡航高度，返航时
+# 会有一段明显的额外爬升。跟 mission_logic.py 的 _CRUISE_ALTITUDE_M 保持
+# 一致，返航不用再爬升，直接从当前高度返回。
+RTL_ALT_M	5
