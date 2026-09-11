@@ -67,7 +67,7 @@ sudo apt-get install ros-humble-rosbridge-suite ros-humble-web-video-server
 | 话题（原始，节点发布） | 内容 | 开关方式 |
 |---|---|---|
 | `/camera/image_raw` | 相机原始画面 | 网页勾选框，独立开关 |
-| `/cuadc_perception_cv/debug/{annotated,contours,mask}` | 三种调试视图，各自独立话题 | 网页上每种一个可点击格子（多选，非互斥），点击调用 `rcl_interfaces/srv/SetParameters` 改对应的 `debug_<view>_enabled` 布尔参数。**真正的硬性上限是节点自己的 `max_concurrent_debug_views` 参数**（默认 1）——不管网页同时勾了几个，机上按 `annotated > contours > mask` 的固定优先级只算/只发排在前面的这么多路，超出的直接跳过并打限流日志，网页格子对应的画面会没有内容。真机部署把这个参数留在保守默认值即可，仿真/联调可以调大，不用改前端代码 |
+| `/cuadc_perception_cv/debug/{annotated,contours,mask}` | 三种调试视图，各自独立话题 | 网页上每种一个可点击格子，点击调用 `rcl_interfaces/srv/SetParameters` 改对应的 `debug_<view>_enabled` 布尔参数。前端区分两个上限：**`backendCap`**（机上真实上限，页面启动时用 `GetParameters` 读一次 `max_concurrent_debug_views`）和 **`userCap`**（用户自己拖滑块在 `[1, backendCap]` 之间选的"我想同时看几个"，纯本地体验设置，默认 1）。选中数量达到 `userCap` 时，新选一个会自动关掉最早选中的那个让位。`userCap` 只是体验设置，**真正的硬性上限还是节点自己的 `max_concurrent_debug_views` 参数**，按 `annotated > contours > mask` 固定优先级只算/只发排前面的几路，网页这边不管滑块拖到多少、两个标签页同时开、或者有人直接在终端改参数，最终还是靠这个兜底 |
 | `/cuadc_perception_cv/recon_image` | 侦察区图传 | **没有开关**，`cv_perception_node.py` 内部订阅 `mission_state`，只在 `SURVEY_RECON_ZONE` 阶段转发这一帧，其余阶段这个话题没有消息、`republish`/`web_video_server` 自然不产生流量。裁判要求机组能人工判读，比赛现场没有余裕手动开关，必须自动 |
 
 **关于"网页反向控制机上参数"这件事本身**：`SetParameters` 调用是一条
@@ -101,6 +101,26 @@ sudo apt-get install ros-humble-rosbridge-suite ros-humble-web-video-server
 - **投放区**——原始画面 + 调试图像 + 检测列表（原始，不跨帧关联）+
   CV profiling。
 - **侦察区**——独立图传通道。
+
+### 视图播放器（`web/player.js`）
+
+原始画面/调试图像/侦察图传三处共用同一个播放器组件，只关心"现在该不该
+播"这一个布尔输入，不关心是谁触发的——决定"该不该播"是外层选择器各自
+的事（勾选框 / 点格子+排队 / `mission_state` 自动判断），互不相同，但
+播放器本身完全一样。四种状态：未开启 / 已选中等待首帧 / 正在接收 / 已
+选中但未收到——用来区分"网页选了但机上没传"和"网页本来就没选"这两种
+容易混在一起的情况，呼应上面的诚实原则（不能让人分不清是没连上还是
+本来就没开）。
+
+"正在接收"靠 `<img>` 的 `load` 事件判断，"已选中但未收到"靠一个几秒的
+超时——MJPEG 是 `<img>` 直接拉 multipart 流，拿不到每一帧的时间戳，
+`load` 事件在不同浏览器上对 multipart 流的触发时机也不完全一致，这里
+只当它是"至少收到过一次"的信号，不是精确的持续活体检测，但够用（不需要
+判断到"卡了几秒"这么精细，见分支讨论）。"网页没选却一直收到"这种情况
+**不检测**——格子关闭时 `img.src` 直接清空，前端压根没有再去看那个话题，
+硬要看等于又订阅一路本来想省掉的流，跟省流量的目的矛盾；真出现这种
+后端泄漏的 bug，应该在开发时用 `ros2 topic hz` 之类的工具查，不做成
+常驻前端功能。
 
 ### 地图视图（`web/map.js`）
 
@@ -143,7 +163,7 @@ sudo apt-get install ros-humble-rosbridge-suite ros-humble-web-video-server
   数据。
 - 前端没有做任何认证/访问控制——假设 dashboard 只在可信的现场局域网内
   使用，不暴露到公网。
-- 网页不知道节点当前 `max_concurrent_debug_views` 的实际值，勾选超过
-  上限的格子不会报错提示，只是画面没有内容——想确认上限是多少，现在
-  只能自己 `ros2 param get /cuadc_perception_cv max_concurrent_debug_views`
-  查，网页里没有做成只读显示。
+- 网页启动时只读一次 `max_concurrent_debug_views`，运行过程中如果有人
+  在终端把这个参数改小了，网页的排队逻辑不会跟着变（还是按启动时读到
+  的旧值排队），要刷新页面才会重新读——这个参数本来就不是运行中常改的
+  东西，暂时不值得为这个加一条常驻订阅去实时跟踪它的变化。

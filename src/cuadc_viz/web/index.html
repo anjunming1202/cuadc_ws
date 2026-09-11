@@ -46,9 +46,11 @@
 
   <div class="column">
     <h1>投放区</h1>
-    <div class="panel image-wrap">
+    <div class="panel">
       <h2>原始画面</h2>
-      <img id="img-raw">
+      <div class="view-tile" id="tile-raw">
+        <img><div class="view-tile-status">未开启</div>
+      </div>
       <div class="image-controls">
         <label><input type="checkbox" id="chk-raw" checked> 显示</label>
       </div>
@@ -56,28 +58,31 @@
     <div class="panel">
       <h2>调试图像</h2>
       <div class="image-controls">
-        <label><input type="checkbox" id="chk-multi-debug"> 允许多选</label>
-        <span class="hint" id="debug-cap-hint">未勾选时点一个自动取消其它——实际能同时算/发几路由机上
-          max_concurrent_debug_views 参数硬性限制，网页这边选得再多，超过上限的也不会真的有画面。</span>
+        <label for="debug-cap-slider">同时最多显示</label>
+        <input type="range" id="debug-cap-slider" min="1" max="1" value="1" step="1" disabled>
+        <span id="debug-cap-value">1</span>
+      </div>
+      <div class="hint" id="debug-cap-hint">
+        这个滑块只能在 1~机上真实上限之间选（上限读取中…）——选够这个
+        数量后再选一个，会自动关闭最早选中的那个让位。这只是本地体验
+        设置，机上的 max_concurrent_debug_views 参数才是最终硬性上限，
+        跟这个滑块选多少无关。
       </div>
       <!-- 这几个格子必须跟 cv_perception_node.py 的 _DEBUG_VIEWS 保持
            一致——那边是权威列表，这里是手抄的第二份，加/删一种要两边
            一起改。 -->
       <div id="debug-view-grid" class="debug-grid">
-        <div class="debug-tile" data-view="annotated">
-          <div class="debug-tile-label">标注图</div>
-          <img>
-          <div class="debug-tile-placeholder">未开启</div>
+        <div class="view-tile clickable" data-view="annotated">
+          <div class="view-tile-label">标注图</div>
+          <img><div class="view-tile-status">未开启</div>
         </div>
-        <div class="debug-tile" data-view="contours">
-          <div class="debug-tile-label">轮廓</div>
-          <img>
-          <div class="debug-tile-placeholder">未开启</div>
+        <div class="view-tile clickable" data-view="contours">
+          <div class="view-tile-label">轮廓</div>
+          <img><div class="view-tile-status">未开启</div>
         </div>
-        <div class="debug-tile" data-view="mask">
-          <div class="debug-tile-label">二值化 mask</div>
-          <img>
-          <div class="debug-tile-placeholder">未开启</div>
+        <div class="view-tile clickable" data-view="mask">
+          <div class="view-tile-label">二值化 mask</div>
+          <img><div class="view-tile-status">未开启</div>
         </div>
       </div>
     </div>
@@ -102,9 +107,11 @@
 
   <div class="column">
     <h1>侦察区</h1>
-    <div class="panel image-wrap">
+    <div class="panel">
       <h2>侦察图传（独立通道，随任务阶段自动出现，无需手动开关）</h2>
-      <img id="img-recon">
+      <div class="view-tile" id="tile-recon">
+        <img><div class="view-tile-status">未开启</div>
+      </div>
     </div>
   </div>
 

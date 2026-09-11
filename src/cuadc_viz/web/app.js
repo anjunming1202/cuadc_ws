@@ -1,6 +1,7 @@
 import { RosBridge } from './rosbridge.js';
 import { RollingChart } from './chart.js';
 import { FieldMap, nedToField } from './map.js';
+import { createViewPlayer } from './player.js';
 
 // 端口跟 viz_bringup.launch.py 的默认值一致，需要的话用 query string 覆盖
 // （比如浏览器和 rosbridge 不在同一台机器时）。
@@ -34,8 +35,16 @@ function quatToRollPitchDeg(x, y, z, w) {
 // ---- 状态条 ----
 ros.onStatus((s) => setDot('dot-connected', s === 'connected' ? 'good' : 'critical'));
 
-ros.subscribe('/cuadc_decision/mission_state', 'std_msgs/String',
-  (m) => { document.getElementById('mission-state').textContent = m.data; });
+// cuadc_decision.mission_logic.State.SURVEY_RECON_ZONE 的字符串值——跟
+// cv_perception_node.py 的 _RECON_ZONE_STATE 是同一个契约字符串，这里
+// 只是又手抄了一份用来驱动侦察图传播放器的"该不该播"判断，不是替代
+// 机上的真实门控（机上不发消息，这里就算显示成"播放中"也不会有画面）。
+const RECON_ZONE_STATE = 'SURVEY_RECON_ZONE';
+
+ros.subscribe('/cuadc_decision/mission_state', 'std_msgs/String', (m) => {
+  document.getElementById('mission-state').textContent = m.data;
+  reconPlayer.setActive(m.data === RECON_ZONE_STATE);
+});
 
 ros.subscribe('/cuadc_interface/status/armed', 'std_msgs/Bool', (m) => {
   document.getElementById('txt-armed').textContent = m.data ? '已解锁' : '未解锁';
@@ -123,42 +132,84 @@ ros.subscribe('/cuadc_perception_cv/perf', 'diagnostic_msgs/DiagnosticArray', (m
   if (kv.total_ms !== undefined) perfChart.push(kv.total_ms);
 });
 
-// ---- 图像面板 ----
-const imgRaw = document.getElementById('img-raw');
-const imgRecon = document.getElementById('img-recon');
-imgRecon.src = videoSrc('/cuadc_perception_cv/recon_image'); // 独立通道，固定订阅，没有开关
+// ---- 图像面板：三处都是同一个播放器（player.js），区别只在"谁来决定
+// 该不该播"（选择器），播放器本身不用关心这个。 ----
 
-document.getElementById('chk-raw').addEventListener('change', (e) => {
-  imgRaw.src = e.target.checked ? videoSrc('/camera/image_raw') : '';
-});
-imgRaw.src = videoSrc('/camera/image_raw');
+// 原始画面：选择器是一个本地勾选框，不涉及机上参数，不发 SetParameters
+// ——相机本来就一直在发，不是可选的调试功能，见 cuadc_viz/README.md。
+const rawPlayer = createViewPlayer(document.getElementById('tile-raw'), '/camera/image_raw', videoSrc);
+document.getElementById('chk-raw').addEventListener('change', (e) => rawPlayer.setActive(e.target.checked));
+rawPlayer.setActive(true);
 
-// 调试图像：每个格子对应 CV 节点的一个 debug_<view>_enabled 布尔参数，
-// 通过 rosbridge 的 rcl_interfaces/srv/SetParameters 服务改，等价于
-// `ros2 param set`。真正的"最多几路同时算/发"由节点自己的
-// max_concurrent_debug_views 硬性限制，网页这边的"允许多选"只是 UI
-// 便利（不勾选时表现成单选），不是安全边界——见 cuadc_viz/README.md。
-const debugTiles = [...document.querySelectorAll('#debug-view-grid .debug-tile')];
-const multiCheckbox = document.getElementById('chk-multi-debug');
+// 侦察图传：选择器是 mission_state 订阅（见上面 RECON_ZONE_STATE），
+// 没有用户可操作的开关。
+const reconPlayer = createViewPlayer(document.getElementById('tile-recon'), '/cuadc_perception_cv/recon_image', videoSrc);
 
-function setDebugView(tile, active) {
+// 调试图像：选择器是"点格子 + 排队"，两个数字分工不同：
+// - backendCap：机上真实上限（max_concurrent_debug_views），从
+//   GetParameters 读一次，是滑块能选的范围上限，也是最终兜底——不管
+//   网页这边选了几个，机上按 annotated > contours > mask 固定优先级
+//   只算/只发这么多路。
+// - userCap：用户自己在 [1, backendCap] 之间用滑块选的"我想同时看几个"，
+//   纯本地体验设置，默认 1（不主动选更多的话行为跟以前单选一样）。
+//   选中数量达到 userCap 时，新选一个会自动关掉最早选中的那个让位。
+const DEBUG_SET_PARAMS_SERVICE = '/cuadc_perception_cv/set_parameters';
+const DEBUG_GET_PARAMS_SERVICE = '/cuadc_perception_cv/get_parameters';
+let backendCap = 1;
+let userCap = 1;
+
+const capSlider = document.getElementById('debug-cap-slider');
+const capValue = document.getElementById('debug-cap-value');
+const capHint = document.getElementById('debug-cap-hint');
+
+ros.callService(DEBUG_GET_PARAMS_SERVICE, 'rcl_interfaces/srv/GetParameters', {
+  names: ['max_concurrent_debug_views'],
+}).then((res) => {
+  backendCap = res.values[0].integer_value;
+  capSlider.max = backendCap;
+  capSlider.disabled = false;
+  capHint.textContent = `这个滑块只能在 1~${backendCap}（机上真实上限）之间选——选够这个数量后`
+    + '再选一个，会自动关闭最早选中的那个让位。这只是本地体验设置，机上的'
+    + ' max_concurrent_debug_views 参数才是最终硬性上限，跟这个滑块选多少无关。';
+}).catch((err) => console.error('读取 max_concurrent_debug_views 失败，滑块保持锁定在 1', err));
+
+const debugPlayers = new Map(); // view -> player
+const debugQueue = []; // 已选中的 view，按选中顺序排列，最早的在最前面
+
+document.querySelectorAll('#debug-view-grid .view-tile').forEach((tile) => {
   const view = tile.dataset.view;
-  tile.classList.toggle('active', active);
-  const img = tile.querySelector('img');
-  img.src = active ? videoSrc(`/cuadc_perception_cv/debug/${view}`) : '';
-  ros.callService('/cuadc_perception_cv/set_parameters', 'rcl_interfaces/srv/SetParameters', {
-    parameters: [{ name: `debug_${view}_enabled`, value: { type: 1, bool_value: active } }],
+  debugPlayers.set(view, createViewPlayer(tile, `/cuadc_perception_cv/debug/${view}`, videoSrc));
+});
+
+function setDebugParam(view, enabled) {
+  debugPlayers.get(view).setActive(enabled);
+  ros.callService(DEBUG_SET_PARAMS_SERVICE, 'rcl_interfaces/srv/SetParameters', {
+    parameters: [{ name: `debug_${view}_enabled`, value: { type: 1, bool_value: enabled } }],
   }).catch((err) => console.error(`设置 debug_${view}_enabled 失败`, err));
 }
 
-debugTiles.forEach((tile) => {
+function evictToFit(limit) {
+  while (debugQueue.length > limit) setDebugParam(debugQueue.shift(), false);
+}
+
+capSlider.addEventListener('input', () => {
+  userCap = parseInt(capSlider.value, 10);
+  capValue.textContent = userCap;
+  evictToFit(userCap); // 往下拖滑块，立刻按新上限清掉多出来的那几个
+});
+
+document.querySelectorAll('#debug-view-grid .view-tile').forEach((tile) => {
+  const view = tile.dataset.view;
   tile.addEventListener('click', () => {
-    const nowActive = !tile.classList.contains('active');
-    if (nowActive && !multiCheckbox.checked) {
-      debugTiles.filter((t) => t !== tile && t.classList.contains('active'))
-        .forEach((t) => setDebugView(t, false));
+    const idx = debugQueue.indexOf(view);
+    if (idx !== -1) {
+      debugQueue.splice(idx, 1);
+      setDebugParam(view, false);
+      return;
     }
-    setDebugView(tile, nowActive);
+    evictToFit(userCap - 1); // 腾出一个位置给新选的
+    debugQueue.push(view);
+    setDebugParam(view, true);
   });
 });
 

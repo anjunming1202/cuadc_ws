@@ -172,16 +172,6 @@ body {
   background: var(--surface-1);
 }
 
-/* ---- 图像面板 ---- */
-.image-wrap img {
-  width: 100%;
-  display: block;
-  border-radius: 4px;
-  background: #000;
-  aspect-ratio: 4 / 3;
-  object-fit: contain;
-}
-
 .image-controls {
   display: flex;
   gap: 8px;
@@ -199,7 +189,10 @@ select, button {
   padding: 3px 6px;
 }
 
-/* ---- 调试图像多选格子 ---- */
+/* ---- 视图播放器：原始画面/调试图像/侦察图传三处共用同一套状态样式
+   （未开启 / 已选中等待首帧 / 正在接收 / 已选中但未收到），谁来决定
+   "现在该不该播"是外层选择器的事（勾选框/点格子+排队/任务阶段），
+   这里只管把这四种状态画对，不关心是哪种选择器触发的。 ---- */
 .debug-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -207,20 +200,22 @@ select, button {
   margin-top: 8px;
 }
 
-.debug-tile {
+.view-tile {
   position: relative;
-  cursor: pointer;
   border: 1px solid var(--border);
   border-radius: 4px;
   overflow: hidden;
   /* 高度定在容器自己身上，不依赖 img——未激活时 img 是 display:none，
-     占位文字是 position:absolute（不占文档流），两个都不会撑开高度，
-     不这样写格子会直接塌缩成一条边框线。 */
+     状态文字是 position:absolute（不占文档流），两个都不会撑开高度，
+     不这样写格子会直接塌缩成一条边框线（真实踩过的坑）。 */
   aspect-ratio: 4 / 3;
   background: #000;
+  margin-top: 8px;
 }
 
-.debug-tile-label {
+.view-tile.clickable { cursor: pointer; }
+
+.view-tile-label {
   position: absolute;
   top: 4px;
   left: 6px;
@@ -230,27 +225,28 @@ select, button {
   z-index: 1;
 }
 
-.debug-tile img {
+.view-tile img {
   width: 100%;
   height: 100%;
   object-fit: contain;
-  display: block;
+  display: none;
 }
+.view-tile.receiving img { display: block; }
 
-.debug-tile-placeholder {
+.view-tile-status {
   position: absolute;
   inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #000;
   color: var(--text-muted);
   font-size: 12px;
+  text-align: center;
+  padding: 8px;
 }
+.view-tile.receiving .view-tile-status { display: none; }
 
-.debug-tile.active .debug-tile-placeholder { display: none; }
-.debug-tile:not(.active) img { display: none; }
-.debug-tile.active { border-color: var(--series-1); }
+.view-tile.active { border-color: var(--series-1); }
 
 /* ---- 检测列表 ---- */
 table.detections {
