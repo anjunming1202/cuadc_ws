@@ -79,7 +79,7 @@ class CvPerceptionNode(Node):
         # 这么多路。仿真/联调可以调大，真机部署默认保守（1），不用改前端
         # 代码，前端多勾也不会真的让机上多算。超过上限的按 _DEBUG_VIEWS
         # 的顺序丢弃靠后的，不报错，只打限流日志。
-        self.declare_parameter('max_concurrent_debug_views', 1)
+        self.declare_parameter('max_concurrent_debug_views', 4)
 
         self._bridge = CvBridge()
         self._latest_position_ned = None  # (north, east, down)
