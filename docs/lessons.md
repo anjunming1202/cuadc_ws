@@ -389,3 +389,21 @@
   种情况下"读源码推理"跟"猜"没有本质区别，必须靠直接测量验证。已把
   这次错误设计加的 `home_world_xy` 相关代码全部回退，投放区单点测试
   世界最终不需要任何坐标补偿就能正常工作。
+
+- **ROS2 launch 生成的 params YAML 是 YAML 1.1，字符串参数默认值不能
+  是 `off`/`on`/`yes`/`no`（会被解析成布尔）**：`cv_perception_node.py`
+  给 `debug_image_source` 这个字符串参数选了默认值 `'off'`，
+  `declare_parameter('debug_image_source', 'off')` 单独看没问题；但
+  `cv_perception_bringup.launch.py` 用
+  `parameters=[{'debug_image_source': LaunchConfiguration(...)}]` 这种
+  写法时，`launch_ros` 会先把这个 dict 序列化成一个临时 YAML 文件再传给
+  节点（`--params-file`），YAML 1.1 规范里裸写（不加引号）的
+  `off`/`no`/`false` 会被解析成布尔 `False`，导致节点启动时读到的是
+  `bool` 类型而不是声明时期望的 `str`，直接抛
+  `InvalidParameterTypeException` 崩掉。SITL 实测：`stop_after_drop:=true`
+  这种其它参数完全正常，只有这一个新参数崩，一开始以为是参数传递搞混了，
+  实际上是值本身撞上了 YAML 的保留字。**教训**：ROS2 字符串参数的枚举值
+  要避开 YAML 1.1 的布尔/null 保留字（`off/on/yes/no/true/false/null/~`
+  这一类），不只是避开 Python/JSON 里天然是布尔的那几个词——两边规则不
+  一样，凭直觉挑枚举值容易踩到这个空子。`debug_image_source` 的"关闭"
+  态最终改名成 `'none'`。

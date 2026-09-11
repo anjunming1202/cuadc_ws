@@ -11,13 +11,14 @@
 的帧率（sim 里是 10Hz，见 gazebo_bringup.launch.py 的相机 update_rate）。
 """
 
+import cv2
 import rclpy
 from cv_bridge import CvBridge
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from geometry_msgs.msg import PoseStamped
 from rclpy.node import Node
 from sensor_msgs.msg import Image, Imu
-from std_msgs.msg import Header
+from std_msgs.msg import Header, String
 
 from cuadc_perception import cv_pipeline
 from cuadc_perception_msgs.msg import Detection, DetectionArray
@@ -26,6 +27,21 @@ _DETECTIONS_TOPIC = '/perception/detections'
 _IMAGE_TOPIC = '/camera/image_raw'
 _LOCAL_POSITION_TOPIC = '/cuadc_interface/telemetry/local_position'
 _ATTITUDE_TOPIC = '/cuadc_interface/telemetry/attitude'
+_MISSION_STATE_TOPIC = '/cuadc_decision/mission_state'
+
+# cuadc_decision.mission_logic.State.SURVEY_RECON_ZONE 的字符串值——这里
+# 只比对字符串，不 import mission_logic，感知层不需要知道决策层的状态机
+# 结构，只需要这个契约字符串（跟 decision_node.py 发布 mission_state 时
+# 用的是同一个纯字符串一致）。
+_RECON_ZONE_STATE = 'SURVEY_RECON_ZONE'
+
+# 每种调试图像各自一个话题 + 一个布尔开关，可以同时开好几路——真正的
+# 安全上限是 max_concurrent_debug_views 参数（见 __init__），不是这里的
+# 列表本身。按这个顺序做优先级：超过上限时靠前的先保留。
+# cuadc_viz/web/index.html 的调试图像格子是手抄的第二份（前端不能 import
+# 这个 Python 常量），加/删一种调试图像要两边一起改，忘改一边不会报错，
+# 只会在网页上多一个点了没反应的格子，或者少一个格子。
+_DEBUG_VIEWS = ('annotated', 'contours', 'mask')
 
 
 class CvPerceptionNode(Node):
@@ -49,16 +65,40 @@ class CvPerceptionNode(Node):
         self.declare_parameter('min_radius_m', 0.05)
         self.declare_parameter('max_radius_m', 0.18)
         self.declare_parameter('morph_kernel_px', 5)
+        # 每种调试图像各自一个布尔开关，默认全关。运行时用
+        # `ros2 param set /cuadc_perception_cv debug_<view>_enabled true`切换
+        # （cuadc_viz 网页的格子走的也是这个参数服务），不用重启节点。用
+        # 布尔而不是字符串枚举，是吸取上次的教训——launch 生成的 params
+        # YAML 是 YAML 1.1，字符串参数裸写 off/no/false 这类词会被解析成
+        # 布尔，跟声明的字符串类型冲突，实测直接把节点启动崩了
+        # （InvalidParameterTypeException，见 docs/lessons.md）；布尔参数
+        # 天然是布尔类型，不存在这个问题。
+        for view in _DEBUG_VIEWS:
+            self.declare_parameter(f'debug_{view}_enabled', False)
+        # 真正的硬件保护在这——不管前端同时勾了几个，机上最多只算/只发
+        # 这么多路。仿真/联调可以调大，真机部署默认保守（1），不用改前端
+        # 代码，前端多勾也不会真的让机上多算。超过上限的按 _DEBUG_VIEWS
+        # 的顺序丢弃靠后的，不报错，只打限流日志。
+        self.declare_parameter('max_concurrent_debug_views', 4)
 
         self._bridge = CvBridge()
         self._latest_position_ned = None  # (north, east, down)
         self._latest_orientation_xyzw = None
+        self._recon_zone_active = False
 
         self._publisher = self.create_publisher(DetectionArray, _DETECTIONS_TOPIC, 10)
         self._perf_publisher = self.create_publisher(DiagnosticArray, '~/perf', 10)
+        self._debug_image_publishers = {
+            view: self.create_publisher(Image, f'~/debug/{view}', 10) for view in _DEBUG_VIEWS
+        }
+        self._recon_image_publisher = self.create_publisher(Image, '~/recon_image', 10)
         self.create_subscription(Image, _IMAGE_TOPIC, self._on_image, 10)
         self.create_subscription(PoseStamped, _LOCAL_POSITION_TOPIC, self._on_local_position, 10)
         self.create_subscription(Imu, _ATTITUDE_TOPIC, self._on_attitude, 10)
+        self.create_subscription(String, _MISSION_STATE_TOPIC, self._on_mission_state, 10)
+
+    def _on_mission_state(self, msg):
+        self._recon_zone_active = (msg.data == _RECON_ZONE_STATE)
 
     def _on_local_position(self, msg):
         self._latest_position_ned = (msg.pose.position.x, msg.pose.position.y, msg.pose.position.z)
@@ -87,7 +127,9 @@ class CvPerceptionNode(Node):
             orientation_xyzw=self._latest_orientation_xyzw,
         )
 
+        active_views = self._active_debug_views()
         perf = {}
+        debug = {} if active_views else None
         detections = cv_pipeline.detect_cylinders(
             image_bgr, camera, pose,
             cylinder_height_m=self.get_parameter('cylinder_height_m').value,
@@ -95,7 +137,13 @@ class CvPerceptionNode(Node):
             max_radius_m=self.get_parameter('max_radius_m').value,
             morph_kernel_px=self.get_parameter('morph_kernel_px').value,
             perf=perf,
+            debug=debug,
         )
+
+        for view in active_views:
+            self._publish_debug_image(view, image_bgr, debug, msg.header)
+        if self._recon_zone_active:
+            self._recon_image_publisher.publish(msg)
 
         out = DetectionArray()
         out.header = Header()
@@ -104,6 +152,41 @@ class CvPerceptionNode(Node):
         self._publisher.publish(out)
 
         self._publish_perf(perf)
+
+    def _active_debug_views(self):
+        """按 _DEBUG_VIEWS 的固定优先级排，超过 max_concurrent_debug_views
+        的靠后的直接丢——这是真机上唯一的硬性保护，不管前端请求了几路。"""
+        requested = [v for v in _DEBUG_VIEWS if self.get_parameter(f'debug_{v}_enabled').value]
+        limit = self.get_parameter('max_concurrent_debug_views').value
+        if len(requested) > limit:
+            self.get_logger().warn(
+                f'同时请求的调试图像 {requested} 超过 max_concurrent_debug_views={limit}，'
+                f'只算/只发前 {limit} 路：{requested[:limit]}', throttle_duration_sec=5.0)
+        return requested[:limit]
+
+    def _publish_debug_image(self, view, image_bgr, debug, header):
+        if view == 'mask':
+            out_bgr = cv2.cvtColor(debug['mask'], cv2.COLOR_GRAY2BGR)
+        elif view == 'contours':
+            out_bgr = image_bgr.copy()
+            for contour, det in debug['contour_results']:
+                color = (0, 200, 0) if det is not None else (128, 128, 128)  # 接受=绿，拒绝=灰
+                cv2.drawContours(out_bgr, [contour], -1, color, 2)
+        elif view == 'annotated':
+            out_bgr = image_bgr.copy()
+            for contour, det in debug['contour_results']:
+                if det is None:
+                    continue
+                (u, v), r_px = cv2.minEnclosingCircle(contour)  # 只用于画图定位，不是检测算法的一部分
+                cv2.circle(out_bgr, (int(u), int(v)), int(r_px), (0, 200, 0), 2)
+                label = f'{det.apparent_radius_m:.2f}m {det.confidence:.2f}'
+                cv2.putText(out_bgr, label, (int(u) - 30, int(v) - int(r_px) - 6),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 200, 0), 1, cv2.LINE_AA)
+        else:
+            return
+        out_msg = self._bridge.cv2_to_imgmsg(out_bgr, encoding='bgr8')
+        out_msg.header = header
+        self._debug_image_publishers[view].publish(out_msg)
 
     @staticmethod
     def _to_msg(det: cv_pipeline.Detection) -> Detection:

@@ -21,8 +21,11 @@ ros2 launch cuadc_perception stub_perception_bringup.launch.py
 ros2 launch cuadc_perception cv_perception_bringup.launch.py
 ```
 
-顶层 `mission_bringup.launch.py` 用 `perception_mode:=stub|cv`（默认
-`stub`）二选一起哪个，不用分别记两个 launch 文件名。
+顶层任务节点启动脚本按场景分开，`scripts/run_mission_sim.sh`/
+`run_mission_hardware.sh` 固定起真实 CV 感知，`run_mission_stub_sim.sh`
+固定起桩感知——不用一个参数默认值二选一（之前是这么做的，默认值选中
+了 stub，排查了很久才发现），一个脚本名直接对应一种场景，见仓库根
+`README.md` Quickstart 表格。
 
 ## CV 算法：六步流水线
 
