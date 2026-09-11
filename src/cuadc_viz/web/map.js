@@ -27,13 +27,20 @@ export class FieldMap {
     this.vehicle = null; // {x, y, yawRad}
     this.trail = [];
     this.detections = []; // [{x, y, confidence}]
+    this.showReference = true; // 开发环境已知筒位参照，见 setShowReference
     const style = getComputedStyle(document.documentElement);
     this.ink = style.getPropertyValue('--text-secondary').trim();
     this.muted = style.getPropertyValue('--text-muted').trim();
     this.grid = style.getPropertyValue('--gridline').trim();
     this.vehicleColor = style.getPropertyValue('--series-1').trim();
     this.detColor = style.getPropertyValue('--series-2').trim();
+    // 静态场地轮廓不依赖任何飞行数据——之前只在 setVehicle/setDetections
+    // 第一次调用时才画，导致仿真/任务节点起来之前地图一直是空白的，
+    // 场地本身应该一直画着。
+    this._draw();
   }
+
+  setShowReference(show) { this.showReference = show; this._draw(); }
 
   setVehicle(fieldX, fieldY, yawRad) {
     this.vehicle = { x: fieldX, y: fieldY, yaw: yawRad };
@@ -46,13 +53,24 @@ export class FieldMap {
 
   _transform(w, h) {
     const marginPx = 20;
+    const labelPx = 16; // 顶部留给分区名字标注的高度，不挤占场地本身
     const sx = (w - 2 * marginPx) / (FIELD_X_MAX - FIELD_X_MIN);
-    const sy = (h - 2 * marginPx) / (FIELD_Y_MAX - FIELD_Y_MIN);
+    const sy = (h - 2 * marginPx - labelPx) / (FIELD_Y_MAX - FIELD_Y_MIN);
     const s = Math.min(sx, sy);
+    // 场地是一条很窄很长的带子（约 63m x 8m），画出来的宽高比跟 canvas
+    // 容器的宽高比几乎不可能一致，按较紧的那个轴定 scale 之后，另一个轴
+    // 必然有富余——居中而不是顶格画，不然富余的空间会全部堆在一侧看起来
+    // 像是"漏了什么没画"。
+    const renderedW = (FIELD_X_MAX - FIELD_X_MIN) * s;
+    const renderedH = (FIELD_Y_MAX - FIELD_Y_MIN) * s;
+    const offsetX = (w - renderedW) / 2;
+    const offsetY = labelPx + (h - labelPx - renderedH) / 2;
     const toPx = (fx, fy) => [
-      marginPx + (fx - FIELD_X_MIN) * s,
-      marginPx + (FIELD_Y_MAX - fy) * s, // 场地 +y 画在屏幕上方
+      offsetX + (fx - FIELD_X_MIN) * s,
+      offsetY + (FIELD_Y_MAX - fy) * s, // 场地 +y 画在屏幕上方
     ];
+    toPx.scale = s;
+    toPx.offsetY = offsetY;
     return toPx;
   }
 
@@ -68,18 +86,24 @@ export class FieldMap {
     ctx.clearRect(0, 0, w, h);
     const toPx = this._transform(w, h);
 
-    // 静态图层：场地分区轮廓
+    // 静态图层：场地分区轮廓 + 名字标注（标注画在框上方留出来的那条
+    // labelPx 空间里，不是凭空加高度，见 _transform）
     ctx.strokeStyle = this.grid;
     ctx.lineWidth = 1;
-    const rect = (x0, x1) => {
+    ctx.fillStyle = this.muted;
+    ctx.font = '10px system-ui, -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    const rect = (x0, x1, label) => {
       const [px0, py0] = toPx(x0, FIELD_Y_MAX);
       const [px1, py1] = toPx(x1, FIELD_Y_MIN);
       ctx.strokeRect(px0, py0, px1 - px0, py1 - py0);
+      ctx.fillText(label, (px0 + px1) / 2, py0 - 3);
     };
-    rect(LANDING_ZONE_X_MIN, DROP_ZONE_X_MIN);
-    rect(DROP_ZONE_X_MIN, DROP_ZONE_X_MAX);
-    rect(DROP_ZONE_X_MAX, RECON_ZONE_X_MIN);
-    rect(RECON_ZONE_X_MIN, RECON_ZONE_X_MAX);
+    rect(LANDING_ZONE_X_MIN, DROP_ZONE_X_MIN, '起降');
+    rect(DROP_ZONE_X_MIN, DROP_ZONE_X_MAX, '投放区');
+    rect(DROP_ZONE_X_MAX, RECON_ZONE_X_MIN, '过渡');
+    rect(RECON_ZONE_X_MIN, RECON_ZONE_X_MAX, '侦察区');
 
     // 起降点
     const [padX, padY] = toPx(0, 0);
@@ -88,16 +112,21 @@ export class FieldMap {
     ctx.arc(padX, padY, Math.abs(padR), 0, Math.PI * 2);
     ctx.stroke();
 
-    // 参照筒位（半透明，明确标注仅供参考）
-    ctx.fillStyle = this.muted;
-    ctx.globalAlpha = 0.35;
-    [...DROP_CYLINDERS_REF, ...RECON_CYLINDERS_REF].forEach(([fx, fy]) => {
-      const [px, py] = toPx(fx, fy);
-      ctx.beginPath();
-      ctx.arc(px, py, 3, 0, Math.PI * 2);
-      ctx.fill();
-    });
-    ctx.globalAlpha = 1;
+    // 参照筒位（半透明，明确标注仅供参考）——只在开发/仿真环境有意义，
+    // 正式比赛筒是随机摆放的，这几个点跟真实位置无关，真机场景下必须能
+    // 关掉，不然会被误当成真实信息（呼应地面端计算的诚实原则），见
+    // setShowReference/app.js 里的开关。
+    if (this.showReference) {
+      ctx.fillStyle = this.muted;
+      ctx.globalAlpha = 0.35;
+      [...DROP_CYLINDERS_REF, ...RECON_CYLINDERS_REF].forEach(([fx, fy]) => {
+        const [px, py] = toPx(fx, fy);
+        ctx.beginPath();
+        ctx.arc(px, py, 3, 0, Math.PI * 2);
+        ctx.fill();
+      });
+      ctx.globalAlpha = 1;
+    }
 
     // 飞机轨迹
     if (this.trail.length > 1) {

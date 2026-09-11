@@ -11,6 +11,7 @@ export class RollingChart {
     this.points = []; // [{t, v}]
     const style = getComputedStyle(document.documentElement);
     this.gridColor = style.getPropertyValue('--gridline').trim() || '#e1e0d9';
+    this.labelColor = style.getPropertyValue('--text-muted').trim() || '#898781';
   }
 
   push(value, tSec = performance.now() / 1000) {
@@ -40,14 +41,28 @@ export class RollingChart {
     vMin -= pad; vMax += pad;
     const tNow = this.points[this.points.length - 1].t;
     const tOld = tNow - WINDOW_SEC;
+    const valueToY = (v) => h - ((v - vMin) / (vMax - vMin)) * h;
 
-    // 基线（hairline，单条，够用，不画满网格避免视觉噪音）
+    // y 轴刻度：4 条等分线（含首尾），每条都标数值——之前只有一条底部
+    // 基线加两个角上的数字，量级能读但刻度太稀；分成 4 条本身也是网格线
+    // （recessive，细、低对比度），不是额外画的东西。
+    const fmt = (v) => (Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(1));
+    const TICKS = 4;
     ctx.strokeStyle = this.gridColor;
     ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(0, h - 0.5);
-    ctx.lineTo(w, h - 0.5);
-    ctx.stroke();
+    ctx.fillStyle = this.labelColor;
+    ctx.font = '10px system-ui, -apple-system, sans-serif';
+    ctx.textAlign = 'left';
+    for (let i = 0; i <= TICKS; i++) {
+      const v = vMin + (vMax - vMin) * (i / TICKS);
+      const y = valueToY(v);
+      ctx.beginPath();
+      ctx.moveTo(0, Math.round(y) - 0.5);
+      ctx.lineTo(w, Math.round(y) - 0.5);
+      ctx.stroke();
+      ctx.textBaseline = i === 0 ? 'bottom' : i === TICKS ? 'top' : 'middle';
+      ctx.fillText(fmt(v), 3, y);
+    }
 
     ctx.strokeStyle = this.color;
     ctx.lineWidth = 2;

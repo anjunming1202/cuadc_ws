@@ -71,6 +71,8 @@ ros.subscribe('/cuadc_interface/telemetry/gps_status', 'cuadc_interface_msgs/Gps
 
 // ---- 通用：地图 + 姿态/速度/高度 ----
 const map = new FieldMap(document.getElementById('map-canvas'));
+document.getElementById('chk-ref-cylinders').addEventListener('change',
+  (e) => map.setShowReference(e.target.checked));
 const speedChart = new RollingChart(document.getElementById('chart-speed'));
 const altChart = new RollingChart(document.getElementById('chart-alt'));
 const rollChart = new RollingChart(document.getElementById('chart-roll'));
