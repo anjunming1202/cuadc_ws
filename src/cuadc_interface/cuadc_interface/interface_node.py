@@ -123,7 +123,6 @@ class InterfaceNode(Node):
         self.local_position_pub = self.create_publisher(
             PoseStamped, '~/telemetry/local_position', 10)
         self.velocity_pub = self.create_publisher(TwistStamped, '~/telemetry/velocity', 10)
-        # Attitude 消息类型待实现时定（见 04-interfaces.md），暂用 sensor_msgs/Imu 占位
         self.attitude_pub = self.create_publisher(Imu, '~/telemetry/attitude', 10)
         self.battery_pub = self.create_publisher(BatteryState, '~/telemetry/battery', 10)
         self.gps_status_pub = self.create_publisher(GpsStatus, '~/telemetry/gps_status', 10)

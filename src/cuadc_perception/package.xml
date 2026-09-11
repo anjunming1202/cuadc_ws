@@ -3,14 +3,19 @@
 <package format="3">
   <name>cuadc_perception</name>
   <version>0.0.0</version>
-  <description>感知/视觉模块：目标（圆筒）检测与定位，契约见 docs/spec/05-perception-decision-interface.md。当前只有桩感知节点（发布场地已知坐标），真实 CV 检测算法在后续分支实现。</description>
+  <description>感知/视觉模块：目标（圆筒）检测与定位，契约见 docs/spec/05-perception-decision-interface.md。桩感知节点（发布场地已知坐标）和真实 CV 检测节点并存，发布同一份契约，见 README.md。</description>
   <maintainer email="anjunming0819@outlook.com">Junming An</maintainer>
   <license>MIT</license>
 
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
   <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>diagnostic_msgs</depend>
   <depend>cuadc_perception_msgs</depend>
+  <depend>cv_bridge</depend>
+  <depend>python3-opencv</depend>
+  <depend>python3-numpy</depend>
   <depend>launch</depend>
   <depend>launch_ros</depend>
 

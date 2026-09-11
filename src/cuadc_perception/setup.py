@@ -24,6 +24,7 @@ setup(
     entry_points={
         'console_scripts': [
             'stub_perception_node = cuadc_perception.stub_perception_node:main',
+            'cv_perception_node = cuadc_perception.cv_perception_node:main',
         ],
     },
 )

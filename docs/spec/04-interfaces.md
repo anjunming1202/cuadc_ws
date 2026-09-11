@@ -73,7 +73,7 @@ Set Home Position、Air Speed（多旋翼不适用）。
 | Global Position | `~/telemetry/global_position` | `sensor_msgs/NavSatFix` | `altitude` 是**海拔**（MSL），不是相对起飞点高度，见下方"高度基准" |
 | Local Position + Relative Altitude | `~/telemetry/local_position` | `geometry_msgs/PoseStamped` | `position.z` 是局部 NED 坐标，**相对起飞点**，且 z 轴向下为正——"离地高度"要用 `-position.z`，见下方"高度基准" |
 | Velocity | `~/telemetry/velocity` | `geometry_msgs/TwistStamped` | |
-| Attitude/Heading | `~/telemetry/attitude` | 自定义或复用 `sensor_msgs/Imu` 的姿态部分 | 待实现时定 |
+| Attitude/Heading | `~/telemetry/attitude` | `sensor_msgs/Imu`（`orientation`+`angular_velocity`，不发线加速度） | |
 | Battery | `~/telemetry/battery` | `sensor_msgs/BatteryState` | 任务逻辑安全响应（提前 RTL）依赖这个 |
 | GPS Status | `~/telemetry/gps_status` | 自定义（fix_type, satellites_visible, hdop） | |
 | EKF Status | `~/telemetry/ekf_status` | 自定义 | |
