@@ -112,9 +112,10 @@ class StubPerceptionNode(Node):
         self._publisher.publish(msg)
 
         # 桩节点开销可忽略，先把日志形状搭好——换真实 CV 后这里量出来的
-        # 才是真正有意义的耗时。
+        # 才是真正有意义的耗时。debug 级别默认不打印，不会刷屏；真要看
+        # 就在 launch 时加 --log-level cuadc_perception_stub:=debug。
         elapsed_ms = (time.monotonic() - started) * 1000.0
-        self.get_logger().info(
+        self.get_logger().debug(
             f'[PERF] frame built in {elapsed_ms:.2f}ms, n={len(detections)}',
             throttle_duration_sec=1.0)
 
