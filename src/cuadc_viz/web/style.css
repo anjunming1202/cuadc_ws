@@ -1,0 +1,281 @@
+/* 配色/间距取自项目 dataviz skill 的默认校验色板（references/palette.md），
+   这里只用到本页面需要的槽位，没有整体照搬。 */
+:root {
+  --surface-1: #fcfcfb;
+  --page: #f9f9f7;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #898781;
+  --gridline: #e1e0d9;
+  --baseline: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.10);
+  --series-1: #2a78d6; /* blue：默认单序列图表用色 */
+  --series-2: #1baf7a; /* aqua：地图上的检测原始散点 */
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-serious: #ec835a;
+  --status-critical: #d03b3b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface-1: #1a1a19;
+    --page: #0d0d0d;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --gridline: #2c2c2a;
+    --baseline: #383835;
+    --border: rgba(255, 255, 255, 0.10);
+    --series-1: #3987e5;
+    --series-2: #199e70;
+    --status-good: #0ca30c;
+    --status-warning: #fab219;
+    --status-serious: #ec835a;
+    --status-critical: #d03b3b;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--text-primary);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+}
+
+.panel {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.panel h2 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+
+/* ---- 全局状态条 ---- */
+#status-bar {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 10px 16px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+#mission-state {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.status-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex: none;
+}
+.status-dot.good { background: var(--status-good); }
+.status-dot.warning { background: var(--status-warning); }
+.status-dot.serious { background: var(--status-serious); }
+.status-dot.critical { background: var(--status-critical); }
+
+/* ---- 三栏布局 ---- */
+#columns {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr;
+  gap: 12px;
+  padding: 0 12px 12px;
+}
+
+@media (max-width: 1000px) {
+  #columns { grid-template-columns: 1fr; }
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.column > h1 {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 0;
+}
+
+/* ---- 瞬时数字网格 ---- */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px 16px;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stat .label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.stat .value {
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- 图表 ---- */
+.chart-wrap canvas {
+  width: 100%;
+  height: 90px;
+  display: block;
+}
+
+.chart-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* ---- 地图 ---- */
+#map-canvas {
+  width: 100%;
+  height: 320px;
+  display: block;
+  background: var(--surface-1);
+}
+
+/* ---- 图像面板 ---- */
+.image-wrap img {
+  width: 100%;
+  display: block;
+  border-radius: 4px;
+  background: #000;
+  aspect-ratio: 4 / 3;
+  object-fit: contain;
+}
+
+.image-controls {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  align-items: center;
+  font-size: 12px;
+}
+
+select, button {
+  font: inherit;
+  background: var(--surface-1);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 6px;
+}
+
+/* ---- 调试图像多选格子 ---- */
+.debug-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.debug-tile {
+  position: relative;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  /* 高度定在容器自己身上，不依赖 img——未激活时 img 是 display:none，
+     占位文字是 position:absolute（不占文档流），两个都不会撑开高度，
+     不这样写格子会直接塌缩成一条边框线。 */
+  aspect-ratio: 4 / 3;
+  background: #000;
+}
+
+.debug-tile-label {
+  position: absolute;
+  top: 4px;
+  left: 6px;
+  font-size: 11px;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+  z-index: 1;
+}
+
+.debug-tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.debug-tile-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.debug-tile.active .debug-tile-placeholder { display: none; }
+.debug-tile:not(.active) img { display: none; }
+.debug-tile.active { border-color: var(--series-1); }
+
+/* ---- 检测列表 ---- */
+table.detections {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+table.detections th {
+  text-align: left;
+  color: var(--text-muted);
+  font-weight: 500;
+  border-bottom: 1px solid var(--gridline);
+  padding: 3px 4px;
+}
+
+table.detections td {
+  padding: 3px 4px;
+  border-bottom: 1px solid var(--gridline);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 6px;
+}

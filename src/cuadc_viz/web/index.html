@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cuadc_viz</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="status-bar" class="panel">
+  <div id="mission-state">--</div>
+  <div class="status-item"><span id="dot-connected" class="status-dot"></span>连接</div>
+  <div class="status-item"><span id="dot-armed" class="status-dot"></span><span id="txt-armed">解锁</span></div>
+  <div class="status-item">模式 <span id="txt-mode">--</span></div>
+  <div class="status-item"><span id="dot-battery" class="status-dot"></span>电量 <span id="txt-battery">--</span></div>
+  <div class="status-item"><span id="dot-ekf" class="status-dot"></span>EKF</div>
+  <div class="status-item"><span id="dot-gps" class="status-dot"></span>GPS <span id="txt-gps">--</span></div>
+  <div class="status-item"><span id="dot-failsafe" class="status-dot"></span><span id="txt-failsafe">Failsafe</span></div>
+</div>
+
+<div id="columns">
+
+  <div class="column">
+    <h1>通用</h1>
+    <div class="panel">
+      <h2>场地地图</h2>
+      <canvas id="map-canvas"></canvas>
+      <div class="hint">灰点=开发环境已知筒位参照（非真实坐标）·亮点=检测原始散点，不做跨帧聚类</div>
+    </div>
+    <div class="panel">
+      <h2>飞行状态</h2>
+      <div class="stat-grid">
+        <div class="stat"><span class="label">速度 m/s</span><span class="value" id="stat-speed">--</span></div>
+        <div class="stat"><span class="label">高度 m</span><span class="value" id="stat-alt">--</span></div>
+        <div class="stat"><span class="label">Roll °</span><span class="value" id="stat-roll">--</span></div>
+        <div class="stat"><span class="label">Pitch °</span><span class="value" id="stat-pitch">--</span></div>
+      </div>
+      <div class="chart-wrap"><canvas id="chart-speed"></canvas><div class="chart-label"><span>速度</span><span>60s</span></div></div>
+      <div class="chart-wrap"><canvas id="chart-alt"></canvas><div class="chart-label"><span>高度</span><span>60s</span></div></div>
+      <div class="chart-wrap"><canvas id="chart-roll"></canvas><div class="chart-label"><span>Roll</span><span>60s</span></div></div>
+      <div class="chart-wrap"><canvas id="chart-pitch"></canvas><div class="chart-label"><span>Pitch</span><span>60s</span></div></div>
+      <div class="chart-wrap"><canvas id="chart-battery"></canvas><div class="chart-label"><span>电量</span><span>60s</span></div></div>
+    </div>
+  </div>
+
+  <div class="column">
+    <h1>投放区</h1>
+    <div class="panel image-wrap">
+      <h2>原始画面</h2>
+      <img id="img-raw">
+      <div class="image-controls">
+        <label><input type="checkbox" id="chk-raw" checked> 显示</label>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>调试图像</h2>
+      <div class="image-controls">
+        <label><input type="checkbox" id="chk-multi-debug"> 允许多选</label>
+        <span class="hint" id="debug-cap-hint">未勾选时点一个自动取消其它——实际能同时算/发几路由机上
+          max_concurrent_debug_views 参数硬性限制，网页这边选得再多，超过上限的也不会真的有画面。</span>
+      </div>
+      <!-- 这几个格子必须跟 cv_perception_node.py 的 _DEBUG_VIEWS 保持
+           一致——那边是权威列表，这里是手抄的第二份，加/删一种要两边
+           一起改。 -->
+      <div id="debug-view-grid" class="debug-grid">
+        <div class="debug-tile" data-view="annotated">
+          <div class="debug-tile-label">标注图</div>
+          <img>
+          <div class="debug-tile-placeholder">未开启</div>
+        </div>
+        <div class="debug-tile" data-view="contours">
+          <div class="debug-tile-label">轮廓</div>
+          <img>
+          <div class="debug-tile-placeholder">未开启</div>
+        </div>
+        <div class="debug-tile" data-view="mask">
+          <div class="debug-tile-label">二值化 mask</div>
+          <img>
+          <div class="debug-tile-placeholder">未开启</div>
+        </div>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>检测结果（原始，逐帧不跨帧关联）</h2>
+      <table class="detections">
+        <thead><tr><th>north</th><th>east</th><th>半径 m</th><th>置信度</th></tr></thead>
+        <tbody id="detections-body"></tbody>
+      </table>
+    </div>
+    <div class="panel">
+      <h2>CV Profiling</h2>
+      <div class="stat-grid">
+        <div class="stat"><span class="label">分割 ms</span><span class="value" id="perf-segment">--</span></div>
+        <div class="stat"><span class="label">形态学 ms</span><span class="value" id="perf-morph">--</span></div>
+        <div class="stat"><span class="label">轮廓 ms</span><span class="value" id="perf-contours">--</span></div>
+        <div class="stat"><span class="label">拟合反投影 ms</span><span class="value" id="perf-fit">--</span></div>
+      </div>
+      <div class="chart-wrap"><canvas id="chart-perf"></canvas><div class="chart-label"><span>总耗时 ms</span><span>60s</span></div></div>
+    </div>
+  </div>
+
+  <div class="column">
+    <h1>侦察区</h1>
+    <div class="panel image-wrap">
+      <h2>侦察图传（独立通道，随任务阶段自动出现，无需手动开关）</h2>
+      <img id="img-recon">
+    </div>
+  </div>
+
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

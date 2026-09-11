@@ -46,9 +46,13 @@ _MIN_RAY_DOWN_COMPONENT = 0.15  # 射线太接近水平（姿态倾斜太大）�
 
 def detect_cylinders(image_bgr, camera: CameraParams, pose: VehiclePose,
                       cylinder_height_m: float, min_radius_m: float, max_radius_m: float,
-                      morph_kernel_px: int = 5, perf: Optional[dict] = None) -> List[Detection]:
+                      morph_kernel_px: int = 5, perf: Optional[dict] = None,
+                      debug: Optional[dict] = None) -> List[Detection]:
     """`perf` 传一个空 dict 进来会被填上分阶段耗时（毫秒）——感知节点用来发
-    profiling 诊断信息，纯单测不用管这个参数。"""
+    profiling 诊断信息，纯单测不用管这个参数。`debug` 同理，填上
+    `mask`（形态学去噪后的二值图）和 `contour_results`（`[(contour, Detection|None)]`，
+    None 表示这个轮廓没通过筛选）——画 mask/轮廓/标注调试图用，画图本身
+    是节点层的展示逻辑，这里只负责把中间结果暴露出来，不做任何绘制。"""
     t0 = time.monotonic()
     mask = _segment(image_bgr)
     t1 = time.monotonic()
@@ -62,19 +66,29 @@ def detect_cylinders(image_bgr, camera: CameraParams, pose: VehiclePose,
     cam_to_world = body_to_world @ cam_to_body
 
     detections = []
+    contour_results = []
     for contour in contours:
         det = _fit_contour(contour, camera, pose, cam_to_world, cylinder_height_m,
                             min_radius_m, max_radius_m)
+        contour_results.append((contour, det))
         if det is not None:
             detections.append(det)
     t4 = time.monotonic()
 
+    # 这几个 key 名字是权威来源——cuadc_viz/web/app.js 按这几个固定 key
+    # 解析 ~/perf 话题（kv.segment_ms 等），index.html 对应几个 stat 标签
+    # 硬编码了同样的名字。改/加/删阶段名两边要一起改，这边不改网页只会
+    # 显示 "--"，不会报错。
     if perf is not None:
         perf['segment_ms'] = (t1 - t0) * 1000.0
         perf['morphology_ms'] = (t2 - t1) * 1000.0
         perf['contours_ms'] = (t3 - t2) * 1000.0
         perf['fit_reproject_ms'] = (t4 - t3) * 1000.0
         perf['total_ms'] = (t4 - t0) * 1000.0
+
+    if debug is not None:
+        debug['mask'] = mask
+        debug['contour_results'] = contour_results
 
     return detections
 
