@@ -18,9 +18,10 @@ Computer）软件，飞控为 Pixhawk + ArduPilot（ArduCopter）。本仓库仅
 到 ROS2、QGroundControl 验证正常），详见 `src/cuadc_sim/README.md`。
 接口层（`src/cuadc_interface` + `src/cuadc_interface_msgs`）已实现
 `docs/spec/04-interfaces.md` 里的全部话题/服务并过 SITL 验证，详见
-`src/cuadc_interface/README.md`。感知/决策骨架（桩感知 + 完整任务状态机）
-已在 SITL+Gazebo 里跑通全流程闭环，详见 `src/cuadc_perception/README.md`、
-`src/cuadc_decision/README.md`；真实 CV 感知算法还未实现。
+`src/cuadc_interface/README.md`。感知（真实 CV 算法 + 地面真值桩两个
+实现）/决策（完整任务状态机）已在 SITL+Gazebo 里跑通全流程闭环，详见
+`src/cuadc_perception/README.md`、`src/cuadc_decision/README.md`。地面站
+实时监测 dashboard 见 `src/cuadc_viz/README.md`。
 
 外部时间约束：飞控组 phase 1（人工飞行调姿态/悬停控制环）需要在
 2026-08-01 前完成，与软件组互不阻塞，详见 `docs/spec/working-notes.md`
@@ -44,12 +45,16 @@ Computer）软件，飞控为 Pixhawk + ArduPilot（ArduCopter）。本仓库仅
     节点），详见 `src/cuadc_interface/README.md`
   - `src/cuadc_interface_msgs` —— 接口层用到的自定义 ROS2 消息/服务
     定义，详见 `src/cuadc_interface_msgs/README.md`
-  - `src/cuadc_perception` —— 感知模块（目前是桩：从场地已知坐标发布
-    检测结果，契约与真实 CV 节点一致），详见 `src/cuadc_perception/README.md`
+  - `src/cuadc_perception` —— 感知模块（真实 CV 检测算法 + 地面真值桩，
+    两者发布同一份契约），详见 `src/cuadc_perception/README.md`
   - `src/cuadc_perception_msgs` —— 感知/决策之间的检测结果消息定义，
     详见 `src/cuadc_perception_msgs/README.md`
   - `src/cuadc_decision` —— 决策模块（任务状态机），详见
     `src/cuadc_decision/README.md`
+  - `src/cuadc_viz` —— 地面站实时监测 dashboard，详见
+    `src/cuadc_viz/README.md`
+- `launch/` —— 组合多个包节点的顶层 launch 文件（不属于任何单个包），详见
+  Quickstart
 - `scripts/` —— 工具/仿真脚本
 
 ## Quickstart
@@ -57,14 +62,24 @@ Computer）软件，飞控为 Pixhawk + ArduPilot（ArduCopter）。本仓库仅
 跑仿真需要先起仿真世界，再起任务节点（接口+感知+决策），最后单独触发
 任务开始——三层分开是有意的，任务节点这一层在真机上原样复用。
 
+任务节点的启动脚本按"一个脚本对应一种场景"分开，不靠参数默认值切换
+（之前是一份脚本 + `perception_mode` 参数默认 stub，结果地面站调试时
+"起了任务节点"实际起的是桩感知，排查了很久才发现是默认值的问题）：
+
+| 脚本 | 感知 | connection 目标 | 用途 |
+|---|---|---|---|
+| `scripts/run_mission_sim.sh` | 真实 CV | SITL（写死） | **正式任务/完整仿真验证，最常用的一个** |
+| `scripts/run_mission_hardware.sh` | 真实 CV | 真实串口（写死） | 真机部署 |
+| `scripts/run_mission_stub_sim.sh` | 桩（地面真值） | SITL（写死） | 只想快速迭代决策层逻辑，不关心真实检测时用 |
+
 ```bash
 # 1. 仿真世界（Gazebo + ArduPilot SITL），真机上跳过这一步
 ./scripts/run_gazebo_demo.sh
 
-# 2. 任务节点：接口层 + 感知 + 决策，另开一个终端
-./scripts/run_task_nodes.sh
-#   真机上换成真实串口：
-#   ./scripts/run_task_nodes.sh connection:=/dev/ttyACM0:57600
+# 2. 任务节点：接口层 + 真实 CV 感知 + 决策，另开一个终端
+./scripts/run_mission_sim.sh
+#   真机上换成：
+#   ./scripts/run_mission_hardware.sh
 
 # 3. 等终端2日志停在 WAIT_TASK_START，再开一个终端触发任务开始
 #    （模拟物理开关；真机上这里会换成 GPIO，尚未实现）
@@ -73,6 +88,9 @@ ros2 topic pub -1 /cuadc_decision/sim/task_start_trigger std_msgs/msg/Empty "{}"
 ```
 
 看状态机走到哪一步：`ros2 topic echo /cuadc_decision/mission_state`
+
+地面站实时监测网页（可选，另开一个终端，跟上面任意组合并行跑都行）：
+`ros2 launch cuadc_viz viz_bringup.launch.py`，详见 `src/cuadc_viz/README.md`。
 
 各节点参数、话题/服务契约见对应包的 README 和 `docs/spec/`。
 
