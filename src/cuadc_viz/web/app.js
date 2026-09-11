@@ -13,7 +13,13 @@ const VIDEO_PORT = params.get('video_port') || '8080';
 const ros = new RosBridge(`ws://${ROS_HOST}:${ROSBRIDGE_PORT}`);
 
 function videoSrc(topic) {
-  return `http://${ROS_HOST}:${VIDEO_PORT}/stream?topic=${encodeURIComponent(topic)}`;
+  // 不能用 encodeURIComponent——ROS2 话题名只会包含字母/数字/下划线/斜杠，
+  // 本来就不需要转义，但 encodeURIComponent 会把 / 转成 %2F，而
+  // web_video_server 不会把 %2F 解回 /，导致查询串里的话题名对不上任何
+  // 真实话题，请求会一直挂着等一个不存在的话题，界面上表现为"已选中但
+  // 未收到画面"，直接在地址栏手动输入（斜杠不会被转义）反而能看到画面，
+  // 这是真实踩过的坑。
+  return `http://${ROS_HOST}:${VIDEO_PORT}/stream?topic=${topic}`;
 }
 
 function setDot(id, level) {
