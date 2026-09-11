@@ -106,6 +106,16 @@ DROP_CYLINDER_POSITIONS = {
     "3": (34.0, 0.0),
 }
 
+# ---- 投放区单点测试用出生点（gen_world.py 生成的平行 world:
+# cuadc_field_drop_zone_bench.sdf）----
+# 投放区反复调试用，飞机直接出生在投放区近边界线后方，不用从起降区飞
+# 过去。放在 DROP_ZONE_X_MIN 往前 1m，留出的间距比 LANDING_PAD_DIAMETER
+# 的半径大得多，也比 DROP_CYLINDER_POSITIONS 里任何一个筒离近边界的距离
+# 更靠外——出生点不会跟场地已知的固定圆筒位置重叠（圆筒摆放目前是固定
+# 坐标，不是随机的，见上面的说明；如果以后真的改成随机摆放，只要摆放
+# 范围仍然限制在 DROP_ZONE_X_MIN 以内，这个出生点依然安全）。
+DROP_ZONE_BENCH_SPAWN = (DROP_ZONE_X_MIN - 1.0, 0.0)
+
 RECON_CYLINDER_POSITIONS = {
     "a": (55.8, -2.5),
     "b": (56.6, 1.8),

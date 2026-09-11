@@ -647,11 +647,13 @@ def build_fields():
     return '\n'.join(parts)
 
 
-def main():
-    # Vehicle spawns on field A's landing pad specifically (offset 0.0),
-    # not a bare LANDING_PAD_CENTER that happens to equal that today --
-    # see the WORLD_TEMPLATE comment for why only field A gets a vehicle.
-    landing_x, landing_y = config.LANDING_PAD_CENTER
+def _write_world(filename, spawn_world_xy):
+    """渲染一份 world 文件，飞机出生在 field A 局部坐标 `spawn_world_xy`
+    （field A 的 y_offset 是 0.0，field B 才需要加 FIELD_Y_OFFSETS 偏移，
+    见下面 main() 里 LANDING_PAD_CENTER 那次调用的说明；bench 出生点跟
+    LANDING_PAD_CENTER 一样定义在 field A 局部坐标系，同样需要加这个
+    偏移）。"""
+    landing_x, landing_y = spawn_world_xy
     landing_y += config.FIELD_Y_OFFSETS['A']
     out = WORLD_TEMPLATE.format(
         world_name=WORLD_NAME,
@@ -674,10 +676,21 @@ def main():
             + comment)
 
     os.makedirs(WORLDS, exist_ok=True)
-    path = os.path.join(WORLDS, 'cuadc_field.sdf')
+    path = os.path.join(WORLDS, filename)
     with open(path, 'w') as f:
         f.write(out)
     print(f'wrote {path}')
+
+
+def main():
+    # Vehicle spawns on field A's landing pad specifically (offset 0.0),
+    # not a bare LANDING_PAD_CENTER that happens to equal that today --
+    # see the WORLD_TEMPLATE comment for why only field A gets a vehicle.
+    _write_world('cuadc_field.sdf', config.LANDING_PAD_CENTER)
+    # 投放区单点测试用的平行 world：场地布局（圆筒位置等）完全一样，只有
+    # 飞机出生点不同，方便反复调 CV/控制参数不用每次从起降区飞过去。
+    # 跟正常 world 一样是生成时提交的产物，不是运行时选项。
+    _write_world('cuadc_field_drop_zone_bench.sdf', config.DROP_ZONE_BENCH_SPAWN)
 
 
 if __name__ == '__main__':
