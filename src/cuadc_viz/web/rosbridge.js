@@ -10,6 +10,7 @@ export class RosBridge {
     this.ws = null;
     this._subs = new Map(); // topic -> Set(callback)
     this._pending = new Map(); // service call id -> {resolve, reject}
+    this._callQueue = []; // call_service 消息，attach 时 ws 还没连上时先排队
     this._callId = 0;
     this._onStatus = null;
   }
@@ -24,6 +25,12 @@ export class RosBridge {
       // 服务端不记得之前订阅过什么，必须重发一遍，不然断线重连之后
       // 页面会安安静静地再也收不到任何更新，界面卡在最后一帧不报错。
       for (const [topic, { type }] of this._subs) this._send({ op: 'subscribe', topic, type });
+      // callService 在 ws 还没连上时调用（比如页面初始化那批同步代码）
+      // 不会像 subscribe 那样被 onopen 自动重发——subscribe 的状态记在
+      // this._subs 里天然可重放，call_service 是一次性请求，不排队的话
+      // 那次调用的 Promise 永远不会 resolve。
+      for (const msg of this._callQueue) this._send(msg);
+      this._callQueue = [];
     };
     this.ws.onclose = () => {
       this._onStatus && this._onStatus('disconnected');
@@ -38,7 +45,7 @@ export class RosBridge {
     this.ws.onmessage = (ev) => this._onMessage(JSON.parse(ev.data));
   }
 
-  _send(obj) { this.ws.readyState === WebSocket.OPEN && this.ws.send(JSON.stringify(obj)); }
+  _send(obj) { this.ws && this.ws.readyState === WebSocket.OPEN && this.ws.send(JSON.stringify(obj)); }
 
   subscribe(topic, type, cb) {
     if (!this._subs.has(topic)) {
@@ -50,7 +57,9 @@ export class RosBridge {
 
   callService(service, type, args) {
     const id = `call_${this._callId++}`;
-    this._send({ op: 'call_service', service, type, args, id });
+    const msg = { op: 'call_service', service, type, args, id };
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) this._send(msg);
+    else this._callQueue.push(msg);
     return new Promise((resolve, reject) => this._pending.set(id, { resolve, reject }));
   }
 
