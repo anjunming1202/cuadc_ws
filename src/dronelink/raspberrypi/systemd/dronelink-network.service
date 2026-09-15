@@ -1,0 +1,13 @@
+[Unit]
+Description=DroneLink 5GHz Wireless Link
+After=systemd-modules-load.service
+Wants=systemd-modules-load.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/dronelink-network.sh
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
