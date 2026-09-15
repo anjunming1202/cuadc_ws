@@ -100,12 +100,40 @@ SSID: DroneLink
 Password: 12345678
 ```
 
+### 每次开机（日常操作）
+
+树莓派上若已 `enable`：`dronelink-network`、`dronelink-video`、
+`dronelink-telemetry`，则 **Pi 不用再敲命令**。地面站每次：
+
+1. 确认 USB 网卡已连上 `DroneLink`，且 `WLAN` 地址为 `192.168.50.2`
+   （可用 `ipconfig` / `ping 192.168.50.1` 检查）。
+2. 飞控上电（遥测需要）。
+3. 在 Windows 打开 CMD：
+
+```cmd
+cd /d e:\cuadc_ws\src\dronelink\windows
+.\start_localhost_viewer.bat
+```
+
+4. 浏览器打开：**http://127.0.0.1:8765/**  
+   保持 bat 黑窗口不要关。应同时看到视频画面与左上角 HUD 飞控数据。
+
+不要同时运行 `send_fake_telemetry.py`（会和真机遥测抢显示）。
+
+若 HUD「无数据」：Pi 上检查
+`journalctl -u dronelink-telemetry.service -n 20` 是否出现
+`Sending telemetry to 192.168.50.2:5701`（端口必须是 **5701**，不能是 5601，
+否则会与视频 RTCP 冲突）。
+
+若视频黑屏：检查 `dronelink-video` 是否 active，以及 Pi
+`ping -c 2 -I 192.168.50.1 192.168.50.2` 是否通。
+
 ### Localhost viewer
 
 A Python server on the ground PC receives the RTP stream via
 `windows/DroneLink.sdp`, remuxes it to MPEG-TS with FFmpeg (stream copy, no
 re-encode), and serves a page at `http://127.0.0.1:8765/`. The browser plays
-it with vendored `mpegts.js` under `windows/localhost_viewer/`.
+video with vendored `mpegts.js` and polls `/telemetry.json` for a HUD overlay.
 
 Requirements: Python 3 on PATH, and FFmpeg on PATH (same as calibration:
 `winget install --id Gyan.FFmpeg -e`).
@@ -115,10 +143,16 @@ windows\start_localhost_viewer.bat
 ```
 
 Then open Chrome or Edge at `http://127.0.0.1:8765/`. Keep the console window
-open while viewing. Pi still sends to `192.168.50.2:5600`.
+open while viewing.
+
+| Stream | Destination | Notes |
+|---|---|---|
+| Video RTP/H.264 | `192.168.50.2:5600` | unchanged Pi GStreamer path |
+| Telemetry JSON/UDP | `192.168.50.2:5701` | one JSON object per datagram; not 5601 (FFmpeg RTCP) |
 
 Brief Wi-Fi UDP loss (association still up) can desync the remux/MSE player.
-The viewer auto-restarts FFmpeg and reconnects the page player.
+The viewer auto-restarts FFmpeg and reconnects the page player. Telemetry older
+than ~2 s is marked stale on the HUD but the last values remain visible.
 
 Manual equivalent:
 
@@ -126,15 +160,85 @@ Manual equivalent:
 python windows\localhost_viewer\server.py --sdp windows\DroneLink.sdp
 ```
 
+Without a Pi, you can exercise the HUD only:
+
+```cmd
+python windows\send_fake_telemetry.py
+```
+
 Layout:
 
 ```text
 windows/DroneLink.sdp                 RTP receiver description (UDP :5600)
 windows/start_localhost_viewer.bat    launcher
-windows/localhost_viewer/server.py    HTTP + FFmpeg remux
-windows/localhost_viewer/index.html   page
+windows/send_fake_telemetry.py        local fake telemetry for UI test
+windows/localhost_viewer/server.py    HTTP + FFmpeg remux + UDP telemetry
+windows/localhost_viewer/index.html   page + HUD
 windows/localhost_viewer/mpegts.js    vendored player
 ```
+
+### Telemetry JSON schema (UDP :5701)
+
+Each datagram is one UTF-8 JSON object. Unknown fields are ignored; missing
+fields show as "—" on the HUD. Suggested minimum:
+
+```json
+{
+  "t": 1710000000.0,
+  "alt_m": 12.3,
+  "roll_deg": 1.0,
+  "pitch_deg": -2.5,
+  "yaw_deg": 90.0,
+  "mode": "GUIDED",
+  "batt_v": 22.1,
+  "batt_pct": 85.0
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `t` | optional Unix timestamp (seconds) |
+| `alt_m` | relative altitude in meters (prefer takeoff-relative, not MSL) |
+| `roll_deg` / `pitch_deg` / `yaw_deg` | attitude in degrees |
+| `mode` | flight mode string |
+| `batt_v` / `batt_pct` | battery volts / percent |
+
+Send rate: about **5–20 Hz** is enough. Keep this path **one-way** (Pi → ground);
+do not send control commands back on this link.
+
+### Pi telemetry sender (no ROS yet)
+
+Script: `raspberrypi/scripts/dronelink-telemetry.py`  
+Unit: `raspberrypi/systemd/dronelink-telemetry.service`
+
+Reads Pixhawk on `/dev/ttyAMA0:57600` via pymavlink and sends the JSON schema
+above to `192.168.50.2:5701`. Install on the Pi:
+
+```bash
+sudo apt install -y python3-venv python3-full
+python3 -m venv ~/dronelink-venv
+~/dronelink-venv/bin/pip install -U pip
+~/dronelink-venv/bin/pip install pymavlink
+
+sudo cp raspberrypi/scripts/dronelink-telemetry.py /usr/local/sbin/dronelink-telemetry.py
+sudo chmod +x /usr/local/sbin/dronelink-telemetry.py
+sudo cp raspberrypi/systemd/dronelink-telemetry.service /etc/systemd/system/
+# Edit User= and the /home/<user>/dronelink-venv path if your login is not "wly"
+sudo systemctl daemon-reload
+sudo systemctl enable --now dronelink-telemetry.service
+```
+
+Manual test (stop the service first so the serial port is free):
+
+```bash
+sudo systemctl stop dronelink-telemetry.service
+~/dronelink-venv/bin/python3 /usr/local/sbin/dronelink-telemetry.py
+```
+
+**Serial exclusivity:** only one of `dronelink-telemetry` or ROS
+`cuadc_interface` (`run_mission_hardware.sh` → `/dev/ttyAMA0:57600`) may own
+the UART. When migrating to ROS later, stop this service and forward
+`/cuadc_interface/telemetry/*` with the same JSON schema (`encode_payload`).
 
 ## Camera calibration
 
@@ -233,13 +337,13 @@ ffmpeg -version
 
 可用 `ping 192.168.50.1` 测一下能否 ping 通树莓派图传网卡。
 
-### 4. 启动 localhost 观看页
+### 4. 启动 localhost 观看页（每次开机都要做）
 
-在仓库里进入地面站脚本目录并运行：
+日常最短步骤见上文「每次开机（日常操作）」。命令：
 
 ```cmd
-cd <仓库根目录>\src\dronelink\windows
-start_localhost_viewer.bat
+cd /d e:\cuadc_ws\src\dronelink\windows
+.\start_localhost_viewer.bat
 ```
 
 保持弹出的黑色窗口不要关，用浏览器打开：
@@ -248,7 +352,8 @@ start_localhost_viewer.bat
 http://127.0.0.1:8765/
 ```
 
-能看到画面即表示链路跑通。若状态提示重连，多半是空口短暂丢包，页面会自动恢复；若一直无画面，先确认 Pi 端 `dronelink-video` 服务在跑，以及本机是否真是 `192.168.50.2` 在收 `5600` 端口。
+树莓派若已 enable 图传 + 遥测服务，一般不用再 SSH。应同时看到视频与 HUD。
+遥测 UDP 端口为 **5701**（不是 5601）。
 
 ### 5. （可选）维护网线
 

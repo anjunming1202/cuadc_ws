@@ -1,0 +1,16 @@
+[Unit]
+Description=DroneLink MAVLink telemetry UDP to ground
+After=dronelink-network.service
+Wants=dronelink-network.service
+
+[Service]
+Type=simple
+# Change User= to the Pi login that can open /dev/ttyAMA0 (usually in dialout).
+User=wly
+# Use the venv created in the install steps (see README / 安装指南).
+ExecStart=/home/wly/dronelink-venv/bin/python3 /usr/local/sbin/dronelink-telemetry.py --device /dev/ttyAMA0 --baud 57600 --dest-host 192.168.50.2 --dest-port 5701 --hz 10
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

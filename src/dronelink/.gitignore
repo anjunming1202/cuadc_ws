@@ -12,3 +12,6 @@ undistort_checkerboard_compare.jpg
 .DS_Store
 Thumbs.db
 *.swp
+
+# Large offline pip wheels (regenerate per offline_wheels/README.md)
+raspberrypi/offline_wheels/*.whl

@@ -13,6 +13,7 @@
       --accent: #3d9cf0;
       --bad: #e35d6a;
       --ok: #3ecf8e;
+      --warn: #e6b84d;
     }
     * { box-sizing: border-box; }
     body {
@@ -49,6 +50,7 @@
       padding: 1rem 1.25rem 2rem;
     }
     .stage {
+      position: relative;
       background: #000;
       border: 1px solid #2a3340;
       border-radius: 6px;
@@ -62,6 +64,39 @@
       background: #000;
       object-fit: contain;
     }
+    .hud {
+      position: absolute;
+      left: 0.75rem;
+      top: 0.75rem;
+      min-width: 11rem;
+      padding: 0.65rem 0.8rem;
+      background: rgba(10, 14, 20, 0.72);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 6px;
+      font-variant-numeric: tabular-nums;
+      pointer-events: none;
+    }
+    .hud-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin-bottom: 0.45rem;
+      font-size: 0.75rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .hud-title .telem-state.ok { color: var(--ok); }
+    .hud-title .telem-state.stale { color: var(--warn); }
+    .hud-title .telem-state.missing { color: var(--bad); }
+    .hud-grid {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 0.2rem 0.75rem;
+      font-size: 0.9rem;
+    }
+    .hud-grid span:nth-child(odd) { color: var(--muted); }
+    .hud-grid span:nth-child(even) { color: var(--text); text-align: right; }
     .hint {
       margin-top: 0.85rem;
       color: var(--muted);
@@ -83,17 +118,34 @@
   <main>
     <div class="stage">
       <video id="video" muted autoplay playsinline></video>
+      <div class="hud" id="hud">
+        <div class="hud-title">
+          <span>Telemetry</span>
+          <span class="telem-state missing" id="telemState">无数据</span>
+        </div>
+        <div class="hud-grid">
+          <span>高度</span><span id="vAlt">—</span>
+          <span>姿态</span><span id="vAtt">—</span>
+          <span>模式</span><span id="vMode">—</span>
+          <span>电量</span><span id="vBatt">—</span>
+        </div>
+      </div>
     </div>
     <p class="hint">
-      本页从 <code>/stream.ts</code> 拉 MPEG-TS（由本机 FFmpeg 从 RTP 转封装，不重编码）。
-      需 Pi 正在向 SDP 目标地址推流（默认 <code>192.168.50.2:5600</code>）。
-      Wi‑Fi 短暂丢包时会自动重连，无需手动刷新。飞控遥测叠加尚未接入。
+      视频：<code>/stream.ts</code>（FFmpeg 从 RTP 转封装）。遥测：UDP JSON
+      <code>:5701</code> → <code>/telemetry.json</code>。
+      Pi 推流默认 <code>192.168.50.2:5600</code>（视频）/ <code>:5701</code>（遥测）。
     </p>
   </main>
   <script src="/mpegts.js"></script>
   <script>
     const statusEl = document.getElementById("status");
     const videoEl = document.getElementById("video");
+    const telemStateEl = document.getElementById("telemState");
+    const vAlt = document.getElementById("vAlt");
+    const vAtt = document.getElementById("vAtt");
+    const vMode = document.getElementById("vMode");
+    const vBatt = document.getElementById("vBatt");
 
     let player = null;
     let reconnectTimer = null;
@@ -105,6 +157,80 @@
     function setStatus(text, kind) {
       statusEl.textContent = text;
       statusEl.className = kind || "";
+    }
+
+    function fmtNum(v, digits) {
+      if (typeof v !== "number" || !Number.isFinite(v)) {
+        return null;
+      }
+      return v.toFixed(digits);
+    }
+
+    function updateHud(snapshot) {
+      const data = snapshot && snapshot.data;
+      if (!data) {
+        telemStateEl.textContent = "无数据";
+        telemStateEl.className = "telem-state missing";
+        vAlt.textContent = "—";
+        vAtt.textContent = "—";
+        vMode.textContent = "—";
+        vBatt.textContent = "—";
+        return;
+      }
+
+      if (snapshot.ok) {
+        telemStateEl.textContent = "在线";
+        telemStateEl.className = "telem-state ok";
+      } else if (snapshot.stale) {
+        telemStateEl.textContent = "过期";
+        telemStateEl.className = "telem-state stale";
+      } else {
+        telemStateEl.textContent = "无数据";
+        telemStateEl.className = "telem-state missing";
+      }
+
+      const alt = fmtNum(data.alt_m, 1);
+      vAlt.textContent = alt === null ? "—" : alt + " m";
+
+      const roll = fmtNum(data.roll_deg, 1);
+      const pitch = fmtNum(data.pitch_deg, 1);
+      const yaw = fmtNum(data.yaw_deg, 1);
+      if (roll === null && pitch === null && yaw === null) {
+        vAtt.textContent = "—";
+      } else {
+        vAtt.textContent =
+          (roll === null ? "—" : roll) +
+          " / " +
+          (pitch === null ? "—" : pitch) +
+          " / " +
+          (yaw === null ? "—" : yaw);
+      }
+
+      vMode.textContent = data.mode != null && data.mode !== "" ? String(data.mode) : "—";
+
+      const pct = fmtNum(data.batt_pct, 0);
+      const volts = fmtNum(data.batt_v, 1);
+      if (pct === null && volts === null) {
+        vBatt.textContent = "—";
+      } else if (pct !== null && volts !== null) {
+        vBatt.textContent = pct + "% / " + volts + " V";
+      } else if (pct !== null) {
+        vBatt.textContent = pct + "%";
+      } else {
+        vBatt.textContent = volts + " V";
+      }
+    }
+
+    async function pollTelemetry() {
+      try {
+        const res = await fetch("/telemetry.json", { cache: "no-store" });
+        if (!res.ok) {
+          throw new Error("HTTP " + res.status);
+        }
+        updateHud(await res.json());
+      } catch (err) {
+        console.warn("telemetry poll", err);
+      }
     }
 
     function clearTimers() {
@@ -153,7 +279,6 @@
         if (gen !== generation || !player) {
           return;
         }
-        // If we were playing and buffered media stops advancing, force reconnect.
         const buffered = videoEl.buffered;
         let end = 0;
         if (buffered.length > 0) {
@@ -161,7 +286,6 @@
         }
         const marker = Math.floor(end * 1000);
         if (marker === lastMediaBytes && !videoEl.paused && videoEl.readyState >= 2) {
-          // No buffer growth for this tick while "playing" — likely dead stream.
           scheduleReconnect("卡顿");
           return;
         }
@@ -179,7 +303,6 @@
         return;
       }
 
-      // Cache-bust so each reconnect opens a fresh /stream.ts + FFmpeg reader.
       const url = "/stream.ts?t=" + Date.now();
       player = mpegts.createPlayer(
         {
@@ -190,8 +313,6 @@
           url: url,
         },
         {
-          // Tiny stash keeps latency low but survives short Wi-Fi jitter better
-          // than enableStashBuffer:false, which hard-fails on one bad gap.
           enableStashBuffer: true,
           stashInitialSize: 128,
           liveBufferLatencyChasing: true,
@@ -237,6 +358,8 @@
     }
 
     startPlayer();
+    pollTelemetry();
+    setInterval(pollTelemetry, 200);
   </script>
 </body>
 </html>
