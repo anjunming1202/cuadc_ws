@@ -2,6 +2,9 @@
 
 DroneLink is the current Raspberry Pi 5 based low-latency video-link setup used with an Arducam/Sony IMX519 camera and ASUS USB-AC56 (RTL8812AU) 5 GHz Wi-Fi adapters.
 
+Ground display is a localhost browser viewer on the Windows PC (not a
+standalone media player). Telemetry overlay on the same page is planned next.
+
 ## Current working configuration
 
 The Raspberry Pi 5 captures the IMX519 through libcamera/PiSP at 1920x1080, 30 fps, NV12. GStreamer encodes the video with x264 in H.264 using a 6 Mbps low-latency configuration, packages it as RTP, and sends it over UDP to the Windows ground station at `192.168.50.2:5600`.
@@ -97,12 +100,40 @@ SSID: DroneLink
 Password: 12345678
 ```
 
-Install VLC and place `windows/DroneLink.sdp` on the Desktop. The tested low-latency VLC command is contained in `windows/start_dronelink_vlc.bat`.
+### Localhost viewer
 
-The command used is:
+A Python server on the ground PC receives the RTP stream via
+`windows/DroneLink.sdp`, remuxes it to MPEG-TS with FFmpeg (stream copy, no
+re-encode), and serves a page at `http://127.0.0.1:8765/`. The browser plays
+it with vendored `mpegts.js` under `windows/localhost_viewer/`.
+
+Requirements: Python 3 on PATH, and FFmpeg on PATH (same as calibration:
+`winget install --id Gyan.FFmpeg -e`).
 
 ```cmd
-"C:\Program Files\VideoLAN\VLC\vlc.exe" --network-caching=20 --clock-jitter=0 --clock-synchro=0 --drop-late-frames --skip-frames "%USERPROFILE%\Desktop\DroneLink.sdp"
+windows\start_localhost_viewer.bat
+```
+
+Then open Chrome or Edge at `http://127.0.0.1:8765/`. Keep the console window
+open while viewing. Pi still sends to `192.168.50.2:5600`.
+
+Brief Wi-Fi UDP loss (association still up) can desync the remux/MSE player.
+The viewer auto-restarts FFmpeg and reconnects the page player.
+
+Manual equivalent:
+
+```cmd
+python windows\localhost_viewer\server.py --sdp windows\DroneLink.sdp
+```
+
+Layout:
+
+```text
+windows/DroneLink.sdp                 RTP receiver description (UDP :5600)
+windows/start_localhost_viewer.bat    launcher
+windows/localhost_viewer/server.py    HTTP + FFmpeg remux
+windows/localhost_viewer/index.html   page
+windows/localhost_viewer/mpegts.js    vendored player
 ```
 
 ## Camera calibration
@@ -159,3 +190,66 @@ Do not commit private home Wi-Fi credentials. The supplied Netplan file is only 
 The WPA password for the dedicated DroneLink AP is currently present in `hostapd.conf`. If the repository will be public, change it before publishing.
 
 The calibration parameters apply to the tested 1920x1080 camera/video mode. If the camera mode, crop, resolution, lens, or optical setup changes materially, recalibrate the camera.
+
+## 新 Windows 地面站：clone 之后怎么跑通图传
+
+下面只写**地面站 Windows**侧。前提是树莓派端已经按上文装好网络/图传服务，并在推流到 `192.168.50.2:5600`。一台从没配过 DroneLink 的电脑，在 `git clone` 本仓库后按顺序做：
+
+### 1. 硬件
+
+- 准备一块 **ASUS USB-AC56**（或同芯片 RTL8812AU）USB 网卡，插到这台 Windows 上。
+- 若系统认不出网卡，先装好对应的 **RTL8812AU / 88XXau Windows 驱动**（以网卡厂商或芯片驱动为准），直到设备管理器里能看到这块无线网卡。
+
+### 2. 软件（装到 PATH 里）
+
+在 PowerShell 或「终端」里执行（有管理员权限更省事）：
+
+```cmd
+winget install --id Python.Python.3.12 -e
+winget install --id Gyan.FFmpeg -e
+```
+
+装完后**新开一个**命令行窗口，确认都能找到：
+
+```cmd
+python --version
+ffmpeg -version
+```
+
+浏览器用 **Chrome 或 Edge**（需支持 MSE 直播；不要用过旧的 IE）。
+
+> 只需看图传、不跑标定的话：**不需要**再装 OpenCV / VLC。标定另见上文「Calibration capture requirements on Windows」。
+
+### 3. 连上 DroneLink 专用 Wi‑Fi
+
+1. 用这块 USB 网卡连接：
+   - SSID：`DroneLink`
+   - 密码：`12345678`（与 `raspberrypi/hostapd/hostapd.conf` 一致；若现场改过密码，以实际为准）
+2. 给**这块 USB Wi‑Fi 适配器**设静态 IPv4（不要设错到家里的日常网卡上）：
+   - IP：`192.168.50.2`
+   - 子网掩码：`255.255.255.0`
+   - 默认网关：空
+   - DNS：空
+
+可用 `ping 192.168.50.1` 测一下能否 ping 通树莓派图传网卡。
+
+### 4. 启动 localhost 观看页
+
+在仓库里进入地面站脚本目录并运行：
+
+```cmd
+cd <仓库根目录>\src\dronelink\windows
+start_localhost_viewer.bat
+```
+
+保持弹出的黑色窗口不要关，用浏览器打开：
+
+```text
+http://127.0.0.1:8765/
+```
+
+能看到画面即表示链路跑通。若状态提示重连，多半是空口短暂丢包，页面会自动恢复；若一直无画面，先确认 Pi 端 `dronelink-video` 服务在跑，以及本机是否真是 `192.168.50.2` 在收 `5600` 端口。
+
+### 5. （可选）维护网线
+
+SSH / 拷文件可用网线：Windows `10.10.10.2/24`，树莓派 `10.10.10.1/24`。这与图传 Wi‑Fi 是两条网，不互相替代；只看图传时可以不插网线。

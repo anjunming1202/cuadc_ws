@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DroneLink Viewer</title>
+  <style>
+    :root {
+      --bg: #0f1216;
+      --panel: #1a1f26;
+      --text: #e8ecf1;
+      --muted: #8b95a5;
+      --accent: #3d9cf0;
+      --bad: #e35d6a;
+      --ok: #3ecf8e;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0.75rem 1.25rem;
+      background: var(--panel);
+      border-bottom: 1px solid #2a3340;
+    }
+    h1 {
+      margin: 0;
+      font-size: 1.05rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+    #status {
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+    #status.ok { color: var(--ok); }
+    #status.bad { color: var(--bad); }
+    main {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 1rem 1.25rem 2rem;
+    }
+    .stage {
+      background: #000;
+      border: 1px solid #2a3340;
+      border-radius: 6px;
+      overflow: hidden;
+      aspect-ratio: 16 / 9;
+    }
+    video {
+      display: block;
+      width: 100%;
+      height: 100%;
+      background: #000;
+      object-fit: contain;
+    }
+    .hint {
+      margin-top: 0.85rem;
+      color: var(--muted);
+      font-size: 0.85rem;
+      line-height: 1.5;
+    }
+    code {
+      color: var(--accent);
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.9em;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>DroneLink</h1>
+    <div id="status">初始化…</div>
+  </header>
+  <main>
+    <div class="stage">
+      <video id="video" muted autoplay playsinline></video>
+    </div>
+    <p class="hint">
+      本页从 <code>/stream.ts</code> 拉 MPEG-TS（由本机 FFmpeg 从 RTP 转封装，不重编码）。
+      需 Pi 正在向 SDP 目标地址推流（默认 <code>192.168.50.2:5600</code>）。
+      Wi‑Fi 短暂丢包时会自动重连，无需手动刷新。飞控遥测叠加尚未接入。
+    </p>
+  </main>
+  <script src="/mpegts.js"></script>
+  <script>
+    const statusEl = document.getElementById("status");
+    const videoEl = document.getElementById("video");
+
+    let player = null;
+    let reconnectTimer = null;
+    let stallTimer = null;
+    let reconnectAttempt = 0;
+    let lastMediaBytes = 0;
+    let generation = 0;
+
+    function setStatus(text, kind) {
+      statusEl.textContent = text;
+      statusEl.className = kind || "";
+    }
+
+    function clearTimers() {
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      if (stallTimer) {
+        clearInterval(stallTimer);
+        stallTimer = null;
+      }
+    }
+
+    function destroyPlayer() {
+      clearTimers();
+      if (!player) {
+        return;
+      }
+      try {
+        player.pause();
+        player.unload();
+        player.detachMediaElement();
+        player.destroy();
+      } catch (err) {
+        console.warn("player destroy", err);
+      }
+      player = null;
+    }
+
+    function scheduleReconnect(reason) {
+      if (reconnectTimer) {
+        return;
+      }
+      reconnectAttempt += 1;
+      const delayMs = Math.min(3000, 400 * reconnectAttempt);
+      setStatus(`流中断（${reason}），${delayMs}ms 后重连…`, "bad");
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        startPlayer();
+      }, delayMs);
+    }
+
+    function watchForStall(gen) {
+      lastMediaBytes = 0;
+      stallTimer = setInterval(() => {
+        if (gen !== generation || !player) {
+          return;
+        }
+        // If we were playing and buffered media stops advancing, force reconnect.
+        const buffered = videoEl.buffered;
+        let end = 0;
+        if (buffered.length > 0) {
+          end = buffered.end(buffered.length - 1);
+        }
+        const marker = Math.floor(end * 1000);
+        if (marker === lastMediaBytes && !videoEl.paused && videoEl.readyState >= 2) {
+          // No buffer growth for this tick while "playing" — likely dead stream.
+          scheduleReconnect("卡顿");
+          return;
+        }
+        lastMediaBytes = marker;
+      }, 2500);
+    }
+
+    function startPlayer() {
+      destroyPlayer();
+      generation += 1;
+      const gen = generation;
+
+      if (!window.mpegts || !mpegts.getFeatureList().mseLivePlayback) {
+        setStatus("当前浏览器不支持 MSE 直播播放", "bad");
+        return;
+      }
+
+      // Cache-bust so each reconnect opens a fresh /stream.ts + FFmpeg reader.
+      const url = "/stream.ts?t=" + Date.now();
+      player = mpegts.createPlayer(
+        {
+          type: "mse",
+          isLive: true,
+          hasAudio: false,
+          hasVideo: true,
+          url: url,
+        },
+        {
+          // Tiny stash keeps latency low but survives short Wi-Fi jitter better
+          // than enableStashBuffer:false, which hard-fails on one bad gap.
+          enableStashBuffer: true,
+          stashInitialSize: 128,
+          liveBufferLatencyChasing: true,
+          liveBufferLatencyMaxLatency: 1.2,
+          liveBufferLatencyMinRemain: 0.3,
+        }
+      );
+
+      player.attachMediaElement(videoEl);
+      player.on(mpegts.Events.ERROR, (type, detail, info) => {
+        if (gen !== generation) {
+          return;
+        }
+        console.error("mpegts error", type, detail, info);
+        const reason = detail || type || "播放错误";
+        destroyPlayer();
+        scheduleReconnect(String(reason));
+      });
+      player.load();
+      const playPromise = player.play();
+      if (playPromise && typeof playPromise.catch === "function") {
+        playPromise.catch((err) => {
+          if (gen !== generation) {
+            return;
+          }
+          console.warn("autoplay blocked or failed", err);
+          setStatus("已连接流，点击页面以开始播放", "bad");
+        });
+      }
+      setStatus(reconnectAttempt ? `重连中（第 ${reconnectAttempt} 次）…` : "正在拉流…", "");
+      videoEl.addEventListener(
+        "playing",
+        () => {
+          if (gen !== generation) {
+            return;
+          }
+          reconnectAttempt = 0;
+          setStatus("播放中", "ok");
+          watchForStall(gen);
+        },
+        { once: true }
+      );
+    }
+
+    startPlayer();
+  </script>
+</body>
+</html>
