@@ -16,8 +16,8 @@ source "$REPO_ROOT/scripts/activate_env.sh"
 LOG_FILTER="${LOG_FILTER:-}"
 
 if [[ -n "$LOG_FILTER" ]]; then
-    ros2 launch "$REPO_ROOT/launch/mission_bringup.launch.py" connection:=/dev/ttyACM0:57600 "$@" \
+    ros2 launch "$REPO_ROOT/launch/mission_bringup.launch.py" connection:=/dev/ttyAMA0:57600 "$@" \
         2>&1 | grep --line-buffered -E "$LOG_FILTER"
 else
-    exec ros2 launch "$REPO_ROOT/launch/mission_bringup.launch.py" connection:=/dev/ttyACM0:57600 "$@"
+    exec ros2 launch "$REPO_ROOT/launch/mission_bringup.launch.py" connection:=/dev/ttyAMA0:57600 "$@"
 fi
