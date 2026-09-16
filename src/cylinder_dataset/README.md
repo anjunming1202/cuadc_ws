@@ -64,6 +64,13 @@ libcamera，**不能同时跑**。采集前先停图传：`sudo systemctl stop d
 默认 **1920x1080**，与部署图传同分辨率，可直接复用 dronelink 已有相机内参
 标定（见 `src/dronelink` README 的 Calibration 一节），无需重标。
 
+### 与地面站共存（不独占串口/相机）
+
+想在采集时**地面站仍能看到图像+遥测**：飞控串口交给 mavlink-router 分发、
+图传管线 tee 一路到本地，采集用 `connection: udp:...` + `backend: rtp`。
+一整套可直接部署的 mavlink-router 配置 / systemd drop-in / 运行配置 + 步骤见
+[`deploy/`](deploy/README.md)。同刻性/画质权衡也在那里说明。
+
 ## 文件布局
 
 ```text

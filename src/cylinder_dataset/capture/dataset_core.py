@@ -219,6 +219,51 @@ class CameraBackend:
             self._picam.close()
 
 
+class RtpCameraBackend:
+    """从 dronelink-video tee 出来的本地 RTP/H264 流取帧，不独占相机——这样
+    地面站图传照常、同时采集能拿到同一路画面。需 OpenCV 带 GStreamer 支持，
+    且 dronelink-video 已把一路 RTP 复制到本地端口（见 deploy/）。
+
+    代价：图像是图传管线里 H264 编码后的一帧（有损、1080p），且相对真实曝光
+    有编码+网络+解码延迟（~百 ms 量级）——比 rpicam-still 现拍的同刻性略松，
+    但换来与地面站图传共存。静态/慢速采样场景够用。"""
+
+    def __init__(self, port, image_format='jpg', quality=95, pipeline=None):
+        import cv2
+        self._cv2 = cv2
+        self.image_format = image_format
+        self.quality = quality
+        self.kind = 'rtp'
+        if pipeline is None:
+            pipeline = (
+                f'udpsrc port={port} ! application/x-rtp,media=video,'
+                'encoding-name=H264,payload=96 ! rtpjitterbuffer latency=0 ! '
+                'rtph264depay ! avdec_h264 ! videoconvert ! '
+                'video/x-raw,format=BGR ! appsink drop=true max-buffers=1 sync=false')
+        self._cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+        if not self._cap.isOpened():
+            raise RuntimeError(
+                '打不开本地 RTP 流：确认 OpenCV 带 GStreamer 支持、且 '
+                'dronelink-video 已 tee 一路到本地端口（见 deploy/）。')
+        ok, frame = self._cap.read()
+        self.height, self.width = (frame.shape[:2] if ok and frame is not None
+                                   else (0, 0))
+
+    def capture(self, path):
+        ok, frame = self._cap.read()   # appsink max-buffers=1 drop=true → 取最新一帧
+        t = time.time()
+        if not ok or frame is None:
+            print('ERROR: RTP 取帧失败（图传是否在推流？）')
+            return False, None
+        params = ([self._cv2.IMWRITE_JPEG_QUALITY, self.quality]
+                  if self.image_format == 'jpg' else [])
+        self._cv2.imwrite(path, frame, params)
+        return True, t
+
+    def close(self):
+        self._cap.release()
+
+
 # --------------------------------------------------------------------------
 # 运行配置合并：内置默认 < capture.yaml < 命令行
 # --------------------------------------------------------------------------
@@ -232,6 +277,8 @@ RUNTIME_DEFAULTS = {
     'backend': 'auto',
     'image_format': 'jpg',
     'jpeg_quality': 95,
+    'rtp_port': 5602,       # backend=rtp 时从本地 tee 流取帧的 UDP 端口
+    'rtp_pipeline': None,   # 可选：完全自定义 GStreamer 接收管线字符串
 }
 
 
@@ -247,8 +294,8 @@ def add_common_args(ap):
     ap.add_argument('--height', type=int, default=None)
     ap.add_argument('--rate', type=int, default=None,
                     help='请求遥测的数据流频率 Hz（越高位姿越新鲜）')
-    ap.add_argument('--backend', choices=['auto', 'picamera2', 'rpicam'],
-                    default=None, help='相机后端')
+    ap.add_argument('--backend', choices=['auto', 'picamera2', 'rpicam', 'rtp'],
+                    default=None, help='相机后端；rtp=从图传本地流取帧、不独占相机')
     ap.add_argument('--format', choices=['jpg', 'png'], default=None,
                     help='图像格式；png 无损但大很多')
     ap.add_argument('--quality', type=int, default=None,
@@ -278,6 +325,9 @@ def resolve_runtime(args, script_dir):
 
 
 def make_backend(cfg):
+    if cfg['backend'] == 'rtp':
+        return RtpCameraBackend(cfg.get('rtp_port', 5602), cfg['image_format'],
+                                cfg['jpeg_quality'], cfg.get('rtp_pipeline'))
     prefer = ('picamera2' if cfg['backend'] == 'picamera2'
               else ('rpicam-still' if cfg['backend'] == 'rpicam' else 'auto'))
     return CameraBackend(prefer, cfg['width'], cfg['height'],

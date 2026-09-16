@@ -1,0 +1,15 @@
+[Unit]
+Description=MAVLink router: sole owner of the FC serial, fans out UDP endpoints
+# 路由器要在其它 MAVLink 消费者之前起来，且独占串口。
+After=dronelink-network.service
+Before=dronelink-telemetry.service
+
+[Service]
+Type=simple
+User=wly
+ExecStart=/usr/bin/mavlink-routerd -c /etc/mavlink-router/main.conf
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

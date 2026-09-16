@@ -1,0 +1,27 @@
+# 「与地面站共存」模式的采集运行配置。用法：把它拷成
+# src/cylinder_dataset/capture/capture.yaml 并按现场改。
+# 前提：已按 deploy/README.md 部署 mavlink-router + 两个 drop-in（串口分流 +
+# 图传 tee）。此模式下地面站遥测/图传照常，采集不独占串口/相机。
+
+# 飞控走 mavlink-router 的采集端点，而不是直接开 /dev/ttyAMA0
+connection: "udp:127.0.0.1:14550"
+
+# 相机从图传 tee 出来的本地 RTP 流取帧，不独占相机
+backend: "rtp"
+rtp_port: 5602
+
+# 图传是 1080p，采集图像即该分辨率（与相机标定一致）
+width: 1920
+height: 1080
+rate: 15
+image_format: "jpg"
+jpeg_quality: 95
+
+out: "~/cylinder_dataset_out"
+
+camera_calibration:
+  source: "dronelink IMX519 1920x1080 棋盘格标定"
+  file: "IMX519_1920x1080_calibration.npz"
+  resolution: [1920, 1080]
+  camera_matrix: {fx: 1738.74483, fy: 1742.05062, cx: 972.965849, cy: 520.215881}
+  dist_coeffs: {k1: 0.09691173, k2: -0.46843941, p1: -0.00498614, p2: 0.00222544, k3: 1.18879159}
