@@ -105,25 +105,46 @@ Password: 12345678
 树莓派上若已 `enable`：`dronelink-network`、`dronelink-video`、
 `dronelink-telemetry`，则 **Pi 不用再敲命令**。地面站每次：
 
-1. 确认 USB 网卡已连上 `DroneLink`，且 `WLAN` 地址为 `192.168.50.2`
-   （可用 `ipconfig` / `ping 192.168.50.1` 检查）。
-2. 飞控上电（遥测需要）。
-3. 在 Windows 打开 CMD：
+1. 确认 USB 网卡已插入；可先跑快速重连（可选）：
+
+```cmd
+cd /d e:\cuadc_ws\src\dronelink\windows
+.\connect_dronelink.bat
+```
+
+   （默认接口名是 `WLAN 2`，不对就编辑 bat 里的 `IFACE`。）
+2. 确认已连上 `DroneLink` 且地址为 `192.168.50.2`
+   （`ipconfig` / `ping 192.168.50.1`）。
+3. 飞控上电（遥测需要）。
+4. 在 Windows 打开 CMD：
 
 ```cmd
 cd /d e:\cuadc_ws\src\dronelink\windows
 .\start_localhost_viewer.bat
 ```
 
-4. 浏览器打开：**http://127.0.0.1:8765/**  
+5. 浏览器打开：**http://127.0.0.1:8765/**  
    保持 bat 黑窗口不要关。应同时看到视频画面与左上角 HUD 飞控数据。
 
 不要同时运行 `send_fake_telemetry.py`（会和真机遥测抢显示）。
 
+**开机到连上 Wi‑Fi 想压到约 1 分钟内：** Pi 侧已缩短
+`dronelink-network.sh` 固定 sleep；Windows 侧请把该 USB 网卡对
+`DroneLink` 设为「自动连接」、关闭该网络的随机硬件地址、关闭适配器省电，
+并用上面的 `connect_dronelink.bat` 主动重连（比干等系统扫描快）。
+
 若 HUD「无数据」：Pi 上检查
 `journalctl -u dronelink-telemetry.service -n 20` 是否出现
-`Sending telemetry to 192.168.50.2:5701`（端口必须是 **5701**，不能是 5601，
-否则会与视频 RTCP 冲突）。
+`Sending telemetry to 192.168.50.2:5701`（可同时带 `10.10.10.2`）。当前 Pi 若仍发
+`:5601`，地面 viewer 会在同一端口上区分 JSON 遥测与 RTCP，并转发视频到本机 FFmpeg，
+因此图传与 HUD 可同时工作。
+
+地面侧可一键把仓库里的脚本/服务同步到 Pi（会提示输入 SSH 密码）：
+
+```powershell
+cd e:\cuadc_ws\src\dronelink\windows
+.\deploy_pi_telemetry.ps1
+```
 
 若视频黑屏：检查 `dronelink-video` 是否 active，以及 Pi
 `ping -c 2 -I 192.168.50.1 192.168.50.2` 是否通。
@@ -147,8 +168,9 @@ open while viewing.
 
 | Stream | Destination | Notes |
 |---|---|---|
-| Video RTP/H.264 | `192.168.50.2:5600` | unchanged Pi GStreamer path |
-| Telemetry JSON/UDP | `192.168.50.2:5701` | one JSON object per datagram; not 5601 (FFmpeg RTCP) |
+| Video RTP/H.264 | `192.168.50.2:5600` | Pi → ground; viewer proxies to loopback FFmpeg |
+| Shared UDP | `192.168.50.2:5601` | legacy telemetry JSON (and any RTCP); demuxed in viewer |
+| Telemetry JSON/UDP | `192.168.50.2:5701` (+ optional `10.10.10.2`) | preferred Pi telemetry port once unit is updated |
 
 Brief Wi-Fi UDP loss (association still up) can desync the remux/MSE player.
 The viewer auto-restarts FFmpeg and reconnects the page player. Telemetry older
@@ -212,7 +234,7 @@ Script: `raspberrypi/scripts/dronelink-telemetry.py`
 Unit: `raspberrypi/systemd/dronelink-telemetry.service`
 
 Reads Pixhawk on `/dev/ttyAMA0:57600` via pymavlink and sends the JSON schema
-above to `192.168.50.2:5701`. Install on the Pi:
+above to `192.168.50.2:5701` (and `10.10.10.2` when Ethernet is up). Install on the Pi:
 
 ```bash
 sudo apt install -y python3-venv python3-full

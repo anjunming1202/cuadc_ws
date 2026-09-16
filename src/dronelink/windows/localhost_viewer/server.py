@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Serve DroneLink video + telemetry on http://127.0.0.1:<port>/.
 
-Video: one shared FFmpeg process remuxes RTP (DroneLink.sdp) to MPEG-TS and
-fans out to all /stream.ts clients (avoids Windows UDP :5600 bind races).
-Telemetry: UDP JSON on TELEMETRY_PORT -> /telemetry.json (polled by the page)
+Video: Python owns the air-side UDP ports (5600 RTP / 5601 shared), forwards
+RTP+RTCP to localhost for one shared FFmpeg remux (MPEG-TS), fans out to
+/stream.ts clients. JSON datagrams that arrive on :5601 (legacy Pi) or :5701
+are exposed as /telemetry.json for the HUD.
 """
 
 from __future__ import annotations
@@ -15,16 +16,21 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 VIEWER_DIR = Path(__file__).resolve().parent
-DEFAULT_SDP = VIEWER_DIR.parent / "DroneLink.sdp"
+DEFAULT_SDP = VIEWER_DIR.parent / "DroneLink.sdp"  # docs / air-link reference
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
-DEFAULT_TELEMETRY_PORT = 5701  # not 5601: FFmpeg RTP on :5600 also binds RTCP on :5601
+DEFAULT_TELEMETRY_PORT = 5701  # preferred once Pi unit is updated
+AIR_RTP_PORT = 5600
+AIR_SHARED_PORT = 5601  # legacy telemetry JSON and/or RTCP from some stacks
+LOCAL_RTP_PORT = 15600  # FFmpeg loopback RTP
+LOCAL_RTCP_PORT = 15601  # FFmpeg loopback RTCP
 TELEMETRY_STALE_S = 2.0
 CLIENT_QUEUE_MAX = 64  # ~ drop old TS if a slow browser falls behind
 
@@ -42,8 +48,23 @@ def find_ffmpeg() -> str:
     )
 
 
+def _ingest_telemetry_payload(payload: bytes, addr: tuple[str, int]) -> bool:
+    """Return True if payload was telemetry JSON."""
+    global _latest_telemetry, _latest_telemetry_recv_mono
+    try:
+        obj = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(obj, dict):
+        return False
+    with _telemetry_lock:
+        _latest_telemetry = obj
+        _latest_telemetry_recv_mono = time.monotonic()
+    return True
+
+
 def _ffmpeg_cmd(ffmpeg_bin: str, sdp_path: Path) -> list[str]:
-    # Live RTP often starts mid-GOP; wait for SPS/PPS (up to ~2s) and allow RTCP.
+    # Live RTP often starts mid-GOP; wait for SPS/PPS and allow RTCP.
     return [
         ffmpeg_bin,
         "-hide_banner",
@@ -80,8 +101,100 @@ def _ffmpeg_cmd(ffmpeg_bin: str, sdp_path: Path) -> list[str]:
     ]
 
 
+def write_loopback_sdp(path: Path) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                "v=0",
+                "o=- 0 0 IN IP4 127.0.0.1",
+                "s=DroneLink H264 loopback",
+                "c=IN IP4 127.0.0.1",
+                "t=0 0",
+                f"m=video {LOCAL_RTP_PORT} RTP/AVP 96",
+                "a=rtpmap:96 H264/90000",
+                "a=fmtp:96 packetization-mode=1",
+                f"a=rtcp:{LOCAL_RTCP_PORT} IN IP4 127.0.0.1",
+                "",
+            ]
+        ),
+        encoding="ascii",
+    )
+
+
+class AirLinkProxy:
+    """Own air Wi-Fi UDP ports; demux telemetry JSON vs RTP/RTCP for FFmpeg."""
+
+    def __init__(self, air_bind: str = "0.0.0.0") -> None:
+        self._air_bind = air_bind
+        self._stop = threading.Event()
+        self._fwd = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._threads: list[threading.Thread] = []
+
+    def start(self) -> None:
+        rtp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        rtp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        rtp.bind((self._air_bind, AIR_RTP_PORT))
+        shared = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        shared.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        shared.bind((self._air_bind, AIR_SHARED_PORT))
+        sys.stderr.write(
+            f"AirLink proxy listening on {self._air_bind}:{AIR_RTP_PORT} (RTP) "
+            f"and :{AIR_SHARED_PORT} (telemetry JSON / RTCP)\n"
+        )
+        self._threads = [
+            threading.Thread(
+                target=self._rtp_loop, args=(rtp,), name="air-rtp", daemon=True
+            ),
+            threading.Thread(
+                target=self._shared_loop, args=(shared,), name="air-shared", daemon=True
+            ),
+        ]
+        for t in self._threads:
+            t.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        try:
+            self._fwd.close()
+        except OSError:
+            pass
+
+    def _rtp_loop(self, sock: socket.socket) -> None:
+        sock.settimeout(0.5)
+        while not self._stop.is_set():
+            try:
+                payload, _addr = sock.recvfrom(65535)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            try:
+                self._fwd.sendto(payload, ("127.0.0.1", LOCAL_RTP_PORT))
+            except OSError:
+                pass
+        sock.close()
+
+    def _shared_loop(self, sock: socket.socket) -> None:
+        sock.settimeout(0.5)
+        while not self._stop.is_set():
+            try:
+                payload, addr = sock.recvfrom(65535)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            if _ingest_telemetry_payload(payload, addr):
+                continue
+            # Non-JSON: treat as RTCP (or other) and forward to loopback FFmpeg.
+            try:
+                self._fwd.sendto(payload, ("127.0.0.1", LOCAL_RTCP_PORT))
+            except OSError:
+                pass
+        sock.close()
+
+
 class RemuxHub:
-    """Single FFmpeg owns UDP :5600; HTTP clients only subscribe to chunks."""
+    """Single FFmpeg remuxes loopback RTP; HTTP clients subscribe to chunks."""
 
     def __init__(self, ffmpeg_bin: str, sdp_path: Path) -> None:
         self._ffmpeg_bin = ffmpeg_bin
@@ -129,7 +242,7 @@ class RemuxHub:
         backoff = 1.0
         while not self._stop.is_set():
             cmd = _ffmpeg_cmd(self._ffmpeg_bin, self._sdp_path)
-            sys.stderr.write("Starting shared FFmpeg remux (binds SDP UDP port once)…\n")
+            sys.stderr.write("Starting shared FFmpeg remux (loopback SDP)…\n")
             try:
                 proc = subprocess.Popen(
                     cmd,
@@ -166,7 +279,6 @@ class RemuxHub:
                         proc.wait(timeout=2)
                     except subprocess.TimeoutExpired:
                         proc.kill()
-                # Windows needs a beat to release UDP :5600
                 time.sleep(0.8)
 
             if self._stop.is_set():
@@ -181,6 +293,7 @@ class RemuxHub:
 
 
 _hub: RemuxHub | None = None
+_proxy: AirLinkProxy | None = None
 
 
 def _telemetry_snapshot() -> dict:
@@ -201,27 +314,31 @@ def _telemetry_snapshot() -> dict:
 
 def start_telemetry_listener(bind_host: str, port: int) -> None:
     def _loop() -> None:
-        global _latest_telemetry, _latest_telemetry_recv_mono
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind((bind_host, port))
         sys.stderr.write(f"Telemetry UDP listening on {bind_host}:{port}\n")
+        pkt_count = 0
+        last_log = 0.0
         while True:
             try:
-                payload, _addr = sock.recvfrom(65535)
+                payload, addr = sock.recvfrom(65535)
             except OSError as exc:
                 sys.stderr.write(f"telemetry socket error: {exc}\n")
                 break
-            try:
-                obj = json.loads(payload.decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                sys.stderr.write(f"telemetry bad packet ignored: {exc}\n")
+            if not _ingest_telemetry_payload(payload, addr):
+                sys.stderr.write(f"telemetry bad packet ignored from {addr}\n")
                 continue
-            if not isinstance(obj, dict):
-                continue
-            with _telemetry_lock:
-                _latest_telemetry = obj
-                _latest_telemetry_recv_mono = time.monotonic()
+            pkt_count += 1
+            now = time.monotonic()
+            if pkt_count == 1 or now - last_log > 10.0:
+                last_log = now
+                with _telemetry_lock:
+                    obj = _latest_telemetry or {}
+                sys.stderr.write(
+                    f"telemetry ok from {addr[0]}:{addr[1]} "
+                    f"pkts={pkt_count} mode={obj.get('mode')} alt={obj.get('alt_m')}\n"
+                )
 
     threading.Thread(target=_loop, name="telemetry-udp", daemon=True).start()
 
@@ -238,35 +355,33 @@ class ViewerHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def _send_file(self, path: Path, content_type: str) -> None:
-        self._send_bytes(path.read_bytes(), content_type)
-
     def do_GET(self) -> None:  # noqa: N802
         path = self.path.split("?", 1)[0]
         if path in ("/", "/index.html"):
-            self._send_file(VIEWER_DIR / "index.html", "text/html; charset=utf-8")
+            body = (VIEWER_DIR / "index.html").read_bytes()
+            self._send_bytes(body, "text/html; charset=utf-8")
             return
         if path == "/mpegts.js":
-            self._send_file(VIEWER_DIR / "mpegts.js", "application/javascript; charset=utf-8")
+            body = (VIEWER_DIR / "mpegts.js").read_bytes()
+            self._send_bytes(body, "application/javascript; charset=utf-8")
             return
         if path == "/telemetry.json":
             body = json.dumps(_telemetry_snapshot(), ensure_ascii=False).encode("utf-8")
             self._send_bytes(body, "application/json; charset=utf-8")
             return
         if path == "/stream.ts":
-            self._stream_mpegts()
+            self._stream_ts()
             return
-        self.send_error(404, "Not found")
+        self.send_error(404)
 
-    def _stream_mpegts(self) -> None:
+    def _stream_ts(self) -> None:
+        global _hub
         if _hub is None:
             self.send_error(503, "remux hub not ready")
             return
-
         self.send_response(200)
         self.send_header("Content-Type", "video/mp2t")
-        self.send_header("Cache-Control", "no-cache, no-store")
-        self.send_header("Connection", "close")
+        self.send_header("Cache-Control", "no-cache")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
 
@@ -284,32 +399,38 @@ class ViewerHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    global _hub
+    global _hub, _proxy
 
     parser = argparse.ArgumentParser(description="DroneLink localhost video viewer")
     parser.add_argument("--host", default=DEFAULT_HOST, help="HTTP bind address")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="HTTP port")
     parser.add_argument("--telemetry-bind", default="0.0.0.0")
     parser.add_argument("--telemetry-port", type=int, default=DEFAULT_TELEMETRY_PORT)
-    parser.add_argument("--sdp", type=Path, default=DEFAULT_SDP)
+    parser.add_argument(
+        "--sdp",
+        type=Path,
+        default=DEFAULT_SDP,
+        help="unused for remux (kept for CLI compat); air ports are proxied",
+    )
     args = parser.parse_args()
-
-    sdp = args.sdp.resolve()
-    if not sdp.is_file():
-        raise SystemExit(f"SDP file not found: {sdp}")
 
     ffmpeg_bin = find_ffmpeg()
     start_telemetry_listener(args.telemetry_bind, args.telemetry_port)
 
-    _hub = RemuxHub(ffmpeg_bin, sdp)
+    _proxy = AirLinkProxy(air_bind="0.0.0.0")
+    _proxy.start()
+
+    loopback_sdp = Path(tempfile.gettempdir()) / "dronelink_loopback.sdp"
+    write_loopback_sdp(loopback_sdp)
+
+    _hub = RemuxHub(ffmpeg_bin, loopback_sdp)
     _hub.start()
 
     server = ThreadingHTTPServer((args.host, args.port), ViewerHandler)
     print(f"DroneLink viewer: http://{args.host}:{args.port}/")
-    print(f"SDP: {sdp}")
     print(f"FFmpeg: {ffmpeg_bin}")
-    print("Video RTP: address/port in SDP (default 192.168.50.2:5600)")
-    print(f"Telemetry UDP: {args.telemetry_bind}:{args.telemetry_port}")
+    print(f"Air RTP/shared: 0.0.0.0:{AIR_RTP_PORT}/:{AIR_SHARED_PORT} -> loopback")
+    print(f"Telemetry UDP: {args.telemetry_bind}:{args.telemetry_port} (+ JSON on :{AIR_SHARED_PORT})")
     print("Ctrl+C to stop.")
     try:
         server.serve_forever()
@@ -318,6 +439,8 @@ def main() -> None:
     finally:
         if _hub is not None:
             _hub.stop()
+        if _proxy is not None:
+            _proxy.stop()
         server.server_close()
 
 
