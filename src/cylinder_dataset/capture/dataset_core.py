@@ -59,8 +59,15 @@ class PoseListener:
 
     def _loop(self):
         while not self._stop.is_set():
-            msg = self._master.recv_match(type=_WATCHED, blocking=True,
-                                          timeout=1.0)
+            # 真机串口会偶发瞬断（"device reports readiness ... multiple
+            # access on port" 等）；吞掉异常继续，别让读线程崩死——否则之后
+            # 就永远收不到遥测。链路恢复后 recv_match 会自动接着读。
+            try:
+                msg = self._master.recv_match(type=_WATCHED, blocking=True,
+                                              timeout=1.0)
+            except Exception:
+                time.sleep(0.1)
+                continue
             if msg is None:
                 continue
             with self._lock:
