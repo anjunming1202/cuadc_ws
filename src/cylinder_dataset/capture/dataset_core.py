@@ -26,9 +26,12 @@ from pymavlink import mavutil
 _EKF_POS_HORIZ_ABS = mavutil.mavlink.EKF_POS_HORIZ_ABS
 _EKF_POS_VERT_ABS = mavutil.mavlink.EKF_POS_VERT_ABS
 
-_WATCHED = ('ATTITUDE', 'LOCAL_POSITION_NED', 'GLOBAL_POSITION_INT',
+# 必须是 list：pymavlink recv_match(type=...) 只特判 list，传 tuple 会被包成
+# [(...)] 而永不匹配、永远返回 None。HEARTBEAT/COMMAND_ACK 供自主飞行确认
+# 模式切换 / 指令 ack。
+_WATCHED = ['ATTITUDE', 'LOCAL_POSITION_NED', 'GLOBAL_POSITION_INT',
             'GPS_RAW_INT', 'EKF_STATUS_REPORT', 'HOME_POSITION',
-            'HEARTBEAT', 'COMMAND_ACK')   # 后两者供自主飞行确认模式/指令 ack
+            'HEARTBEAT', 'COMMAND_ACK']
 
 _GPS_FIX_NAMES = {0: 'no_gps', 1: 'no_fix', 2: '2d', 3: '3d',
                   4: 'dgps', 5: 'rtk_float', 6: 'rtk_fixed'}

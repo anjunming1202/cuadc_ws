@@ -185,25 +185,31 @@ def fly_grid(master, listener, writer, grid_cfg, session):
     # loiter：留在 GUIDED 悬停，等人用遥控接管
 
 
-def preflight_ok(listener):
-    """自主起飞前的最低门槛：有 GPS 3D 锁定 + EKF 位置可信 + 有姿态。"""
-    ok = True
-    att = listener.latest('ATTITUDE')
+def preflight_ok(listener, timeout=20.0):
+    """自主起飞前的最低门槛：轮询等待 有姿态 + GPS 3D 锁定 + EKF 位置可信。
+    真机上 GPS 锁定/EKF 收敛需要时间，故等到就绪或超时，而非一次性判定。"""
+    deadline = time.time() + timeout
+    att = gr = ekf = None
+    trust = False
+    while time.time() < deadline:
+        att = listener.latest('ATTITUDE')
+        gr = listener.latest('GPS_RAW_INT')
+        ekf = listener.latest('EKF_STATUS_REPORT')
+        trust = bool(ekf and (ekf.flags & core._EKF_POS_HORIZ_ABS)
+                     and (ekf.flags & core._EKF_POS_VERT_ABS))
+        if att is not None and gr is not None and gr.fix_type >= 3 and trust:
+            print(f'  ✓ 姿态 OK | GPS fix={gr.fix_type} sats={gr.satellites_visible}'
+                  ' | EKF 位置可信')
+            return True
+        time.sleep(0.5)
+    # 超时，报告卡在哪
     if att is None:
-        print('  x 收不到 ATTITUDE'); ok = False
-    gr = listener.latest('GPS_RAW_INT')
+        print('  x 收不到 ATTITUDE')
     if gr is None or gr.fix_type < 3:
-        print(f'  x GPS 未 3D 锁定 (fix={getattr(gr, "fix_type", None)})'); ok = False
-    else:
-        print(f'  ✓ GPS fix={gr.fix_type} sats={gr.satellites_visible}')
-    ekf = listener.latest('EKF_STATUS_REPORT')
-    trust = bool(ekf and (ekf.flags & core._EKF_POS_HORIZ_ABS)
-                 and (ekf.flags & core._EKF_POS_VERT_ABS))
+        print(f'  x GPS 未 3D 锁定 (fix={getattr(gr, "fix_type", None)})')
     if not trust:
-        print('  x EKF 位置不可信（pos_horiz_abs/pos_vert_abs 未置位）'); ok = False
-    else:
-        print('  ✓ EKF 位置可信')
-    return ok
+        print('  x EKF 位置不可信（pos_horiz_abs/pos_vert_abs 未置位）')
+    return False
 
 
 def main():
@@ -230,7 +236,6 @@ def main():
     listener = core.PoseListener(master)
     listener.start()
     core.request_streams(master, cfg['rate'])
-    time.sleep(1.5)   # 等首批遥测到齐再做 preflight
 
     print('初始化相机 ...')
     backend = core.make_backend(cfg)
