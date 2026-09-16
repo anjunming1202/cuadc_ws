@@ -1,0 +1,42 @@
+# 一次采集的现场元数据。复制成 session.yaml 后按实测填写。
+# 这些值每次运行只记录一份（写进该次运行的 run_meta.json），不随每张照片重复。
+# 长度单位 米(m)，角度 度(deg)。
+
+session: "cylinder_20260916_01"   # 会话名，作为输出目录名的前缀
+
+# ---------------------------------------------------------------------------
+# 1) 机架内部几何（刚性固连后测一次）——决定能否把"飞控姿态"换算到"相机姿态"
+# ---------------------------------------------------------------------------
+# 机体系约定：飞控 IMU 的 FRD（前x-右y-下z）。各部件位置填其在该系下、
+# 相对某个机架参考点(rig_origin)的坐标；rig_origin 取哪儿自定，写在 notes。
+rig_layout:
+  rig_origin_notes: "rig_origin 取___（如飞控几何中心）"
+  flight_controller_imu: [0.0, 0.0, 0.0]   # 飞控 IMU 位置（通常就是 rig_origin）
+  camera_optical_center: [0.0, 0.0, 0.0]   # 相机光心位置
+  raspberry_pi: [0.0, 0.0, 0.0]            # 树莓派位置（记录用，几何上非必需）
+
+# 相机↔IMU 外参（最关键）：相机相对 IMU 机体系的固定安装关系。
+# translation 一般等于上面 camera_optical_center - flight_controller_imu。
+camera_to_imu:
+  translation: [0.0, 0.0, 0.0]     # 相机光心相对 IMU 的杆臂 (m, FRD)
+  rotation_deg: [0.0, 0.0, 0.0]    # 相机系相对 IMU 系安装旋转 (roll,pitch,yaw)
+
+# ---------------------------------------------------------------------------
+# 2) 场地几何（室外 GPS 采集）
+# ---------------------------------------------------------------------------
+# 起飞/home 点即飞控 EKF 原点，飞控上报的 local_position_ned 就是相对它的
+# 偏移(NED)。圆筒位置可用"相对 home 的实测偏移"，有条件也可填经纬度。
+site:
+  frame_convention: "origin=起飞/home点; NED(北x-东y-下z)"
+  home_lat_deg: null    # 若已知可填，留空则以运行时飞控上报的 home 为准
+  home_lon_deg: null
+  home_alt_m: null
+
+cylinder:
+  ground_center_ned: [0.0, 0.0, 0.0]   # 筒地面中心相对 home 的偏移 (m, NED)
+  ground_center_latlon: [null, null]   # 可选：筒地面中心经纬度 [lat,lon]
+  diameter_m: 0.0
+  height_m: 0.0
+  notes: "颜色/编号/其它现场备注"
+
+operator_notes: ""   # 本次采集自由备注（天气、光照、GPS 星数等）
