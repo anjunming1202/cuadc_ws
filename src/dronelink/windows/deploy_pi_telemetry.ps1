@@ -1,10 +1,7 @@
-# Deploy / refresh DroneLink telemetry on the Pi over SSH.
+# Deploy / refresh DroneLink telemetry on the Pi over SSH (does not restart Wi-Fi).
 # Usage (PowerShell):
 #   .\deploy_pi_telemetry.ps1
-#   .\deploy_pi_telemetry.ps1 -PiHost RaspberryPi5.local
-# You will be prompted for the Pi password once (or use an installed SSH key).
-# Also installs this PC's ~/.ssh/*.pub into the Pi authorized_keys so later
-# agent/SSH access can be passwordless.
+# You will be prompted for the Pi password once.
 
 param(
     [string]$PiHost = "192.168.50.1",
@@ -24,7 +21,7 @@ foreach ($name in @("id_ed25519.pub", "id_rsa.pub")) {
     if (Test-Path $p) { $Pub = $p; break }
 }
 
-Write-Host "Deploying to $Target ..."
+Write-Host "Deploying telemetry to $Target ..."
 scp $Script "${Target}:~/dronelink-telemetry.py"
 scp $Unit "${Target}:~/dronelink-telemetry.service"
 if ($Pub) {
@@ -50,11 +47,10 @@ fi
 sudo systemctl daemon-reload
 sudo systemctl enable dronelink-telemetry.service
 sudo systemctl restart dronelink-telemetry.service
-sleep 3
-systemctl is-active dronelink-network.service dronelink-video.service dronelink-telemetry.service || true
-journalctl -u dronelink-telemetry.service -n 30 --no-pager
-ping -c 2 -W 1 192.168.50.2 || true
+sleep 2
+systemctl is-active dronelink-telemetry.service || true
+journalctl -u dronelink-telemetry.service -n 25 --no-pager
 '@
 
 ssh -t $Target $Remote
-Write-Host "Done. Check HUD: http://127.0.0.1:8765/"
+Write-Host "Done. Refresh HUD: http://127.0.0.1:8765/"

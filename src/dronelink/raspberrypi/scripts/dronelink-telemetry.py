@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
 """DroneLink air-side telemetry: Pixhawk MAVLink -> UDP JSON to ground.
 
-No ROS. Reads /dev/ttyAMA0 (TELEM->GPIO UART) and sends one JSON datagram
-per tick to the Windows ground station (default 192.168.50.2:5701 and
-10.10.10.2:5701). Ground viewer also accepts legacy :5601.
-
-Boot robustness: never exit just because the FC is late after power-up;
-reconnect and re-request streams until data flows. systemd Restart=always
-is the backstop.
+Sends immediately (even while waiting for the FC) so the ground HUD can
+tell "no UDP" from "UDP ok, FC still coming up". Datagrams go to both
+:5701 and legacy :5601, on Wi-Fi and Ethernet if configured.
 """
 
 from __future__ import annotations
@@ -17,6 +13,7 @@ import json
 import math
 import socket
 import sys
+import threading
 import time
 from typing import Any
 
@@ -24,8 +21,8 @@ from pymavlink import mavutil
 
 DEFAULT_DEVICE = "/dev/ttyAMA0"
 DEFAULT_BAUD = 57600
-DEFAULT_DEST_HOST = "192.168.50.2,10.10.10.2" # Wi-Fi + Ethernet; comma-separated
-DEFAULT_DEST_PORT = 5701
+DEFAULT_DEST_HOST = "192.168.50.2,10.10.10.2"  # Wi-Fi + Ethernet
+DEFAULT_DEST_PORTS = "5701,5601"  # preferred + legacy (viewer demuxes 5601)
 DEFAULT_HZ = 10.0
 
 _MSG_INTERVALS_US = {
@@ -38,19 +35,6 @@ _MSG_INTERVALS_US = {
 }
 
 
-def encode_payload(state: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "t": time.time(),
-        "alt_m": state.get("alt_m"),
-        "roll_deg": state.get("roll_deg"),
-        "pitch_deg": state.get("pitch_deg"),
-        "yaw_deg": state.get("yaw_deg"),
-        "mode": state.get("mode"),
-        "batt_v": state.get("batt_v"),
-        "batt_pct": state.get("batt_pct"),
-    }
-
-
 def _unwrap_deg(rad: float) -> float:
     return math.degrees(rad)
 
@@ -61,8 +45,10 @@ class MavlinkTelemetrySource:
         self._baud = baud
         self._master: Any = None
         self._last_stream_req = 0.0
+        self._lock = threading.Lock()
         self._state: dict[str, Any] = self._empty_state()
         self._seen: set[str] = set()
+        self.link = "connecting"  # connecting | fc | error
 
     @staticmethod
     def _empty_state() -> dict[str, Any]:
@@ -76,6 +62,12 @@ class MavlinkTelemetrySource:
             "batt_pct": None,
         }
 
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            out = dict(self._state)
+            out["link"] = self.link
+            return out
+
     def close(self) -> None:
         if self._master is not None:
             try:
@@ -84,10 +76,12 @@ class MavlinkTelemetrySource:
                 pass
             self._master = None
 
-    def connect(self, heartbeat_timeout: float = 30.0) -> None:
+    def connect(self, heartbeat_timeout: float = 8.0) -> None:
         self.close()
-        self._state = self._empty_state()
-        self._seen = set()
+        with self._lock:
+            self._state = self._empty_state()
+            self._seen = set()
+            self.link = "connecting"
         print(f"Connecting to {self._device}:{self._baud} ...", flush=True)
         self._master = mavutil.mavlink_connection(self._device, baud=self._baud)
         hb = self._master.wait_heartbeat(timeout=heartbeat_timeout)
@@ -95,34 +89,18 @@ class MavlinkTelemetrySource:
             self.close()
             raise TimeoutError("no MAVLink heartbeat")
         self._apply_heartbeat(hb, force_targets=True)
-        self._prefer_autopilot_targets(timeout=8.0)
         if not self._master.target_system:
             self._master.target_system = 1
         if not self._master.target_component:
             self._master.target_component = 1
+        with self._lock:
+            self.link = "fc"
         print(
-            f"Using MAVLink target {self._master.target_system}/"
-            f"{self._master.target_component} mode={self._state.get('mode')}",
+            f"Heartbeat sys={self._master.target_system}/"
+            f"{self._master.target_component} mode={self.snapshot().get('mode')}",
             flush=True,
         )
         self._request_streams()
-
-    def _prefer_autopilot_targets(self, timeout: float) -> None:
-        assert self._master is not None
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            msg = self._master.recv_match(type="HEARTBEAT", blocking=True, timeout=1)
-            if msg is None:
-                continue
-            self._apply_heartbeat(msg, force_targets=True)
-            if msg.get_srcSystem() and msg.type not in (
-                mavutil.mavlink.MAV_TYPE_GCS,
-                mavutil.mavlink.MAV_TYPE_ONBOARD_CONTROLLER,
-                mavutil.mavlink.MAV_TYPE_GENERIC,
-            ):
-                return
-            if msg.get_srcSystem():
-                return
 
     def _apply_heartbeat(self, msg: Any, force_targets: bool = False) -> None:
         if msg is None:
@@ -136,9 +114,11 @@ class MavlinkTelemetrySource:
         if msg.type == mavutil.mavlink.MAV_TYPE_GCS:
             return
         try:
-            self._state["mode"] = mavutil.mode_string_v10(msg)
+            mode = mavutil.mode_string_v10(msg)
         except Exception:
-            self._state["mode"] = str(getattr(msg, "custom_mode", "?"))
+            mode = str(getattr(msg, "custom_mode", "?"))
+        with self._lock:
+            self._state["mode"] = mode
 
     def _request_streams(self) -> None:
         assert self._master is not None
@@ -175,13 +155,13 @@ class MavlinkTelemetrySource:
         print(f"Requested data streams from {sysid}/{compid}", flush=True)
 
     def has_motion_fields(self) -> bool:
-        return self._state.get("roll_deg") is not None or self._state.get("alt_m") is not None
+        with self._lock:
+            return self._state.get("roll_deg") is not None or self._state.get("alt_m") is not None
 
     def pump(self, budget_s: float = 0.08) -> None:
         if self._master is None:
             return
         now = time.monotonic()
-        # Re-request often until attitude/alt appear; then every 5s.
         interval = 2.0 if not self.has_motion_fields() else 5.0
         if now - self._last_stream_req > interval:
             self._request_streams()
@@ -193,9 +173,6 @@ class MavlinkTelemetrySource:
                 continue
             self._handle(msg)
 
-    def snapshot(self) -> dict[str, Any]:
-        return dict(self._state)
-
     def _handle(self, msg: Any) -> None:
         mtype = msg.get_type()
         if mtype in ("BAD_DATA", "UNKNOWN"):
@@ -206,95 +183,131 @@ class MavlinkTelemetrySource:
                 print(f"First {mtype} received", flush=True)
 
         if mtype == "ATTITUDE":
-            self._state["roll_deg"] = _unwrap_deg(msg.roll)
-            self._state["pitch_deg"] = _unwrap_deg(msg.pitch)
-            self._state["yaw_deg"] = _unwrap_deg(msg.yaw) % 360.0
+            with self._lock:
+                self._state["roll_deg"] = _unwrap_deg(msg.roll)
+                self._state["pitch_deg"] = _unwrap_deg(msg.pitch)
+                self._state["yaw_deg"] = _unwrap_deg(msg.yaw) % 360.0
         elif mtype == "LOCAL_POSITION_NED":
-            self._state["alt_m"] = float(-msg.z)
+            with self._lock:
+                self._state["alt_m"] = float(-msg.z)
         elif mtype == "GLOBAL_POSITION_INT":
-            self._state["alt_m"] = msg.relative_alt / 1000.0
+            with self._lock:
+                self._state["alt_m"] = msg.relative_alt / 1000.0
         elif mtype == "VFR_HUD":
-            if self._state["alt_m"] is None:
-                self._state["alt_m"] = float(msg.alt)
+            with self._lock:
+                if self._state["alt_m"] is None:
+                    self._state["alt_m"] = float(msg.alt)
         elif mtype == "HEARTBEAT":
             self._apply_heartbeat(msg, force_targets=False)
         elif mtype == "SYS_STATUS":
-            if msg.voltage_battery > 0:
-                self._state["batt_v"] = msg.voltage_battery / 1000.0
-            if 0 <= msg.battery_remaining <= 100:
-                self._state["batt_pct"] = float(msg.battery_remaining)
+            with self._lock:
+                if msg.voltage_battery > 0:
+                    self._state["batt_v"] = msg.voltage_battery / 1000.0
+                if 0 <= msg.battery_remaining <= 100:
+                    self._state["batt_pct"] = float(msg.battery_remaining)
         elif mtype == "BATTERY_STATUS":
-            if msg.battery_remaining >= 0:
-                self._state["batt_pct"] = float(msg.battery_remaining)
-            voltages = getattr(msg, "voltages", None)
-            if voltages and voltages[0] > 0 and voltages[0] < 65535:
-                self._state["batt_v"] = voltages[0] / 1000.0
+            with self._lock:
+                if msg.battery_remaining >= 0:
+                    self._state["batt_pct"] = float(msg.battery_remaining)
+                voltages = getattr(msg, "voltages", None)
+                if voltages and voltages[0] > 0 and voltages[0] < 65535:
+                    self._state["batt_v"] = voltages[0] / 1000.0
+
+
+def _dest_list(hosts: str, ports: str) -> list[tuple[str, int]]:
+    hs = [h.strip() for h in hosts.split(",") if h.strip()]
+    ps = [int(p.strip()) for p in ports.split(",") if p.strip()]
+    dests: list[tuple[str, int]] = []
+    for h in hs:
+        for p in ps:
+            dests.append((h, p))
+    return dests
 
 
 def run_forever(args: argparse.Namespace) -> None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    # Comma-separated hosts: send the same JSON to each (Wi-Fi + Ethernet backup).
-    hosts = [h.strip() for h in args.dest_host.split(",") if h.strip()]
-    dests = [(h, args.dest_port) for h in hosts]
+    dests = _dest_list(args.dest_host, args.dest_ports)
     period = 1.0 / max(args.hz, 0.1)
     source = MavlinkTelemetrySource(args.device, args.baud)
-    backoff = 2.0
+    stop = threading.Event()
+    print(
+        "UDP to " + ", ".join(f"{h}:{p}" for h, p in dests) + f" at {args.hz} Hz",
+        flush=True,
+    )
 
-    while True:
-        try:
-            source.connect(heartbeat_timeout=45.0)
-            backoff = 2.0
-            print(
-                f"Sending telemetry to {', '.join(f'{h}:{args.dest_port}' for h,_ in dests)} "
-                f"at {args.hz} Hz",
-                flush=True,
-            )
-            last_data_log = 0.0
-            while True:
-                t0 = time.monotonic()
-                source.pump(budget_s=min(0.08, period * 0.9))
-                payload = encode_payload(source.snapshot())
-                compact = {k: v for k, v in payload.items() if v is not None or k == "t"}
-                blob = json.dumps(compact).encode("utf-8")
-                for dest in dests:
-                    try:
-                        sock.sendto(blob, dest)
-                    except OSError as exc:
-                        print(f"sendto {dest} failed: {exc}", file=sys.stderr, flush=True)
-                if time.monotonic() - last_data_log > 10.0:
-                    last_data_log = time.monotonic()
-                    print(
-                        "health: mode={mode} alt={alt} roll={roll} keys={keys}".format(
-                            mode=compact.get("mode"),
-                            alt=compact.get("alt_m"),
-                            roll=compact.get("roll_deg"),
-                            keys=sorted(k for k in compact if k != "t"),
-                        ),
-                        flush=True,
-                    )
-                elapsed = time.monotonic() - t0
-                time.sleep(max(0.0, period - elapsed))
-        except KeyboardInterrupt:
-            print("Stopped.", flush=True)
-            source.close()
-            return
-        except Exception as exc:
-            print(f"Link error: {exc}; retry in {backoff:.0f}s", file=sys.stderr, flush=True)
-            source.close()
-            time.sleep(backoff)
-            backoff = min(30.0, backoff * 1.5)
+    def send_loop() -> None:
+        last_log = 0.0
+        while not stop.is_set():
+            t0 = time.monotonic()
+            state = source.snapshot()
+            payload = {
+                "t": time.time(),
+                "link": state.get("link"),
+                "alt_m": state.get("alt_m"),
+                "roll_deg": state.get("roll_deg"),
+                "pitch_deg": state.get("pitch_deg"),
+                "yaw_deg": state.get("yaw_deg"),
+                "mode": state.get("mode"),
+                "batt_v": state.get("batt_v"),
+                "batt_pct": state.get("batt_pct"),
+            }
+            compact = {k: v for k, v in payload.items() if v is not None or k in ("t", "link")}
+            blob = json.dumps(compact).encode("utf-8")
+            for dest in dests:
+                try:
+                    sock.sendto(blob, dest)
+                except OSError as exc:
+                    print(f"sendto {dest} failed: {exc}", file=sys.stderr, flush=True)
+            if time.monotonic() - last_log > 10.0:
+                last_log = time.monotonic()
+                print(
+                    "health: link={link} mode={mode} alt={alt} roll={roll}".format(
+                        link=compact.get("link"),
+                        mode=compact.get("mode"),
+                        alt=compact.get("alt_m"),
+                        roll=compact.get("roll_deg"),
+                    ),
+                    flush=True,
+                )
+            time.sleep(max(0.0, period - (time.monotonic() - t0)))
+
+    sender = threading.Thread(target=send_loop, name="udp-send", daemon=True)
+    sender.start()
+    backoff = 1.0
+    try:
+        while True:
+            try:
+                source.connect(heartbeat_timeout=8.0)
+                backoff = 1.0
+                while True:
+                    source.pump(budget_s=0.08)
+                    time.sleep(0.01)
+            except KeyboardInterrupt:
+                raise
+            except Exception as exc:
+                with source._lock:
+                    source.link = "error"
+                print(f"FC link error: {exc}; retry in {backoff:.0f}s", file=sys.stderr, flush=True)
+                source.close()
+                time.sleep(backoff)
+                backoff = min(8.0, backoff * 1.5)
+    except KeyboardInterrupt:
+        print("Stopped.", flush=True)
+    finally:
+        stop.set()
+        source.close()
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="DroneLink MAVLink -> UDP telemetry")
     parser.add_argument("--device", default=DEFAULT_DEVICE)
     parser.add_argument("--baud", type=int, default=DEFAULT_BAUD)
+    parser.add_argument("--dest-host", default=DEFAULT_DEST_HOST)
     parser.add_argument(
-        "--dest-host",
-        default=DEFAULT_DEST_HOST,
-        help="comma-separated ground IPs (DroneLink Wi-Fi and/or Ethernet)",
+        "--dest-ports",
+        default=DEFAULT_DEST_PORTS,
+        help="comma-separated UDP ports (5701 preferred, 5601 legacy)",
     )
-    parser.add_argument("--dest-port", type=int, default=DEFAULT_DEST_PORT)
     parser.add_argument("--hz", type=float, default=DEFAULT_HZ)
     args = parser.parse_args()
     run_forever(args)

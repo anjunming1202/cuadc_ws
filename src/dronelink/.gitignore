@@ -15,3 +15,7 @@ Thumbs.db
 
 # Large offline pip wheels (regenerate per offline_wheels/README.md)
 raspberrypi/offline_wheels/*.whl
+
+# Accidental local junk / temp helpers with secrets
+windows/DroneLink
+windows/_tmp_*.py

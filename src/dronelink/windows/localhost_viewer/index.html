@@ -133,8 +133,10 @@
     </div>
     <p class="hint">
       视频：<code>/stream.ts</code>（FFmpeg 从 RTP 转封装）。遥测：UDP JSON
-      <code>:5701</code> → <code>/telemetry.json</code>。
-      Pi 推流默认 <code>192.168.50.2:5600</code>（视频）/ <code>:5701</code>（遥测）。
+      <code>:5701</code> / 遗留 <code>:5601</code> → <code>/telemetry.json</code>。
+      Pi 推流默认 <code>192.168.50.2:5600</code>（视频）；遥测同时发
+      <code>:5701</code> 与 <code>:5601</code>。日常请用
+      <code>start_dronelink_ground.bat</code>（只开一个 viewer）。
     </p>
   </main>
   <script src="/mpegts.js"></script>
@@ -179,8 +181,17 @@
       }
 
       if (snapshot.ok) {
-        telemStateEl.textContent = "在线";
-        telemStateEl.className = "telem-state ok";
+        const link = data.link;
+        if (link === "connecting") {
+          telemStateEl.textContent = "等待飞控";
+          telemStateEl.className = "telem-state stale";
+        } else if (link === "error") {
+          telemStateEl.textContent = "飞控断开";
+          telemStateEl.className = "telem-state stale";
+        } else {
+          telemStateEl.textContent = "在线";
+          telemStateEl.className = "telem-state ok";
+        }
       } else if (snapshot.stale) {
         telemStateEl.textContent = "过期";
         telemStateEl.className = "telem-state stale";
