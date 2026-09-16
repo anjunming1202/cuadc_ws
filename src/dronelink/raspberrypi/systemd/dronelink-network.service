@@ -1,0 +1,14 @@
+[Unit]
+Description=DroneLink 5GHz Wireless Link
+# Keep this light: do not After=network-online or udev-settle (those slow boot).
+After=systemd-modules-load.service
+Wants=systemd-modules-load.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/dronelink-network.sh
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,15 @@
+[Unit]
+Description=DroneLink IMX519 H264 RTP Video
+After=dronelink-network.service
+Requires=dronelink-network.service
+
+[Service]
+Type=simple
+User=wly
+Environment=GST_PLUGIN_PATH=/usr/local/lib/aarch64-linux-gnu/gstreamer-1.0
+ExecStart=/usr/bin/gst-launch-1.0 libcamerasrc ! video/x-raw,format=NV12,width=1280,height=720,framerate=30/1 ! x264enc tune=zerolatency speed-preset=ultrafast bitrate=4000 key-int-max=30 byte-stream=true ! h264parse config-interval=-1 ! rtph264pay config-interval=1 pt=96 ! udpsink host=192.168.50.2 port=5600 sync=false async=false
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

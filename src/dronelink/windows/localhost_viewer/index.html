@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DroneLink Viewer</title>
+  <style>
+    :root {
+      --bg: #0f1216;
+      --panel: #1a1f26;
+      --text: #e8ecf1;
+      --muted: #8b95a5;
+      --accent: #3d9cf0;
+      --bad: #e35d6a;
+      --ok: #3ecf8e;
+      --warn: #e6b84d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0.75rem 1.25rem;
+      background: var(--panel);
+      border-bottom: 1px solid #2a3340;
+    }
+    h1 {
+      margin: 0;
+      font-size: 1.05rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+    #status {
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+    #status.ok { color: var(--ok); }
+    #status.bad { color: var(--bad); }
+    main {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 1rem 1.25rem 2rem;
+    }
+    .stage {
+      position: relative;
+      background: #000;
+      border: 1px solid #2a3340;
+      border-radius: 6px;
+      overflow: hidden;
+      aspect-ratio: 16 / 9;
+    }
+    video {
+      display: block;
+      width: 100%;
+      height: 100%;
+      background: #000;
+      object-fit: contain;
+    }
+    .hud {
+      position: absolute;
+      left: 0.75rem;
+      top: 0.75rem;
+      min-width: 11rem;
+      padding: 0.65rem 0.8rem;
+      background: rgba(10, 14, 20, 0.72);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 6px;
+      font-variant-numeric: tabular-nums;
+      pointer-events: none;
+    }
+    .hud-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin-bottom: 0.45rem;
+      font-size: 0.75rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .hud-title .telem-state.ok { color: var(--ok); }
+    .hud-title .telem-state.stale { color: var(--warn); }
+    .hud-title .telem-state.missing { color: var(--bad); }
+    .hud-grid {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 0.2rem 0.75rem;
+      font-size: 0.9rem;
+    }
+    .hud-grid span:nth-child(odd) { color: var(--muted); }
+    .hud-grid span:nth-child(even) { color: var(--text); text-align: right; }
+    .hint {
+      margin-top: 0.85rem;
+      color: var(--muted);
+      font-size: 0.85rem;
+      line-height: 1.5;
+    }
+    code {
+      color: var(--accent);
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.9em;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>DroneLink</h1>
+    <div id="status">初始化…</div>
+  </header>
+  <main>
+    <div class="stage">
+      <video id="video" muted autoplay playsinline></video>
+      <div class="hud" id="hud">
+        <div class="hud-title">
+          <span>Telemetry</span>
+          <span class="telem-state missing" id="telemState">无数据</span>
+        </div>
+        <div class="hud-grid">
+          <span>高度</span><span id="vAlt">—</span>
+          <span>姿态</span><span id="vAtt">—</span>
+          <span>模式</span><span id="vMode">—</span>
+          <span>电量</span><span id="vBatt">—</span>
+        </div>
+      </div>
+    </div>
+    <p class="hint">
+      视频：<code>/stream.ts</code>（FFmpeg 从 RTP 转封装）。遥测：UDP JSON
+      <code>:5701</code> → <code>/telemetry.json</code>。
+      Pi 推流默认 <code>192.168.50.2:5600</code>（视频）/ <code>:5701</code>（遥测）。
+    </p>
+  </main>
+  <script src="/mpegts.js"></script>
+  <script>
+    const statusEl = document.getElementById("status");
+    const videoEl = document.getElementById("video");
+    const telemStateEl = document.getElementById("telemState");
+    const vAlt = document.getElementById("vAlt");
+    const vAtt = document.getElementById("vAtt");
+    const vMode = document.getElementById("vMode");
+    const vBatt = document.getElementById("vBatt");
+
+    let player = null;
+    let reconnectTimer = null;
+    let stallTimer = null;
+    let reconnectAttempt = 0;
+    let lastMediaBytes = 0;
+    let generation = 0;
+
+    function setStatus(text, kind) {
+      statusEl.textContent = text;
+      statusEl.className = kind || "";
+    }
+
+    function fmtNum(v, digits) {
+      if (typeof v !== "number" || !Number.isFinite(v)) {
+        return null;
+      }
+      return v.toFixed(digits);
+    }
+
+    function updateHud(snapshot) {
+      const data = snapshot && snapshot.data;
+      if (!data) {
+        telemStateEl.textContent = "无数据";
+        telemStateEl.className = "telem-state missing";
+        vAlt.textContent = "—";
+        vAtt.textContent = "—";
+        vMode.textContent = "—";
+        vBatt.textContent = "—";
+        return;
+      }
+
+      if (snapshot.ok) {
+        telemStateEl.textContent = "在线";
+        telemStateEl.className = "telem-state ok";
+      } else if (snapshot.stale) {
+        telemStateEl.textContent = "过期";
+        telemStateEl.className = "telem-state stale";
+      } else {
+        telemStateEl.textContent = "无数据";
+        telemStateEl.className = "telem-state missing";
+      }
+
+      const alt = fmtNum(data.alt_m, 1);
+      vAlt.textContent = alt === null ? "—" : alt + " m";
+
+      const roll = fmtNum(data.roll_deg, 1);
+      const pitch = fmtNum(data.pitch_deg, 1);
+      const yaw = fmtNum(data.yaw_deg, 1);
+      if (roll === null && pitch === null && yaw === null) {
+        vAtt.textContent = "—";
+      } else {
+        vAtt.textContent =
+          (roll === null ? "—" : roll) +
+          " / " +
+          (pitch === null ? "—" : pitch) +
+          " / " +
+          (yaw === null ? "—" : yaw);
+      }
+
+      vMode.textContent = data.mode != null && data.mode !== "" ? String(data.mode) : "—";
+
+      const pct = fmtNum(data.batt_pct, 0);
+      const volts = fmtNum(data.batt_v, 1);
+      if (pct === null && volts === null) {
+        vBatt.textContent = "—";
+      } else if (pct !== null && volts !== null) {
+        vBatt.textContent = pct + "% / " + volts + " V";
+      } else if (pct !== null) {
+        vBatt.textContent = pct + "%";
+      } else {
+        vBatt.textContent = volts + " V";
+      }
+    }
+
+    async function pollTelemetry() {
+      try {
+        const res = await fetch("/telemetry.json", { cache: "no-store" });
+        if (!res.ok) {
+          throw new Error("HTTP " + res.status);
+        }
+        updateHud(await res.json());
+      } catch (err) {
+        console.warn("telemetry poll", err);
+      }
+    }
+
+    function clearTimers() {
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      if (stallTimer) {
+        clearInterval(stallTimer);
+        stallTimer = null;
+      }
+    }
+
+    function destroyPlayer() {
+      clearTimers();
+      if (!player) {
+        return;
+      }
+      try {
+        player.pause();
+        player.unload();
+        player.detachMediaElement();
+        player.destroy();
+      } catch (err) {
+        console.warn("player destroy", err);
+      }
+      player = null;
+    }
+
+    function scheduleReconnect(reason) {
+      if (reconnectTimer) {
+        return;
+      }
+      reconnectAttempt += 1;
+      const delayMs = Math.min(3000, 400 * reconnectAttempt);
+      setStatus(`流中断（${reason}），${delayMs}ms 后重连…`, "bad");
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        startPlayer();
+      }, delayMs);
+    }
+
+    function watchForStall(gen) {
+      lastMediaBytes = 0;
+      stallTimer = setInterval(() => {
+        if (gen !== generation || !player) {
+          return;
+        }
+        const buffered = videoEl.buffered;
+        let end = 0;
+        if (buffered.length > 0) {
+          end = buffered.end(buffered.length - 1);
+        }
+        const marker = Math.floor(end * 1000);
+        if (marker === lastMediaBytes && !videoEl.paused && videoEl.readyState >= 2) {
+          scheduleReconnect("卡顿");
+          return;
+        }
+        lastMediaBytes = marker;
+      }, 2500);
+    }
+
+    function startPlayer() {
+      destroyPlayer();
+      generation += 1;
+      const gen = generation;
+
+      if (!window.mpegts || !mpegts.getFeatureList().mseLivePlayback) {
+        setStatus("当前浏览器不支持 MSE 直播播放", "bad");
+        return;
+      }
+
+      const url = "/stream.ts?t=" + Date.now();
+      player = mpegts.createPlayer(
+        {
+          type: "mse",
+          isLive: true,
+          hasAudio: false,
+          hasVideo: true,
+          url: url,
+        },
+        {
+          enableStashBuffer: true,
+          stashInitialSize: 128,
+          liveBufferLatencyChasing: true,
+          liveBufferLatencyMaxLatency: 1.2,
+          liveBufferLatencyMinRemain: 0.3,
+        }
+      );
+
+      player.attachMediaElement(videoEl);
+      player.on(mpegts.Events.ERROR, (type, detail, info) => {
+        if (gen !== generation) {
+          return;
+        }
+        console.error("mpegts error", type, detail, info);
+        const reason = detail || type || "播放错误";
+        destroyPlayer();
+        scheduleReconnect(String(reason));
+      });
+      player.load();
+      const playPromise = player.play();
+      if (playPromise && typeof playPromise.catch === "function") {
+        playPromise.catch((err) => {
+          if (gen !== generation) {
+            return;
+          }
+          console.warn("autoplay blocked or failed", err);
+          setStatus("已连接流，点击页面以开始播放", "bad");
+        });
+      }
+      setStatus(reconnectAttempt ? `重连中（第 ${reconnectAttempt} 次）…` : "正在拉流…", "");
+      videoEl.addEventListener(
+        "playing",
+        () => {
+          if (gen !== generation) {
+            return;
+          }
+          reconnectAttempt = 0;
+          setStatus("播放中", "ok");
+          watchForStall(gen);
+        },
+        { once: true }
+      );
+    }
+
+    startPlayer();
+    pollTelemetry();
+    setInterval(pollTelemetry, 200);
+  </script>
+</body>
+</html>

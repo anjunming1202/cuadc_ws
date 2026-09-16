@@ -1,0 +1,12 @@
+[Unit]
+Description=Force eth0 to 100Mbps Full Duplex
+After=network-pre.target
+Before=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/ethtool -s eth0 speed 100 duplex full autoneg off
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

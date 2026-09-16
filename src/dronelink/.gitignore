@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+
+# Calibration captures and generated results
+calibration_images/
+*.npz
+undistorted*.jpg
+undistort_checkerboard_compare.jpg
+
+# OS/editor
+.DS_Store
+Thumbs.db
+*.swp
+
+# Large offline pip wheels (regenerate per offline_wheels/README.md)
+raspberrypi/offline_wheels/*.whl
