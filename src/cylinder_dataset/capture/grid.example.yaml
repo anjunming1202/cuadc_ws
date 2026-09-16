@@ -1,0 +1,21 @@
+# 自主格点飞行采集专用参数（仅 capture_grid.py 用）。复制成 grid.yaml。
+# 坐标系：相对起飞点的 NED（北x-东y-下z）。高度在本文件里用"向上为正"更直观，
+# 脚本内部会转成 NED 的 z=-alt。相机/圆筒外参与位置仍在 session.yaml。
+
+# 水平格点矩阵（在某个中心周围对称展开）
+grid:
+  north: {count: 3, spacing_m: 2.0}   # 北向采样点数与间距
+  east:  {count: 3, spacing_m: 2.0}   # 东向采样点数与间距
+  altitudes_m: [3.0, 5.0, 7.0]        # 各高度层（向上为正），层数即 z 方向点数
+  # 水平矩阵中心相对起飞点的 [北, 东] 偏移(m)，用来把矩阵摆到圆筒前方
+  center_offset_ne_m: [5.0, 0.0]
+
+# 飞行参数
+flight:
+  takeoff_alt_m: 3.0        # 起飞先爬升到的高度(m)
+  speed_mps: 1.5            # 点间飞行速度(m/s)
+  settle_time_s: 2.0        # 到点后先稳定多久再拍（消除到点振荡）
+  arrival_radius_m: 0.4     # 判定"到点"的三维容差(m)
+  arrival_timeout_s: 20.0   # 单个点飞行超时(s)，超时则就地拍并记 flag 继续
+  yaw_mode: "face_cylinder" # hold(保持当前朝向) | face_cylinder(镜头朝圆筒)
+  end_action: "rtl"         # rtl(返航降落) | land(原地降落) | loiter(悬停等人接管)

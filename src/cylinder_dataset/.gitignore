@@ -1,3 +1,4 @@
 # 现场工作副本，从 *.example.yaml 复制而来，不入库
 capture/session.yaml
 capture/capture.yaml
+capture/grid.yaml
