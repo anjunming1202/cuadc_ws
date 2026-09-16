@@ -164,8 +164,10 @@ def build_pose_record(snap, ref_time):
 class CameraBackend:
     """相机抽象：picamera2(常驻) 优先，回退 rpicam-still(每张 spawn)。"""
 
-    def __init__(self, prefer, width, height):
+    def __init__(self, prefer, width, height, image_format='jpg', quality=95):
         self.width, self.height = width, height
+        self.image_format = image_format   # 'jpg' | 'png'
+        self.quality = quality             # JPEG 质量 1-100（png 忽略）
         self.kind = None
         self._picam = None
         if prefer in ('auto', 'picamera2'):
@@ -175,6 +177,7 @@ class CameraBackend:
                 cfg = self._picam.create_still_configuration(
                     main={'size': (width, height)})
                 self._picam.configure(cfg)
+                self._picam.options['quality'] = quality   # 对 JPEG 生效
                 self._picam.start()
                 time.sleep(1.0)   # 让 AE/AWB 收敛
                 self.kind = 'picamera2'
@@ -189,10 +192,11 @@ class CameraBackend:
         """拍一张存到 path，返回 (ok, capture_time)。capture_time 尽量贴近曝光。"""
         if self.kind == 'picamera2':
             t = time.time()
-            self._picam.capture_file(path)
+            self._picam.capture_file(path)   # 格式由 path 后缀决定
             return True, t
         cmd = ['rpicam-still', '-n', '--immediate', '-t', '200',
                '--width', str(self.width), '--height', str(self.height),
+               '--encoding', self.image_format, '-q', str(self.quality),
                '-o', path]
         try:
             subprocess.run(cmd, check=True, capture_output=True)
@@ -211,11 +215,13 @@ class CameraBackend:
             self._picam.close()
 
 
-def capture_home_snapshot(master, listener):
-    """运行开始时取一次 home/EKF 原点，用于把 local NED 关联到经纬度。"""
-    master.mav.command_long_send(
-        master.target_system, master.target_component,
-        mavutil.mavlink.MAV_CMD_GET_HOME_POSITION, 0, 0, 0, 0, 0, 0, 0, 0)
+def capture_home_snapshot(master, listener, passive=False):
+    """运行开始时取一次 home/EKF 原点，用于把 local NED 关联到经纬度。
+    passive=True 时不向飞控发查询，只看已被动收到的 HOME_POSITION。"""
+    if not passive:
+        master.mav.command_long_send(
+            master.target_system, master.target_component,
+            mavutil.mavlink.MAV_CMD_GET_HOME_POSITION, 0, 0, 0, 0, 0, 0, 0, 0)
     hp = listener.wait_for('HOME_POSITION', timeout=3.0)
     if hp is None:
         return None
@@ -226,7 +232,7 @@ def capture_home_snapshot(master, listener):
 def write_frame(out_dir, frame_no, backend, listener, session_name):
     """拍一张 + 抓位姿快照 + 写 JSON。返回 (record | None)。"""
     name = f'frame_{frame_no:04d}'
-    img_rel = os.path.join('images', name + '.jpg')
+    img_rel = os.path.join('images', f'{name}.{backend.image_format}')
     img_path = os.path.join(out_dir, img_rel)
 
     ok, t_capture = backend.capture(img_path)
@@ -267,26 +273,73 @@ def print_frame_line(rec):
           f"位置{trust} | 位姿龄{att.get('msg_age_s', '?')}s")
 
 
+# 稳定的运行默认值。可被 capture.yaml 覆盖，再被命令行参数覆盖。
+RUNTIME_DEFAULTS = {
+    'out': '~/cylinder_dataset_out',
+    'connection': '/dev/ttyAMA0',
+    'baud': 57600,
+    'width': 1920,
+    'height': 1080,
+    'rate': 15,
+    'backend': 'auto',
+    'image_format': 'jpg',
+    'jpeg_quality': 95,
+}
+
+
+def resolve_runtime(args, script_dir):
+    """合并运行参数：内置默认 < capture.yaml < 命令行。返回 (cfg, calibration)。"""
+    cfg = dict(RUNTIME_DEFAULTS)
+    config_path = args.config or os.path.join(script_dir, 'capture.yaml')
+    file_cfg = {}
+    if os.path.exists(config_path):
+        with open(config_path) as f:
+            file_cfg = yaml.safe_load(f) or {}
+        print(f'加载运行配置: {config_path}')
+    for k in RUNTIME_DEFAULTS:
+        if file_cfg.get(k) is not None:
+            cfg[k] = file_cfg[k]
+    cli = {'out': args.out, 'connection': args.connection, 'baud': args.baud,
+           'width': args.width, 'height': args.height, 'rate': args.rate,
+           'backend': args.backend, 'image_format': args.format,
+           'jpeg_quality': args.quality}
+    for k, v in cli.items():
+        if v is not None:
+            cfg[k] = v
+    return cfg, file_cfg.get('camera_calibration')
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--session', required=True, help='会话 yaml 配置路径')
-    ap.add_argument('--out', default='~/cylinder_dataset_out',
-                    help='数据集输出根目录（默认 ~/cylinder_dataset_out）')
-    ap.add_argument('--connection', default='/dev/ttyAMA0',
-                    help='飞控连接串（默认 /dev/ttyAMA0）')
-    ap.add_argument('--baud', type=int, default=57600)
-    ap.add_argument('--width', type=int, default=1920)
-    ap.add_argument('--height', type=int, default=1080)
-    ap.add_argument('--rate', type=int, default=15,
+    ap.add_argument('--config', default=None,
+                    help='运行配置 yaml（默认脚本旁 capture.yaml，若存在）')
+    # 以下留空则用 capture.yaml / 内置默认；给了就覆盖。
+    ap.add_argument('--out', default=None, help='数据集输出根目录')
+    ap.add_argument('--connection', default=None, help='飞控连接串')
+    ap.add_argument('--baud', type=int, default=None)
+    ap.add_argument('--width', type=int, default=None)
+    ap.add_argument('--height', type=int, default=None)
+    ap.add_argument('--rate', type=int, default=None,
                     help='请求遥测的数据流频率 Hz（越高位姿越新鲜）')
     ap.add_argument('--backend', choices=['auto', 'picamera2', 'rpicam'],
-                    default='auto', help='相机后端')
+                    default=None, help='相机后端')
+    ap.add_argument('--format', choices=['jpg', 'png'], default=None,
+                    help='图像格式；png 无损但大很多')
+    ap.add_argument('--quality', type=int, default=None,
+                    help='JPEG 质量 1-100（png 忽略）')
+    # 以下每次运行本就不同，只走命令行。
     ap.add_argument('--interval', type=float, default=None,
                     help='定时连拍间隔秒；不给则手动逐张（回车触发）')
     ap.add_argument('--count', type=int, default=None,
                     help='连拍模式下最多拍多少张；不给则拍到 Ctrl-C')
+    ap.add_argument('--passive', action='store_true',
+                    help='字节级只读：不请求数据流、不查 home（需飞控已在推流）')
     args = ap.parse_args()
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    cfg, calibration = resolve_runtime(args, script_dir)
 
     with open(args.session) as f:
         session = yaml.safe_load(f)
@@ -294,43 +347,56 @@ def main():
 
     # 每次运行单独一个带时间戳的新文件夹，互不覆盖。
     run_id = datetime.now().strftime('%Y%m%d_%H%M%S')
-    out_dir = os.path.join(os.path.expanduser(args.out),
+    out_dir = os.path.join(os.path.expanduser(cfg['out']),
                            f'{session_name}_{run_id}')
     img_dir = os.path.join(out_dir, 'images')
     os.makedirs(img_dir, exist_ok=True)
     index_path = os.path.join(out_dir, 'index.csv')
 
-    print(f'连接飞控 {args.connection} @ {args.baud} ...')
-    master = mavutil.mavlink_connection(args.connection, baud=args.baud)
+    print(f"连接飞控 {cfg['connection']} @ {cfg['baud']} ...")
+    master = mavutil.mavlink_connection(cfg['connection'], baud=cfg['baud'])
     master.wait_heartbeat()
     print(f'已连上 system {master.target_system} '
           f'component {master.target_component}')
-    master.mav.request_data_stream_send(
-        master.target_system, master.target_component,
-        mavutil.mavlink.MAV_DATA_STREAM_ALL, args.rate, 1)
 
     listener = PoseListener(master)
     listener.start()
 
+    # 只发遥测请求（非控制指令，不会 override AUTO/Stabilize）；--passive 则不发。
+    if not args.passive:
+        master.mav.request_data_stream_send(
+            master.target_system, master.target_component,
+            mavutil.mavlink.MAV_DATA_STREAM_ALL, cfg['rate'], 1)
+
     print('初始化相机 ...')
     backend = CameraBackend(
-        'picamera2' if args.backend == 'picamera2'
-        else ('rpicam-still' if args.backend == 'rpicam' else 'auto'),
-        args.width, args.height)
+        'picamera2' if cfg['backend'] == 'picamera2'
+        else ('rpicam-still' if cfg['backend'] == 'rpicam' else 'auto'),
+        cfg['width'], cfg['height'], cfg['image_format'], cfg['jpeg_quality'])
     print(f'  相机后端: {backend.kind}')
 
-    home = capture_home_snapshot(master, listener)
+    if calibration and calibration.get('resolution') not in (
+            None, [cfg['width'], cfg['height']]):
+        print(f"  !! 警告：拍摄分辨率 {[cfg['width'], cfg['height']]} 与标定分辨率 "
+              f"{calibration.get('resolution')} 不一致，畸变矫正会不准。")
+
+    home = capture_home_snapshot(master, listener, passive=args.passive)
 
     # 运行级元数据只写一份。
     run_meta = {
         'run_id': run_id,
         'started_utc': datetime.now(timezone.utc).isoformat(),
-        'connection': f'{args.connection}@{args.baud}',
-        'resolution': [args.width, args.height],
+        'connection': f"{cfg['connection']}@{cfg['baud']}",
+        'resolution': [cfg['width'], cfg['height']],
         'camera_backend': backend.kind,
+        'image_format': cfg['image_format'],
+        'jpeg_quality': cfg['jpeg_quality'],
+        'passive_readonly': args.passive,
         'mode': 'interval' if args.interval else 'manual',
         'interval_s': args.interval,
         'home_position': home,
+        # 本数据集对应哪份相机标定；原图不矫正，矫正在下游用它离线做。
+        'camera_calibration': calibration,
         'session_meta': session,
     }
     with open(os.path.join(out_dir, 'run_meta.json'), 'w') as mf:

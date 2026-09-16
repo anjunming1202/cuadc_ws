@@ -42,6 +42,22 @@ GPS 3D 锁定后 EKF 位置才可信**。脚本每张都记录 GPS 星数/fix �
    圆筒地面中心相对 home 的偏移（或经纬度）、尺寸等。飞控上报的位置照记，
    但以手测值为地面真值。
 
+### 畸变与压缩
+
+- **畸变**：采集端存**原图（带畸变）**，不做矫正。矫正是**下游 CV 流程**的
+  离线步骤，用 `capture.yaml` 里 `camera_calibration` 引用的那份标定去做；
+  该标定引用会原样写进每次运行的 `run_meta.json`，数据集自描述。
+- **压缩**：`--format jpg|png`、`--quality`（JPEG 质量）控制，属运行参数，
+  默认 `jpg`/95。
+
+### 只读飞控，不干预飞行
+
+脚本对飞控**只发遥测请求**（数据流请求 + 一次性查 home），**不是控制指令**，
+不能解锁/起飞/改模式，**不会 override** 遥控 Stabilize 或 Mission Planner
+AUTO——可以一边用遥控/Mission Planner 飞或保持姿态，一边在 Pi 上采集。
+要**字节级只读**（一个包都不发）可加 `--passive`，但需飞控已在推流
+（Mission Planner 连着、或 `SRx_` 参数设了默认推流）。
+
 ### 相机与图传互斥
 
 `rpicam-still`/picamera2 与 dronelink 的 `dronelink-video` 服务都独占
@@ -62,21 +78,26 @@ pip3 install --user -r capture/requirements.txt   # pymavlink/PyYAML 通常已�
 # 想要最紧同步则装常驻相机后端：
 sudo apt install -y python3-picamera2
 
-sudo systemctl stop dronelink-video               # 释放相机
+sudo systemctl stop dronelink-video               # 释放相机（用 rpicam 后端时）
 
-cp capture/session.example.yaml capture/session.yaml
-#   编辑 session.yaml：填相机↔IMU 外参、各部件相对位置、圆筒位置/尺寸
+# 两份配置各复制一次，改副本（模板不动，副本已 gitignore）：
+cp capture/capture.example.yaml capture/capture.yaml     # 稳定运行参数 + 标定引用，基本一次定
+cp capture/session.example.yaml capture/session.yaml     # 每次采集的外参/部件/圆筒实测
+#   编辑 session.yaml：相机↔IMU 外参、各部件相对位置、圆筒位置/尺寸
 
 # 走正常起飞流程让飞控进入飞行状态、等 GPS 3D 锁定，然后：
-# 手动逐张：
+# 手动逐张（在 SSH 终端按回车拍一张）：
 python3 capture/capture_dataset.py --session capture/session.yaml
 # 定时连拍（每 2s 一张，Ctrl-C 结束）：
 python3 capture/capture_dataset.py --session capture/session.yaml --interval 2
 ```
 
-常用参数：`--out`（输出根目录，默认 `~/cylinder_dataset_out`）、
-`--interval`/`--count`（连拍间隔/张数）、`--backend`（`auto`/`picamera2`/`rpicam`）、
-`--rate`（遥测频率）、`--width`/`--height`。
+**两类参数**：稳定的（串口、分辨率、后端、格式/质量、输出目录、标定引用）
+放 `capture.yaml`，脚本自动加载，不用每次敲；每次不同的（`--interval`/
+`--count`/`--passive`）走命令行。命令行显式给的会覆盖 `capture.yaml`。
+
+**单张采集**：不带 `--interval` 即手动模式——在 SSH 终端按一次回车拍一张，
+图 + `frame_XXXX.json` 存到 Pi 的本次运行目录并追加进 `index.csv`；`q`+回车结束。
 
 ## 数据存哪 / 怎么取回
 

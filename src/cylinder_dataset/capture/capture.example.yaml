@@ -1,0 +1,23 @@
+# 稳定的运行参数 + 相机标定引用。复制成 capture.yaml，脚本会自动加载它，
+# 之后每次运行不用再敲这些命令行参数。命令行显式给的参数仍会覆盖这里。
+# （--interval / --count / --passive 每次运行本就不同，只走命令行，不放这。）
+
+out: "~/cylinder_dataset_out"   # 数据集输出根目录（树莓派本地）
+connection: "/dev/ttyAMA0"      # 飞控串口
+baud: 57600
+width: 1920
+height: 1080
+rate: 15                        # 请求遥测数据流频率 Hz（越高位姿越新鲜）
+backend: "auto"                 # auto | picamera2 | rpicam
+image_format: "jpg"             # jpg | png（png 无损但大很多）
+jpeg_quality: 95                # 1-100，png 时忽略
+
+# 本数据集"对应哪份相机标定"，原样写进每次运行的 run_meta.json，让数据集
+# 自描述。注意：采集端存原图、不做畸变矫正；矫正是下游 CV 流程用这份标定
+# 离线做的一步。分辨率/镜头变了要重标（见 src/dronelink README 的 Calibration）。
+camera_calibration:
+  source: "dronelink IMX519 1920x1080 棋盘格标定"
+  file: "IMX519_1920x1080_calibration.npz"
+  resolution: [1920, 1080]
+  camera_matrix: {fx: 1738.74483, fy: 1742.05062, cx: 972.965849, cy: 520.215881}
+  dist_coeffs: {k1: 0.09691173, k2: -0.46843941, p1: -0.00498614, p2: 0.00222544, k3: 1.18879159}
