@@ -76,6 +76,11 @@ ArduPilot（GUIDED 模式为主）
 规划/视觉测试用）单独维护在 [`field-layout.md`](field-layout.md)，不在
 本文档展开。
 
+机载伴随计算机上「让飞控串口/相机被多消费者共享、并做成仓库管理的开机
+自启」的运行时设计（传输底座 + 消费者 + profile 自启，非 ROS 底座、ROS
+按需消费）单独维护在 [`onboard-runtime.md`](onboard-runtime.md)——它是上述
+数据流赖以运行的机载管道层，各模块所连的 MAVLink/相机端点由它提供。
+
 ## 非目标
 
 不覆盖：飞控内部调参（PID、Failsafe 配置等）、机体结构设计、电源/供电
