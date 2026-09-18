@@ -2,3 +2,6 @@
 capture/session.yaml
 capture/capture.yaml
 capture/grid.yaml
+
+# 采集产物（数据集），只放不入库
+data/
