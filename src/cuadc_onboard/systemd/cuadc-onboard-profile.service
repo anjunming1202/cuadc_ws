@@ -1,0 +1,13 @@
+[Unit]
+Description=cuadc_onboard profile applier (start consumers per /etc/cuadc-onboard/profile)
+# 底座起来后跑一次，按 profile 决定额外拉起哪些消费者。profile=none 时什么都不做。
+After=cuadc-onboard-fanout.service cuadc-onboard-camera.service
+Wants=cuadc-onboard-fanout.service cuadc-onboard-camera.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/cuadc-onboard/apply-profile.sh
+
+[Install]
+WantedBy=multi-user.target

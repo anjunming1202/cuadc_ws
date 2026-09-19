@@ -19,20 +19,23 @@
 ## 核心架构：底座 + 消费者，自启分两层
 
 ```
-① 底座层（无条件开机自启 · 不主动向地面发任何东西）
+① 底座层（无条件开机自启）
    mav_fanout      独占串口 → 主动 keepalive 喂活飞控 → 原始 MAVLink 推到本地 UDP 端点（14550/14551…）
-   camera(gst)     独占相机 → 本地 RTP tee（5602）
-   ground-bus      被动转发器：本地 5700 有人投才转发到地面，否则空管道
+   camera(gst)     独占相机 → tee：本地 RTP（5602）+ 地面 RTP（192.168.50.2:5600）
+   ground-bus      （预留）被动转发器：本地 5700 有人投才转发到地面，否则空管道
    network/AP、eth 链路
 
 ② 消费者层（profile 选择性自启，或手动跑；都只连端点，不碰硬件）
    数传发送 / 图传转发到地面 / dataset 采集 / CV 脚本 / cuadc_interface …
 ```
 
-**底座不向地面发**：它把硬件变成本地端点（并主动 keepalive 喂活飞控数据流——
-这块飞控要有人持续请求才一直发），但**自己不往地面发任何东西**。所以底座
-起来、没有消费者时，地面站的 HUD 是空的、没有画面——要地面看到东西，必须
-①机载有消费者在产出/转发，或②地面反向发（MAVLink 天生双向）。
+**底座基本不向地面发**：它把硬件变成本地端点（并主动 keepalive 喂活飞控
+数据流——这块飞控要有人持续请求才一直发），**不往地面发任何有状态数据**
+（遥测 HUD、CV 结果等一律由消费者产出）。唯一例外是 **camera tee 的地面分支**
+（→192.168.50.2:5600）：视频 RTP 无状态、没人收就是丢包无害，且监看机常态
+就要出图，与 dronelink-video 一致，故并进 base 的相机管线、不单列消费者。
+因此底座起来、无消费者时，地面**有画面但 HUD 是空的**——遥测/CV 等要地面
+看到，仍须①机载有消费者在产出/转发，或②地面反向发（MAVLink 天生双向）。
 
 **底座对 ROS 一无所知**。消费者是否 ROS 化是它自己的私事：`cuadc_interface`
 读同一个 MAVLink 端点后 republish 成 ROS 话题，普通脚本读同一个端点直接
@@ -74,8 +77,13 @@
 | profile | 开机自启的消费者 | 场景 |
 |---|---|---|
 | `none` | 无（只起底座） | 日常开发：消费者全手动跑 |
-| `ground-monitor` | 数传发送 + 图传转发到地面 | 外场一通电，地面站就有画面+遥测 |
+| `ground-monitor` | 数传发送（图传→地面已在 base camera tee 里） | 外场一通电，地面站就有画面+遥测 |
 | `mission` | 任务侧 bringup（**按名引用**） | 比赛：无人值守、栈内等"开始"信号 |
+
+profile 落地为一行运行态设置 + 一个 oneshot applier：`/etc/cuadc-onboard/profile`
+写一个词，`apply-profile.sh`（由 `cuadc-onboard-profile.service` 在底座起来后跑一次）
+按名 `systemctl start` 对应消费者单元。消费者单元装了但不 enable，起不起全看 profile；
+改 profile = 编辑该文件 + `systemctl restart cuadc-onboard-profile`（或整机重启）。
 
 - **dataset 采集、CV 调试不是 profile**：它们是**有意识手动跑的消费者**
   （采集每次还要填 session.yaml、定间隔/张数），压在常驻底座上手动跑。
@@ -150,6 +158,7 @@ ROS 边界上需要、一个管所有；不进 ROS 的数据（采集脚本、�
 
 ## 开放问题
 
-- camera tee 的具体 gst 管线参数（借鉴 dronelink-video 重写）。
-- ground-bus 的 topic 命名空间细节与 viewer 通用兜底的展示形态。
-- `deploy.sh` 的具体形态（幂等安装/回滚）。
+- ground-bus（本地 5700 → 地面的 topic 转发器）尚未实现：里程碑链路（图传+
+  遥测+采集）都不经它——遥测由数传消费者直发地面。等真出现要走总线的自定义
+  数据（如 CV 结果上传）再补，届时定 topic 命名空间与 viewer 通用兜底展示。
+- 回程通道 `:5701` 仅预留监听，未接具体消费者。

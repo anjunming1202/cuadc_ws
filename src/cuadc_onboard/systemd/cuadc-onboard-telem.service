@@ -1,0 +1,17 @@
+[Unit]
+Description=cuadc_onboard telemetry sender (fanout UDP -> ground JSON)
+# 消费者：读扇出端点、发地面 HUD JSON。由 profile applier 按 ground-monitor 拉起。
+After=cuadc-onboard-fanout.service
+Wants=cuadc-onboard-fanout.service
+
+[Service]
+Type=simple
+User=wly
+# 读扇出 14550（不碰串口），发 DroneLink(192.168.50.2)+以太网(10.10.10.2) 的 5701/5601。
+# 脚本自带重连兜底：扇出还没喂到心跳时它会退避重试，不需要额外等待。
+ExecStart=/home/wly/dronelink-venv/bin/python3 /opt/cuadc-onboard/telem_ground.py --device udpin:127.0.0.1:14550 --dest-host 192.168.50.2,10.10.10.2 --dest-ports 5701,5601 --hz 10
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
