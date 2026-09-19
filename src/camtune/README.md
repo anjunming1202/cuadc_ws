@@ -11,26 +11,37 @@
 - 相机是**独占**资源:先停图传底座,跑完再起。停/起 tee 安全(相机没有飞控串口
   那种交接卡死问题)。
 
-## 用法
+## 用法（两阶段:先找焦、再调快门）
 
+相机独占,先 `sudo systemctl stop cuadc-onboard-camera`,跑完 `... start`。
+
+**① 找焦**(固定一档亮的快门/增益,扫对焦,对准已知距离静止标靶):
 ```bash
-sudo systemctl stop  cuadc-onboard-camera          # 让出相机
-cd src/camtune       # 或 Pi 上对应路径
-python3 tune_shutter.py \
-    --shutters 500,1000,2000,4000,8000 \           # µs;1/2000s≈500µs
-    --gains 1,4,8 \
-    --lens-position 1.0 \                           # 屈光度:1m→1.0、0.5m→2.0、∞→0
-    --frames 3
-sudo systemctl start cuadc-onboard-camera          # 恢复图传
+python3 ~/camtune/tune_shutter.py \
+    --lens-positions 0,0.5,1,1.5,2,3 \   # 扫对焦屈光度
+    --shutters 4000 --gains 8 --frames 1 \
+    --distance 1.0                        # 本次标靶实际距离(m),用于建 距离→对焦 表
+```
+在近端(如 0.5m)和远端(如 4m)各跑一次,取每个距离 `lap_var` 峰值的 lens 值 →
+得"距离→对焦"表。若一个固定焦(景深)就盖住 0.5–4m,取之;否则这表就是**动态
+命令式对焦**(按 AGL/分区命令 lens position,非自动对焦)的查表。
+
+**② 调快门**(锁定对焦后,扫快门/增益):
+```bash
+python3 ~/camtune/tune_shutter.py \
+    --lens-positions 1.0 \                # 上一步定的固定焦
+    --shutters 300,500,1000,2000,4000 \   # 300µs≈1/3333s … 4000µs≈1/250s
+    --gains 4,8,16 --frames 4
 ```
 
-每次运行生成 `~/camtune_out/sweep_<时间>/`:各档图像 + `index.csv`
-(`shutter_us,gain,frame,lap_var,brightness,file`)。
+每次生成 `~/camtune_out/sweep_<时间>/`:各档图像 + `index.csv`
+(`distance_m,lens_pos,shutter_us,gain,frame,lap_var,brightness,file`)。
 
 ## 台架怎么摆
 
 - 相机**固定**(三脚架),只让**节拍器**动;摆臂上贴**高对比标记**。
-- **对焦先对准目标距离**(设 `--lens-position`),否则清晰度会被跑焦搅乱。
+- **先做①找焦**定好对焦(`--lens-positions`),否则清晰度会被跑焦搅乱。关 AF、
+  用命令式对焦(见下)——不要连续自动对焦(会 hunting、延迟、废帧)。
 - 一次扫描**光照恒定**,否则亮度变化混淆快门效果。
 - 节拍器速度尽量接近飞行的像面速度(见 spec 的 `v_px`);拿不准就多设几档。
 

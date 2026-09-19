@@ -70,11 +70,13 @@ def _nums(s: str, typ):
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="IMX519 台架快门/增益/对焦扫描")
+    ap.add_argument("--lens-positions", default="0",
+                    help="逗号分隔对焦屈光度扫描;单值=固定焦。0=∞、1m→1.0、0.5m→2.0")
     ap.add_argument("--shutters", default="500,1000,2000,4000,8000",
                     help="逗号分隔曝光时间(µs);1/2000s≈500µs、1/1000s≈1000µs")
     ap.add_argument("--gains", default="1,4,8", help="逗号分隔模拟增益")
-    ap.add_argument("--lens-position", type=float, default=0.0,
-                    help="对焦屈光度(0=∞;对 1m 用 1.0、0.5m 用 2.0)——先对准目标距离")
+    ap.add_argument("--distance", type=float, default=None,
+                    help="本次标靶已知距离(m),仅作标签,用于建『距离→对焦』表")
     ap.add_argument("--frames", type=int, default=3,
                     help="每档拍几帧(运动相位不同,取最糊那张看)")
     ap.add_argument("--width", type=int, default=1920)
@@ -86,45 +88,49 @@ def main() -> None:
     session = os.path.join(os.path.expanduser(args.out),
                            datetime.now().strftime("sweep_%Y%m%d_%H%M%S"))
     os.makedirs(session, exist_ok=True)
+    lens_positions = _nums(args.lens_positions, float)
     shutters = _nums(args.shutters, int)
     gains = _nums(args.gains, float)
+    dist = "" if args.distance is None else f"{args.distance:g}"
     print(f"输出: {session}")
-    print(f"扫描: shutters(µs)={shutters}  gains={gains}  lens={args.lens_position}  "
-          f"每档 {args.frames} 帧\n")
+    print(f"扫描: lens={lens_positions}  shutters(µs)={shutters}  gains={gains}  "
+          f"distance={dist or '-'}m  每档 {args.frames} 帧\n")
 
     rows: list[tuple] = []
-    agg: dict[tuple[int, float], list[float]] = {}
-    for g in gains:
-        for sh in shutters:
-            sharps = []
-            for i in range(args.frames):
-                name = f"sh{sh}_g{g:g}_{i}.jpg"
-                path = os.path.join(session, name)
-                try:
-                    capture(exe, path, sh, g, args.lens_position, args.width, args.height)
-                except RuntimeError as e:
-                    print(f"[FAIL] {name}: {e}", file=sys.stderr)
-                    continue
-                m = frame_metrics(path)
-                if m is None:
-                    continue
-                sharp, bright = m
-                sharps.append(sharp)
-                rows.append((sh, g, i, round(sharp, 1), round(bright, 1), name))
-            if sharps:
-                agg[(sh, g)] = sharps
-                print(f"shutter={sh:5d}µs gain={g:<4g} "
-                      f"sharp[min/mean]={min(sharps):8.1f}/{sum(sharps)/len(sharps):8.1f}")
+    for lp in lens_positions:
+        for g in gains:
+            for sh in shutters:
+                sharps = []
+                for i in range(args.frames):
+                    name = f"lp{lp:g}_sh{sh}_g{g:g}_{i}.jpg"
+                    path = os.path.join(session, name)
+                    try:
+                        capture(exe, path, sh, g, lp, args.width, args.height)
+                    except RuntimeError as e:
+                        print(f"[FAIL] {name}: {e}", file=sys.stderr)
+                        continue
+                    m = frame_metrics(path)
+                    if m is None:
+                        continue
+                    sharp, bright = m
+                    sharps.append(sharp)
+                    rows.append((dist, lp, sh, g, i,
+                                 round(sharp, 1), round(bright, 1), name))
+                if sharps:
+                    print(f"lens={lp:<4g} shutter={sh:5d}µs gain={g:<4g} "
+                          f"sharp[min/mean]={min(sharps):8.1f}/{sum(sharps)/len(sharps):8.1f}")
 
     with open(os.path.join(session, "index.csv"), "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["shutter_us", "gain", "frame", "lap_var", "brightness", "file"])
+        w.writerow(["distance_m", "lens_pos", "shutter_us", "gain", "frame",
+                    "lap_var", "brightness", "file"])
         w.writerows(rows)
 
     print(f"\n存了 {len(rows)} 帧 + index.csv 于 {session}")
-    print("怎么看:①肉眼看节拍器标记的条纹——越短越好(运动模糊的直接量);")
-    print("       ②lap_var 越大越锐,但只在亮度相近时比(暗帧锐度天然低);")
-    print("       ③亮度太低=该档进光不够,要么升增益(噪声)、要么加光/放长快门。")
+    print("【找焦】固定一档亮的快门/增益、扫 --lens-positions、对准已知距离标靶(给 --distance),")
+    print("       取 lap_var 峰值的 lens 值=该距离对焦;多测几个距离 = 距离→对焦 标定表。")
+    print("【调快门】锁定对焦后扫 --shutters:①肉眼看运动条纹越短越好;")
+    print("        ②lap_var 只在亮度相近时比;③亮度太低=进光不够,升增益/加光/放长快门 权衡。")
 
 
 if __name__ == "__main__":
