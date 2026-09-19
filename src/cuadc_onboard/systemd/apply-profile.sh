@@ -9,6 +9,16 @@ profile="none"
 [ -r "$PROFILE_FILE" ] && profile="$(tr -d '[:space:]' < "$PROFILE_FILE")"
 echo "cuadc-onboard profile: ${profile:-none}"
 
+# 本模块受管的「消费者」单元。切 profile 时先全停、再按 profile 起需要的，
+# 使 applier 成为「把状态收敛到 profile」的幂等操作：改完 profile 文件跑
+# `systemctl restart cuadc-onboard-profile` 就即时生效，不必重启整机。
+# 新增消费者：把其单元加进这里 + 下面对应 profile 的 case 分支。
+KNOWN_CONSUMERS=(cuadc-onboard-telem.service)
+
+for u in "${KNOWN_CONSUMERS[@]}"; do
+  systemctl stop "$u" 2>/dev/null || true
+done
+
 case "${profile:-none}" in
   none)
     : # 只跑底座，消费者全手动
