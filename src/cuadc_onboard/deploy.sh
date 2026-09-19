@@ -21,6 +21,7 @@ fi
 install -d "$OPT" "$ETC"
 install -m 0755 "$SRC_DIR/scripts/mav_fanout.py"     "$OPT/mav_fanout.py"
 install -m 0755 "$SRC_DIR/scripts/telem_ground.py"   "$OPT/telem_ground.py"
+install -m 0755 "$SRC_DIR/scripts/camera_service.py" "$OPT/camera_service.py"
 install -m 0755 "$SRC_DIR/systemd/apply-profile.sh"  "$OPT/apply-profile.sh"
 
 for u in "$SRC_DIR"/systemd/*.service; do
@@ -37,6 +38,7 @@ fi
 systemctl daemon-reload
 systemctl enable cuadc-onboard-fanout.service \
                  cuadc-onboard-camera.service \
+                 cuadc-onboard-video-forward.service \
                  cuadc-onboard-profile.service
 
 echo

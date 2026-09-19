@@ -1,0 +1,16 @@
+[Unit]
+Description=cuadc_onboard video forward (local 5603 -> ground 5600)
+# 纯中继:收本地 5603 的 H264/RTP 包,原样转寄地面 viewer。全系统唯一"发地面"处;
+# 相机服务只产本地端点,任何生产者投到 5603 都经这里上地面。
+After=cuadc-onboard-camera.service
+Wants=cuadc-onboard-camera.service
+
+[Service]
+Type=simple
+User=wly
+ExecStart=/usr/bin/gst-launch-1.0 udpsrc port=5603 ! udpsink host=192.168.50.2 port=5600 sync=false async=false
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -1,14 +1,15 @@
 [Unit]
-Description=cuadc_onboard camera (H264/RTP tee: ground + local)
-# 网络层沿用现 dronelink-network；相机独占，tee 一路发地面图传、一路给本地消费者。
+Description=cuadc_onboard controllable camera service (H264/RTP tee + runtime controls)
+# 相机独占;编码 H264 tee 到本地 5602(CV/采集/调参)+ 5603(video-forward 转地面)。
+# 运行时可控:监听 5610 收 JSON 改曝光/增益/对焦(libcamerasrc runtime 属性)。
+# 发地面不在这里,由 cuadc-onboard-video-forward(读 5603→5600)唯一负责。
 After=network.target
 
 [Service]
 Type=simple
 User=wly
 Environment=GST_PLUGIN_PATH=/usr/local/lib/aarch64-linux-gnu/gstreamer-1.0
-# 1080p@30 H.264 低延迟；tee：t.→地面 192.168.50.2:5600，t.→本地 127.0.0.1:5602（采集用 rtp 后端读）。
-ExecStart=/usr/bin/gst-launch-1.0 libcamerasrc ! video/x-raw,format=NV12,width=1920,height=1080,framerate=30/1 ! x264enc tune=zerolatency speed-preset=ultrafast bitrate=6000 key-int-max=30 byte-stream=true bframes=0 rc-lookahead=0 sync-lookahead=0 sliced-threads=true ! h264parse config-interval=-1 ! rtph264pay config-interval=1 pt=96 ! tee name=t t. ! queue ! udpsink host=192.168.50.2 port=5600 sync=false async=false t. ! queue ! udpsink host=127.0.0.1 port=5602 sync=false async=false
+ExecStart=/usr/bin/python3 /opt/cuadc-onboard/camera_service.py
 Restart=on-failure
 RestartSec=3
 
