@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
 """cuadc_onboard 传输底座：飞控串口 ↔ 多个本地 UDP 端点的原始 MAVLink 扇出。
 
-独占 /dev/ttyAMA0，把飞控原始 MAVLink 字节**主动推**到每个本地 UDP 端点；
-反向把消费者发来的字节写回串口。不解析、不重编码，所有消息类型原样透传。
+串口侧用 **mavutil**（与 dronelink-telemetry 同一套经过验证的做法）：
+`mavlink_connection` 打开串口（pyserial 默认拉高 DTR/RTS——这块飞控要拉高才发）、
+等首个心跳、再请求各数据流并周期性重请求，把飞控"喂活"。读到消息后把**原始
+字节** `get_msgbuf()` 主动推给每个本地 UDP 端点；反向把消费者字节写回串口。
 
-**主动 keepalive**：扇出自己周期性给飞控发心跳 + 请求数据流，把飞控"喂活"
-（这块 ArduPilot 的数据流要有人持续请求才会一直发）。这样消费者哪怕是纯
-"先读后写"（如 cuadc_interface）也能立刻收到稳定的遥测流，不必自己先请求。
+消费者用 `udpin:127.0.0.1:<port>`（绑定即收，语义等同 mavproxy `--out`），
+即使"先读后写"的消费者（如 cuadc_interface）也立刻收到稳定流。
 
-消费者用 `udpin:127.0.0.1:<port>`（绑定该端口收）连一个端点，语义等同 mavproxy
-`--out=udp:127.0.0.1:<port>`。
-
-为什么不用 mavlink-router：这块飞控只有 DTR 或 RTS 拉高时才发（两条都低就哑）；
-pyserial 打开串口默认把两条都拉高，mavlink-router 不拉 → 读不到。
+为什么不用 mavlink-router / 裸 pyserial keepalive：见 ADR-0004（DTR/RTS 线状态、
+以及这块飞控要有人用 mavutil 那套请求序列持续喂才稳定发）。
 """
 from __future__ import annotations
 
@@ -22,23 +20,30 @@ import socket
 import sys
 import time
 
-import serial
 from pymavlink import mavutil
 
+_STREAMS = (
+    mavutil.mavlink.MAV_DATA_STREAM_RAW_SENSORS,
+    mavutil.mavlink.MAV_DATA_STREAM_EXTENDED_STATUS,
+    mavutil.mavlink.MAV_DATA_STREAM_RC_CHANNELS,
+    mavutil.mavlink.MAV_DATA_STREAM_POSITION,
+    mavutil.mavlink.MAV_DATA_STREAM_EXTRA1,
+    mavutil.mavlink.MAV_DATA_STREAM_EXTRA2,
+    mavutil.mavlink.MAV_DATA_STREAM_EXTRA3,
+)
 
-def open_serial(dev: str, baud: int) -> serial.Serial:
-    s = serial.Serial()
-    s.port = dev
-    s.baudrate = baud
-    s.timeout = 0
-    s.dtr = True   # 关键：这块飞控 DTR/RTS 都低才哑，拉高才发
-    s.rts = True
-    s.open()
-    return s
+
+def request_streams(m, rate: int) -> None:
+    sysid = m.target_system or 1
+    compid = m.target_component or 1
+    m.mav.request_data_stream_send(
+        sysid, compid, mavutil.mavlink.MAV_DATA_STREAM_ALL, rate, 1)
+    for s in _STREAMS:
+        m.mav.request_data_stream_send(sysid, compid, s, rate, 1)
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Active MAVLink serial<->UDP fanout")
+    ap = argparse.ArgumentParser(description="MAVLink serial<->UDP fanout (mavutil)")
     ap.add_argument("--serial", default="/dev/ttyAMA0")
     ap.add_argument("--baud", type=int, default=57600)
     ap.add_argument("--udp", default="14550,14551",
@@ -52,63 +57,81 @@ def main() -> None:
     socks = [socket.socket(socket.AF_INET, socket.SOCK_DGRAM) for _ in ports]
     for u in socks:
         u.setblocking(False)
-    print(f"fanout(active): {args.serial}@{args.baud} -> udp {dests}", flush=True)
+    print(f"fanout(mavutil): {args.serial}@{args.baud} -> udp {dests}", flush=True)
 
-    ser: serial.Serial | None = None
-    mav = None
+    m = None
     backoff = 1.0
     last_req = 0.0
     while True:
-        if ser is None:
+        if m is None:
             try:
-                ser = open_serial(args.serial, args.baud)
-                mav = mavutil.mavlink.MAVLink(ser, srcSystem=250, srcComponent=190)
-                backoff = 1.0
-                last_req = 0.0
-                print(f"serial opened {args.serial}", flush=True)
+                m = mavutil.mavlink_connection(
+                    args.serial, baud=args.baud,
+                    source_system=250, source_component=190)
             except Exception as exc:
-                print(f"serial open failed: {exc}; retry {backoff:.1f}s",
-                      file=sys.stderr, flush=True)
+                print(f"open failed: {exc}; retry {backoff:.1f}s", file=sys.stderr, flush=True)
                 time.sleep(backoff)
                 backoff = min(10.0, backoff * 1.5)
                 continue
+            print("waiting for heartbeat ...", flush=True)
+            if m.wait_heartbeat(timeout=30) is None:
+                print("no heartbeat; reopening", file=sys.stderr, flush=True)
+                try:
+                    m.close()
+                except Exception:
+                    pass
+                m = None
+                continue
+            request_streams(m, args.rate)
+            last_req = time.monotonic()
+            backoff = 1.0
+            print(f"connected sys={m.target_system}; streams requested", flush=True)
+
         try:
             now = time.monotonic()
-            if now - last_req > 2.0:  # keepalive：喂活飞控的数据流
-                try:
-                    mav.heartbeat_send(mavutil.mavlink.MAV_TYPE_GCS,
-                                       mavutil.mavlink.MAV_AUTOPILOT_INVALID, 0, 0, 0)
-                    mav.request_data_stream_send(
-                        1, 0, mavutil.mavlink.MAV_DATA_STREAM_ALL, args.rate, 1)
-                except Exception as exc:
-                    print(f"keepalive send error: {exc}", file=sys.stderr, flush=True)
+            if now - last_req > 2.0:  # 持续重请求，喂活数据流
+                request_streams(m, args.rate)
                 last_req = now
 
-            rlist = [ser.fileno()] + [u.fileno() for u in socks]
+            serial_fd = getattr(m, "fd", None)
+            rlist = [u.fileno() for u in socks]
+            if serial_fd is not None:
+                rlist.append(serial_fd)
             ready, _, _ = select.select(rlist, [], [], 0.5)
+
+            # 消费者 -> 串口
             for u in socks:
                 if u.fileno() in ready:
                     try:
                         data, _ = u.recvfrom(65535)
-                        ser.write(data)
+                        m.write(data)
                     except OSError:
                         pass
-            if ser.fileno() in ready:
-                data = ser.read(4096)
-                if data:
+
+            # 串口 -> 消费者（读解析后转发原始字节；容错 pymavlink 偶发 quirk）
+            if serial_fd is None or serial_fd in ready:
+                for _ in range(500):
+                    try:
+                        msg = m.recv_match(blocking=False)
+                    except Exception:
+                        continue  # 跳过个别消息的 pymavlink post_message quirk
+                    if msg is None:
+                        break
+                    if msg.get_type() == "BAD_DATA":
+                        continue
+                    buf = msg.get_msgbuf()
                     for u, dest in zip(socks, dests):
                         try:
-                            u.sendto(data, dest)
+                            u.sendto(buf, dest)
                         except OSError:
                             pass
         except Exception as exc:
-            print(f"loop error: {exc}; reopening serial", file=sys.stderr, flush=True)
+            print(f"loop error: {exc}; reopening", file=sys.stderr, flush=True)
             try:
-                ser.close()
+                m.close()
             except Exception:
                 pass
-            ser = None
-            mav = None
+            m = None
             time.sleep(0.5)
 
 

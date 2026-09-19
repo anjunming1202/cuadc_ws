@@ -21,13 +21,14 @@ mavlink-router 不打补丁用不了：
 
 ## Decision
 
-传输底座改用**自写的主动式 MAVLink 扇出** `mav_fanout.py`（pyserial + 原始
-字节透传）：
+传输底座改用**自写的主动式 MAVLink 扇出** `mav_fanout.py`，串口侧用 **mavutil**
+（与 dronelink-telemetry 同一套经验证的做法）：
 
-- 用 pyserial 开串口（默认拉高 DTR/RTS，解决控制线问题）。
-- 周期性向飞控发心跳 + 请求数据流（keepalive，喂活数据流）。
-- 把串口原始 MAVLink 字节主动推到多个本地 UDP 端点，反向把消费者的字节写回
-  串口；不解析、不重编码，全消息类型透传。
+- `mavutil.mavlink_connection` 开串口（pyserial 默认拉高 DTR/RTS，解决控制线
+  问题）、`wait_heartbeat`、再请求各数据流并周期性重请求（喂活数据流）。
+  实测这块飞控只有走这套请求序列才稳定发（单纯 request_data_stream ALL 唤不动）。
+- 读到消息后把**原始字节** `get_msgbuf()` 主动推到多个本地 UDP 端点，反向把
+  消费者字节写回串口；不重编码，全消息类型透传（转发完整帧，消费者解析干净）。
 - 消费者用 `udpin:127.0.0.1:<port>` 绑定收，语义等同 mavproxy `--out`；即使
   "先读后写"的消费者（如 `cuadc_interface`）也能立刻收到稳定流。
 
@@ -40,4 +41,10 @@ mavlink-router 不打补丁用不了：
 - 单消费者场景多一跳本地 UDP（延迟 <1ms 可忽略）；真要单消费者也可让消费者
   直接连串口、不经底座（连接串参数切换即可，未锁死）。
 - 实测（2026-09-19，真机）：两个 read-first `udpin` 消费者经扇出同时读，各
-  收到 810 条/6s 全套遥测（ATTITUDE/GPS/SYS_STATUS…），共存成立。
+  收到 ~674 条/5s 全套遥测（ATTITUDE/GPS/SYS_STATUS…，recv_errs=0），共存成立。
+- **串口交接会把这块飞控弄卡**：一个进程释放串口、另一个重开，飞控 telem 口会
+  卡住（收不到心跳），需给飞控断电重启才恢复；proven 的 dronelink-telemetry
+  代码一样中招，非本实现的 bug。**推论**：扇出必须做**唯一、常驻**的串口持有者
+  ——开机对着刚上电的飞控开一次、之后一直不放；所有消费者只走 UDP 端点，永不
+  碰串口，因此正常运行中**没有交接、不会卡**。迁移也因此不能"热交接"，须
+  "改配置 + 整机断电重启"让扇出对新鲜飞控开串口（见 onboard-runtime.md 部署）。
