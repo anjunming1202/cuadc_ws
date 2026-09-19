@@ -1,0 +1,17 @@
+[Unit]
+Description=cuadc_onboard MAVLink fanout (serial <-> local UDP)
+# 网络层沿用现 dronelink-network/eth0-100m；串口在多用户态后就绪，脚本自带重连兜底。
+After=network.target
+
+[Service]
+Type=simple
+User=wly
+# 上电后给 USB-serial / 飞控几秒（欠压重启慢）。
+ExecStartPre=/bin/sleep 5
+# 路径由 deploy.sh 落位：脚本装到 /opt/cuadc-onboard/，复用带 pymavlink/pyserial 的 venv。
+ExecStart=/home/wly/dronelink-venv/bin/python3 /opt/cuadc-onboard/mav_fanout.py --udp 14550,14551
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

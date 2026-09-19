@@ -19,8 +19,8 @@
 ## 核心架构：底座 + 消费者，自启分两层
 
 ```
-① 底座层（无条件开机自启 · 纯本地 · 不主动向地面发任何东西）
-   mavlink-router  独占串口 → 本地 MAVLink UDP 端点（14550/14551…）
+① 底座层（无条件开机自启 · 不主动向地面发任何东西）
+   mav_fanout      独占串口 → 主动 keepalive 喂活飞控 → 原始 MAVLink 推到本地 UDP 端点（14550/14551…）
    camera(gst)     独占相机 → 本地 RTP tee（5602）
    ground-bus      被动转发器：本地 5700 有人投才转发到地面，否则空管道
    network/AP、eth 链路
@@ -29,10 +29,10 @@
    数传发送 / 图传转发到地面 / dataset 采集 / CV 脚本 / cuadc_interface …
 ```
 
-**底座纯本地**：它只把硬件变成本地端点，**自己不产出、不往地面发**。
-所以底座起来、没有消费者时，地面站的 HUD 是空的、没有画面——要地面看到
-东西，必须①机载有消费者在产出/转发，或②地面反向发（MAVLink 天生双向）。
-（面向地面的 MAVLink 端点配成"对方先说话才转发"，没人连时底座也不吐。）
+**底座不向地面发**：它把硬件变成本地端点（并主动 keepalive 喂活飞控数据流——
+这块飞控要有人持续请求才一直发），但**自己不往地面发任何东西**。所以底座
+起来、没有消费者时，地面站的 HUD 是空的、没有画面——要地面看到东西，必须
+①机载有消费者在产出/转发，或②地面反向发（MAVLink 天生双向）。
 
 **底座对 ROS 一无所知**。消费者是否 ROS 化是它自己的私事：`cuadc_interface`
 读同一个 MAVLink 端点后 republish 成 ROS 话题，普通脚本读同一个端点直接
@@ -44,7 +44,7 @@
 
 | 资源 | 端点 | 协议 | 用法 |
 |---|---|---|---|
-| 飞控 MAVLink | `udp:127.0.0.1:14550` / `14551` / … | MAVLink | 每个消费者连一个，读遥测；授权者可写指令（自主飞行走这条） |
+| 飞控 MAVLink | `udpin:127.0.0.1:14550` / `14551` / … | MAVLink | 每个消费者绑定一个即收（扇出主动推流）；授权者可写指令（自主飞行走这条） |
 | 相机本地帧 | `udp:127.0.0.1:5602` | H.264/RTP | GStreamer/ffmpeg 取帧，**不开相机** |
 | 图传→地面 | `192.168.50.2:5600` | H.264/RTP | 地面 viewer；由"图传转发"消费者产生，非底座 |
 | 地面数据总线 | `udp:127.0.0.1:5700` | JSON datagram（含 `topic`） | 要往地面发的数据投这里，底座按 topic 转发到地面 |
@@ -53,7 +53,7 @@
 
 三种典型用法：
 
-- **读飞控**：`mavutil.mavlink_connection('udp:127.0.0.1:14550')` 取代
+- **读飞控**：`mavutil.mavlink_connection('udpin:127.0.0.1:14550')` 取代
   `('/dev/ttyAMA0', baud=57600)`，下游不变，且不再独占串口。
 - **取相机帧**：从 `:5602` 的本地 RTP 取，不碰相机。
 - **往地面发自定义数据**：`bus.send({"topic": "cv/cylinder", ...})`。加一路
@@ -88,9 +88,8 @@
 
 ```
 src/cuadc_onboard/
-  scripts/   通信程序（数传发送 / ground-bus / 图传转发…）—— 不知 systemd 存在，能手动跑
+  scripts/   通信程序（mav_fanout / 数传发送 / ground-bus / 图传转发…）—— 不知 systemd 存在，能手动跑
   systemd/   自启薄壳：单元 ExecStart 指向 scripts/；base target + 各 profile
-  config/    mavlink-router 配置等
   deploy.sh  装到 Pi 系统路径并 enable 底座
 ```
 
@@ -115,7 +114,7 @@ config（profile）保持小而稳。地面 viewer 做**通用兜底**：不认�
 ## 部署
 
 - 单元落 `/etc/systemd/system/`、配置落 `/etc/cuadc-onboard/`；base target
-  无条件 enable，用 `After=`/`Wants=` 声明顺序（AP/eth → mavlink-router →
+  无条件 enable，用 `After=`/`Wants=` 声明顺序（AP/eth → mav_fanout →
   camera → ground-bus）；profile 由 `/etc/cuadc-onboard/profile` 选。
 - 迁移：先 **disable Pi 上仓库外的 4 个 dronelink 服务**，能力由本模块对应
   单元接管；其中 `dronelink-network`/`eth0-100m` 承载现场 SSH，迁移须保证
@@ -139,6 +138,9 @@ ROS 边界上需要、一个管所有；不进 ROS 的数据（采集脚本、�
   **不导入**；本模块在 master 谱系上新写。
 - 任务侧 bringup 已存在（master 上按场景拆分的脚本），`mission` profile 指
   过去即可，不重造。
+- 底座为何用**自写 MAVLink 扇出**（`mav_fanout.py`）而非 mavlink-router——真机
+  上的 DTR/RTS 串口控制线与数据流 keepalive 原因——见
+  [ADR-0004](adr/0004-onboard-transport-custom-fanout.md)。
 
 ## 非目标
 
