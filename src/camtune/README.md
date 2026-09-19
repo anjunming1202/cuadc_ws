@@ -13,11 +13,19 @@
 
 ## 用法（两阶段:先找焦、再调快门）
 
-相机独占,先 `sudo systemctl stop cuadc-onboard-camera`,跑完 `... start`。
+两种后端,同一套扫描/找焦/CSV:
+
+- **控制器模式(推荐,加 `--via-service`)**:不占相机。相机由常驻 `camera-service`
+  持有、仍推地面(`profile=ground-monitor` 时 `video-forward` 在跑);脚本往控制口
+  5610 发参数、从 5602 读帧。→ **不停 tee,边扫边在地面 viewer 实时看,同时本地出数据。**
+- **独占模式(离线兜底)**:`sudo systemctl stop cuadc-onboard-camera` 后用 rpicam-still
+  自己占相机;跑完 `... start`。没有相机服务时用。
+
+下面命令加不加 `--via-service` 决定走哪种;两阶段(先找焦、再调快门)对两者一样。
 
 **① 找焦**(固定一档亮的快门/增益,扫对焦,对准已知距离静止标靶):
 ```bash
-python3 ~/camtune/tune_shutter.py \
+python3 ~/camtune/tune_shutter.py --via-service \
     --lens-positions 0,0.5,1,1.5,2,3 \   # 扫对焦屈光度
     --shutters 4000 --gains 8 --frames 1 \
     --distance 1.0                        # 本次标靶实际距离(m),用于建 距离→对焦 表
@@ -28,11 +36,12 @@ python3 ~/camtune/tune_shutter.py \
 
 **② 调快门**(锁定对焦后,扫快门/增益):
 ```bash
-python3 ~/camtune/tune_shutter.py \
+python3 ~/camtune/tune_shutter.py --via-service \
     --lens-positions 1.0 \                # 上一步定的固定焦
     --shutters 300,500,1000,2000,4000 \   # 300µs≈1/3333s … 4000µs≈1/250s
     --gains 4,8,16 --frames 4
 ```
+(去掉 `--via-service` = 独占模式,须先停 `cuadc-onboard-camera`。)
 
 每次生成 `~/camtune_out/sweep_<时间>/`:各档图像 + `index.csv`
 (`distance_m,lens_pos,shutter_us,gain,frame,lap_var,brightness,file`)。
