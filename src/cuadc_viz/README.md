@@ -10,6 +10,12 @@
 **仅覆盖实时监测**（`feature/viz-live`）。机上 `rosbag2` 黑匣子录制 +
 离线回放分析是另一半，还没做，见下面"未做"一节。
 
+> **数据源 = ROS/rosbridge（sim/ROS-fed），目前只在仿真上跑通过。**
+> 本包是订阅 ROS 契约话题、经 rosbridge 喂给浏览器的 dashboard，依赖 ROS 栈
+> （rosbridge/web_video_server）。实机的低延迟图传+遥测直路是**非 ROS** 的
+> [`cuadc_groundstation`](../cuadc_groundstation/README.md)——两者互补、别混：
+> 前者吃 ROS 话题（仿真/联调），后者吃裸 UDP（5600 RTP + 5701 JSON，现场低延迟）。
+
 ## 架构：为什么是这几个包，不是自己写一套
 
 页面本身不写任何 ROS2↔浏览器桥接代码，全部用现成工具组合：
@@ -52,7 +58,8 @@ sudo apt-get install ros-humble-rosbridge-suite ros-humble-web-video-server
 `cuadc_viz` 只订阅既有契约话题（`docs/spec/04-interfaces.md`、
 `05-perception-decision-interface.md`），不区分发布者是仿真桥接还是真实
 驱动，本身不用改任何代码——跟任务节点（还要切一个 `connection` 参数）
-比，这里连参数都不用切。真正随部署环境变的是传输介质（局域网 vs 真实
+比，这里连参数都不用切。（**这是设计意图；目前只在仿真验证过，实机未跑过**
+——实机现有的图传+遥测走非 ROS 直路 `cuadc_groundstation`，不经本包。）真正随部署环境变的是传输介质（局域网 vs 真实
 无线链路），已经在带宽设计里处理（见下一节），不需要第二套代码。
 
 ## 带宽设计：只有图像需要精细控制
