@@ -1,0 +1,16 @@
+[Unit]
+Description=cuadc_onboard camera (H264/RTP tee: ground + local)
+# 网络层沿用现 dronelink-network；相机独占，tee 一路发地面图传、一路给本地消费者。
+After=network.target
+
+[Service]
+Type=simple
+User=wly
+Environment=GST_PLUGIN_PATH=/usr/local/lib/aarch64-linux-gnu/gstreamer-1.0
+# 1080p@30 H.264 低延迟；tee：t.→地面 192.168.50.2:5600，t.→本地 127.0.0.1:5602（采集用 rtp 后端读）。
+ExecStart=/usr/bin/gst-launch-1.0 libcamerasrc ! video/x-raw,format=NV12,width=1920,height=1080,framerate=30/1 ! x264enc tune=zerolatency speed-preset=ultrafast bitrate=6000 key-int-max=30 byte-stream=true bframes=0 rc-lookahead=0 sync-lookahead=0 sliced-threads=true ! h264parse config-interval=-1 ! rtph264pay config-interval=1 pt=96 ! tee name=t t. ! queue ! udpsink host=192.168.50.2 port=5600 sync=false async=false t. ! queue ! udpsink host=127.0.0.1 port=5602 sync=false async=false
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
