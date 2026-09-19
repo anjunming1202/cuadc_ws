@@ -19,23 +19,31 @@
 ## 核心架构：底座 + 消费者，自启分两层
 
 ```
-① 底座层（无条件开机自启）
+① 底座层（无条件开机自启 · 持有硬件、产出端点）
    mav_fanout      独占串口 → 主动 keepalive 喂活飞控 → 原始 MAVLink 推到本地 UDP 端点（14550/14551…）
-   camera(gst)     独占相机 → tee：本地 RTP（5602）+ 地面 RTP（192.168.50.2:5600）
+   camera-service  独占相机 → tee 本地 RTP：5602（CV/采集/调参）+ 5603（图传转发消费者输入）；
+                     可运行时控制:监听 5610 收 JSON 改曝光/增益/对焦（gst 应用,非静态 gst-launch）
    ground-bus      （预留）被动转发器：本地 5700 有人投才转发到地面，否则空管道
    network/AP、eth 链路
 
-② 消费者层（profile 选择性自启，或手动跑；都只连端点，不碰硬件）
-   数传发送 / 图传转发到地面 / dataset 采集 / CV 脚本 / cuadc_interface …
+② 消费者层（profile 选择性自启，或手动跑；都只连端点、不碰硬件）
+   数传发送 / video-forward（图传转发 5603→地面,ground-monitor profile）/ dataset 采集 / CV / cuadc_interface …
 ```
 
-**底座基本不向地面发**：它把硬件变成本地端点（并主动 keepalive 喂活飞控
-数据流——这块飞控要有人持续请求才一直发），**不往地面发任何有状态数据**
-（遥测 HUD、CV 结果等一律由消费者产出）。唯一例外是 **camera tee 的地面分支**
-（→192.168.50.2:5600）：视频 RTP 无状态、没人收就是丢包无害，且监看机常态
-就要出图，与 dronelink-video 一致，故并进 base 的相机管线、不单列消费者。
-因此底座起来、无消费者时，地面**有画面但 HUD 是空的**——遥测/CV 等要地面
-看到，仍须①机载有消费者在产出/转发，或②地面反向发（MAVLink 天生双向）。
+**底座不向地面发**：它把硬件变成本地端点（并主动 keepalive 喂活飞控数据流），
+**任何往地面发的都是消费者**——遥测由数传消费者、视频由 **video-forward**
+（读本地 5603 → 转寄 5600）、CV 结果由各自脚本。其中 video-forward 是"图传转发"
+消费者、归 **ground-monitor profile**（不是底座）：任何生产者（相机服务/调参实时/
+以后别的）只要把画面投到本地 5603，它就转上地面，生产者不各写"发地面"。因此
+**profile=none 时底座在跑、本地端点有数据，但地面什么都没有**；要地面看到东西，
+起对应 profile（如 ground-monitor = 数传 + 图传转发）或手动起消费者。
+
+**相机服务可运行时控制**：相机生产者是一个 **gst 应用**（非静态 gst-launch）,
+独占相机 + 编码 + tee 到本地端点,并监听 `udp:127.0.0.1:5610` 收 JSON 命令,
+PLAYING 态即改曝光/增益/对焦（实测该机 `libcamerasrc` 这些属性 runtime 可控,
+不需 picamera2）。于是"调参 = 发控制命令"而非独占相机停 tee——调参与图传不互斥;
+运行时改 `lens-position` 也就是命令式动态对焦。详见
+[`camera-tuning.md`](camera-tuning.md) §6。
 
 **底座对 ROS 一无所知**。消费者是否 ROS 化是它自己的私事：`cuadc_interface`
 读同一个 MAVLink 端点后 republish 成 ROS 话题，普通脚本读同一个端点直接
@@ -48,8 +56,10 @@
 | 资源 | 端点 | 协议 | 用法 |
 |---|---|---|---|
 | 飞控 MAVLink | `udpin:127.0.0.1:14550` / `14551` / … | MAVLink | 每个消费者绑定一个即收（扇出主动推流）；授权者可写指令（自主飞行走这条） |
-| 相机本地帧 | `udp:127.0.0.1:5602` | H.264/RTP | GStreamer/ffmpeg 取帧，**不开相机** |
-| 图传→地面 | `192.168.50.2:5600` | H.264/RTP | 地面 viewer；由"图传转发"消费者产生，非底座 |
+| 相机本地帧 | `udp:127.0.0.1:5602` | H.264/RTP | CV/采集/调参 取帧，**不开相机** |
+| 图传转发输入 | `udp:127.0.0.1:5603` | H.264/RTP | 相机服务 tee 的一路；video-forward 读它转地面 |
+| 相机控制口 | `udpin:127.0.0.1:5610` | JSON datagram | 向相机服务发 `{ae,exposure_us,gain,af,lens,…}` 运行时改拍摄参数 |
+| 图传→地面 | `192.168.50.2:5600` | H.264/RTP | 地面 viewer；由 **video-forward** 读 5603 转发,全系统唯一发地面处 |
 | 地面数据总线 | `udp:127.0.0.1:5700` | JSON datagram（含 `topic`） | 要往地面发的数据投这里，底座按 topic 转发到地面 |
 | GCS | `192.168.50.2:14560` | MAVLink | Mission Planner 双向 |
 | 回程 JSON（地面→机载） | `udp:127.0.0.1:5701`（预留） | JSON datagram | 地面下发自定义数据给某消费者；管道搭好，按需接 |
@@ -77,7 +87,7 @@
 | profile | 开机自启的消费者 | 场景 |
 |---|---|---|
 | `none` | 无（只起底座） | 日常开发：消费者全手动跑 |
-| `ground-monitor` | 数传发送（图传→地面已在 base camera tee 里） | 外场一通电，地面站就有画面+遥测 |
+| `ground-monitor` | 数传发送 + video-forward（图传转发 5603→地面） | 外场一通电，地面站就有画面+遥测 |
 | `mission` | 任务侧 bringup（**按名引用**） | 比赛：无人值守、栈内等"开始"信号 |
 
 profile 落地为一行运行态设置 + 一个 oneshot applier：`/etc/cuadc-onboard/profile`

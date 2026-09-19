@@ -27,8 +27,10 @@ deploy.sh  幂等安装到 Pi 系统路径并 enable 底座 + profile applier
 | 资源 | 端点 | 协议 |
 |---|---|---|
 | 飞控 MAVLink | `udpin:127.0.0.1:14550` / `14551` | MAVLink（扇出主动推流，绑定即收；等同 mavproxy `--out`） |
-| 相机本地帧 | `udp:127.0.0.1:5602` | H.264/RTP |
-| 图传→地面 | `192.168.50.2:5600` | H.264/RTP |
+| 相机本地帧 | `udp:127.0.0.1:5602` | H.264/RTP（CV/采集/调参读帧） |
+| 相机控制口 | `udpin:127.0.0.1:5610` | JSON（`{ae,exposure_us,gain,af,lens,…}` 运行时改拍摄参数） |
+| 图传转发输入 | `udp:127.0.0.1:5603` | H.264/RTP（video-forward 读它转地面） |
+| 图传→地面 | `192.168.50.2:5600` | H.264/RTP（由 video-forward 消费者产生） |
 | 地面数据总线 | `udp:127.0.0.1:5700` | JSON（含 `topic`） |
 | GCS | `192.168.50.2:14560` | MAVLink |
 
@@ -48,12 +50,14 @@ cv2.VideoCapture(
 
 ## 自启两层
 
-- **底座**无条件开机自启：mav_fanout（串口扇出）+ camera（tee 本地 5602 +
-  地面 5600）。
-- **消费者**由 profile 选择性自启：`/etc/cuadc-onboard/profile` 写
-  `none` / `ground-monitor` / `mission`，oneshot applier 按名拉起。日常开发用
-  `none`，消费者手动跑；`ground-monitor` 起数传。改 profile 后
-  `systemctl restart cuadc-onboard-profile` 或重启整机生效。
+- **底座**（持硬件、产端点）无条件开机自启：mav_fanout（串口扇出）+
+  camera-service（独占相机 → tee 本地 5602 + 5603；监听 5610 运行时改曝光/对焦，
+  gst 应用非静态 gst-launch）。
+- **消费者**（只连端点、不碰硬件）由 profile 选择性自启：`/etc/cuadc-onboard/profile`
+  写 `none` / `ground-monitor` / `mission`，oneshot applier 按名拉起。`ground-monitor`
+  起 **数传 + video-forward（图传转发 5603→地面）**。改 profile 后
+  `systemctl restart cuadc-onboard-profile` 即时生效（applier 幂等:先停受管消费者再按
+  profile 起）。`none` 时底座在跑、本地端点有数据，但地面什么都没有。
 
 ## 部署 / 迁移（在 Pi 上）
 
