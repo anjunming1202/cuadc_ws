@@ -1,58 +1,38 @@
-"""传统 CV 检测算法：分割 -> 形态学去噪 -> 轮廓提取 -> 拟合筛选 -> 反投影。
-纯函数（numpy 输入输出，不依赖 rclpy），可以脱离节点单测。算法选型依据见
-docs/spec/05-perception-decision-interface.md；反投影/置信度/精修策略的
-设计讨论记录在这个分支的 PR 描述里，不重复抄一份到代码注释。
+"""传统 CV 检测器（第一个检测器）：分割 -> 形态学去噪 -> 轮廓提取 -> 图像空间
+拟合。纯函数（numpy/cv2 输入输出，不依赖 rclpy，可脱离节点单测），只输出
+**图像空间**的观测（筒的像素中心 + 视在半径 px + 置信度）；反投影、归一化
+方位、物理半径过滤都不在这里，在 geometry.py + 感知节点侧组装——这样检测器
+与相机内参/姿态/sim-real 解耦，可以整批换检测算法（见
+cuadc_perception/README.md 的检测器库约定）。
 
-跟决策层的契约（Detection 的 position/apparent_size/confidence 语义）见
-docs/spec/05-perception-decision-interface.md，这里只管算出这三个值，不
-关心 ROS 消息类型。
+契约（apparent_size/confidence 语义）见 docs/spec/05-perception-decision-interface.md。
 """
 
 import math
 import time
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 import cv2
-import numpy as np
 
 
 @dataclass
-class CameraParams:
-    fx: float
-    fy: float
-    cx: float
-    cy: float
-    mount_roll_rad: float = 0.0
-    mount_pitch_rad: float = 1.5708  # nadir 惯例，见 gazebo_bringup.launch.py 同名参数
-    mount_yaw_rad: float = 0.0
+class ContourObservation:
+    """检测器对一个候选轮廓的图像空间观测。contour 原样保留给节点画调试图用。"""
+    u: float             # 像素中心 x
+    v: float             # 像素中心 y
+    radius_px: float     # 等效面积半径(px)，反投影后换算物理半径 / 画标注用
+    circularity: float   # 面积/外接圆面积，置信度用
+    contour: object      # cv2 轮廓，画调试图用
 
 
-@dataclass
-class VehiclePose:
-    position_ned: Tuple[float, float, float]  # (north, east, down)
-    orientation_xyzw: Tuple[float, float, float, float]  # 机体->世界四元数
-
-
-@dataclass
-class Detection:
-    position_ned: Tuple[float, float]
-    apparent_radius_m: float
-    confidence: float
-
-
-_MIN_RAY_DOWN_COMPONENT = 0.15  # 射线太接近水平（姿态倾斜太大）时反投影解不出合理交点，直接丢弃这一条
-
-
-def detect_cylinders(image_bgr, camera: CameraParams, pose: VehiclePose,
-                      cylinder_height_m: float, min_radius_m: float, max_radius_m: float,
-                      morph_kernel_px: int = 5, perf: Optional[dict] = None,
-                      debug: Optional[dict] = None) -> List[Detection]:
-    """`perf` 传一个空 dict 进来会被填上分阶段耗时（毫秒）——感知节点用来发
-    profiling 诊断信息，纯单测不用管这个参数。`debug` 同理，填上
-    `mask`（形态学去噪后的二值图）和 `contour_results`（`[(contour, Detection|None)]`，
-    None 表示这个轮廓没通过筛选）——画 mask/轮廓/标注调试图用，画图本身
-    是节点层的展示逻辑，这里只负责把中间结果暴露出来，不做任何绘制。"""
+def detect_cylinders_pixels(image_bgr, morph_kernel_px: int = 5,
+                            perf: Optional[dict] = None,
+                            debug: Optional[dict] = None) -> List[ContourObservation]:
+    """对一帧图像做分割/去噪/轮廓/图像拟合，返回每个候选轮廓的图像空间观测。
+    `perf` 传一个空 dict 会被填上分阶段耗时（毫秒）；`debug` 传一个空 dict 会
+    被填上 `mask`（去噪后的二值图）。反投影 + 物理半径过滤 + accept/reject 在
+    节点侧（需要相机内参和高度），不在这里。"""
     t0 = time.monotonic()
     mask = _segment(image_bgr)
     t1 = time.monotonic()
@@ -61,36 +41,26 @@ def detect_cylinders(image_bgr, camera: CameraParams, pose: VehiclePose,
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     t3 = time.monotonic()
 
-    body_to_world = _quaternion_to_matrix(*pose.orientation_xyzw)
-    cam_to_body = _mount_rotation_matrix(camera.mount_roll_rad, camera.mount_pitch_rad, camera.mount_yaw_rad)
-    cam_to_world = body_to_world @ cam_to_body
-
-    detections = []
-    contour_results = []
+    observations = []
     for contour in contours:
-        det = _fit_contour(contour, camera, pose, cam_to_world, cylinder_height_m,
-                            min_radius_m, max_radius_m)
-        contour_results.append((contour, det))
-        if det is not None:
-            detections.append(det)
+        obs = _fit_contour_image(contour)
+        if obs is not None:
+            observations.append(obs)
     t4 = time.monotonic()
 
-    # 这几个 key 名字是权威来源——cuadc_viz/web/app.js 按这几个固定 key
-    # 解析 ~/perf 话题（kv.segment_ms 等），index.html 对应几个 stat 标签
-    # 硬编码了同样的名字。改/加/删阶段名两边要一起改，这边不改网页只会
-    # 显示 "--"，不会报错。
+    # 阶段名是权威来源——cuadc_viz/web/app.js 按固定 key 解析 ~/perf。'fit_ms'
+    # 只到图像拟合为止；反投影耗时由节点补进 'fit_reproject_ms'（保持网页那
+    # 几个 stat 的 key 不变）。改/加/删阶段名要跟网页一起改。
     if perf is not None:
         perf['segment_ms'] = (t1 - t0) * 1000.0
         perf['morphology_ms'] = (t2 - t1) * 1000.0
         perf['contours_ms'] = (t3 - t2) * 1000.0
-        perf['fit_reproject_ms'] = (t4 - t3) * 1000.0
-        perf['total_ms'] = (t4 - t0) * 1000.0
+        perf['fit_ms'] = (t4 - t3) * 1000.0
 
     if debug is not None:
         debug['mask'] = mask
-        debug['contour_results'] = contour_results
 
-    return detections
+    return observations
 
 
 def _segment(image_bgr):
@@ -106,87 +76,19 @@ def _denoise(mask, kernel_px):
     return mask
 
 
-def _fit_contour(contour, camera, pose, cam_to_world, cylinder_height_m,
-                  min_radius_m, max_radius_m) -> Optional[Detection]:
+def _fit_contour_image(contour) -> Optional[ContourObservation]:
+    """图像空间拟合：外接圆只用来算 circularity（形状规则度、置信度用）；
+    物理尺寸用等效面积半径 sqrt(area/pi)——斜视时色块是细长月牙形，外接圆
+    半径会被撑爆，等效面积半径对拉长不敏感。物理半径的合理性过滤放节点做
+    （需要反投影出的斜距），这里只出图像量。为什么这么选见
+    cuadc_perception/README.md。"""
     area = cv2.contourArea(contour)
     if area <= 0:
         return None
     (u, v), enclosing_radius_px = cv2.minEnclosingCircle(contour)
     if enclosing_radius_px <= 0:
         return None
-    # circularity（形状是否规则、置信度用）用外接圆半径算——外接圆能不能
-    # 撑满是"形状规不规则"的量度。实际物理尺寸不能用外接圆半径算：斜视时
-    # 只看得到筒的一小段新月形侧影，外接圆为了包住这个细长月牙形状，
-    # 半径会被撑得比真实筒径大很多（实测：一帧真实图像外接圆半径对应
-    # 换算出0.34m，远超所有筒的真实半径范围）。等效面积半径对形状拉长
-    # 不敏感，斜视时只是温和高估，不会离谱，用它做尺寸过滤和实际半径估计。
     area_equiv_radius_px = math.sqrt(area / math.pi)
     circularity = area / (math.pi * enclosing_radius_px ** 2)
-
-    world_xy, range_m = _reproject_to_cylinder_top(u, v, camera, pose, cam_to_world, cylinder_height_m)
-    if world_xy is None:
-        return None
-
-    real_radius_m = area_equiv_radius_px * range_m / camera.fx
-    if not (min_radius_m <= real_radius_m <= max_radius_m):
-        return None
-
-    return Detection(position_ned=world_xy, apparent_radius_m=real_radius_m,
-                      confidence=min(circularity, 1.0))
-
-
-def _reproject_to_cylinder_top(u, v, camera: CameraParams, pose: VehiclePose,
-                                cam_to_world, cylinder_height_m):
-    """像素 -> 世界坐标：像素反投影成相机系射线，转到世界系，跟筒顶所在
-    平面（NED down = -cylinder_height_m，不是地面 down=0）求交——检测到
-    的色块主要反映筒的顶面，跟地面求交会引入正比于视线倾角的系统性偏差。
-    返回 (world_xy, 斜距)，射线太接近水平（姿态倾斜太大）时返回
-    (None, None)。
-    """
-    d_cam = np.array([(u - camera.cx) / camera.fx, (v - camera.cy) / camera.fy, 1.0])
-    d_world = cam_to_world @ d_cam
-
-    origin_down = pose.position_ned[2]
-    if d_world[2] < _MIN_RAY_DOWN_COMPONENT:
-        return None, None
-    t = (-cylinder_height_m - origin_down) / d_world[2]
-    if t <= 0:
-        return None, None
-
-    world_north = pose.position_ned[0] + t * d_world[0]
-    world_east = pose.position_ned[1] + t * d_world[1]
-    range_m = t * float(np.linalg.norm(d_cam))
-    return (world_north, world_east), range_m
-
-
-def _quaternion_to_matrix(x, y, z, w):
-    """机体->世界旋转矩阵，标准四元数公式，跟 decision_node.py 里
-    `_roll_pitch_from_quaternion` 提取 roll/pitch 用的是同一个约定
-    （ArduPilot/MAVLink 姿态四元数）。"""
-    return np.array([
-        [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
-        [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
-        [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)],
-    ])
-
-
-def _mount_rotation_matrix(roll, pitch, yaw):
-    """相机->机体固定挂载旋转。注意：这里的 pitch 符号约定是云台
-    `/gimbal/cmd_pitch` 话题自己的约定（+1.5708 是 nadir，实测验证，
-    见 gazebo_bringup.launch.py），跟机体姿态四元数的俯仰符号约定不是
-    同一件事，两者不能混用同一个旋转公式——机体姿态用标准四元数公式
-    （见 `_quaternion_to_matrix`），这里单独用云台自己的约定。默认挂载
-    （roll=yaw=0, pitch=+1.5708）已经用合成图像单测验证过内部自洽，
-    但这个约定本身（尤其 roll/yaw 非零时）还没有拿真实 Gazebo 图像
-    实测确认，见节点验证计划。
-    """
-    cp, sp = math.cos(pitch), math.sin(pitch)
-    ry = np.array([[cp, 0, -sp], [0, 1, 0], [sp, 0, cp]])
-    cr, sr = math.cos(roll), math.sin(roll)
-    rx = np.array([[1, 0, 0], [0, cr, -sr], [0, sr, cr]])
-    cy, sy = math.cos(yaw), math.sin(yaw)
-    rz = np.array([[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]])
-    # 相机自身光轴约定（x-right, y-down, z-forward）在零挂载角时对齐机体
-    # 前向（body_x=cam_z, body_y=cam_x, body_z=cam_y）
-    base = np.array([[0, 0, 1], [1, 0, 0], [0, 1, 0]])
-    return rz @ ry @ rx @ base
+    return ContourObservation(u=u, v=v, radius_px=area_equiv_radius_px,
+                              circularity=circularity, contour=contour)

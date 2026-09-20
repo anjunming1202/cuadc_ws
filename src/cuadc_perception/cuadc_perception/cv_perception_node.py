@@ -11,6 +11,8 @@
 的帧率（sim 里是 10Hz，见 gazebo_bringup.launch.py 的相机 update_rate）。
 """
 
+import time
+
 import cv2
 import rclpy
 from cv_bridge import CvBridge
@@ -20,7 +22,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import Image, Imu
 from std_msgs.msg import Header, String
 
-from cuadc_perception import cv_pipeline
+from cuadc_perception import cv_pipeline, geometry
 from cuadc_perception_msgs.msg import Detection, DetectionArray
 
 _DETECTIONS_TOPIC = '/perception/detections'
@@ -113,7 +115,7 @@ class CvPerceptionNode(Node):
 
         image_bgr = self._bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
 
-        camera = cv_pipeline.CameraParams(
+        camera = geometry.CameraParams(
             fx=self.get_parameter('fx').value,
             fy=self.get_parameter('fy').value,
             cx=self.get_parameter('cx').value,
@@ -122,23 +124,55 @@ class CvPerceptionNode(Node):
             mount_pitch_rad=self.get_parameter('camera_fixed_pitch_rad').value,
             mount_yaw_rad=self.get_parameter('camera_fixed_yaw_rad').value,
         )
-        pose = cv_pipeline.VehiclePose(
+        pose = geometry.VehiclePose(
             position_ned=self._latest_position_ned,
             orientation_xyzw=self._latest_orientation_xyzw,
         )
 
+        cylinder_height_m = self.get_parameter('cylinder_height_m').value
+        min_radius_m = self.get_parameter('min_radius_m').value
+        max_radius_m = self.get_parameter('max_radius_m').value
+
         active_views = self._active_debug_views()
         perf = {}
         debug = {} if active_views else None
-        detections = cv_pipeline.detect_cylinders(
-            image_bgr, camera, pose,
-            cylinder_height_m=self.get_parameter('cylinder_height_m').value,
-            min_radius_m=self.get_parameter('min_radius_m').value,
-            max_radius_m=self.get_parameter('max_radius_m').value,
-            morph_kernel_px=self.get_parameter('morph_kernel_px').value,
-            perf=perf,
-            debug=debug,
-        )
+        observations = cv_pipeline.detect_cylinders_pixels(
+            image_bgr, morph_kernel_px=self.get_parameter('morph_kernel_px').value,
+            perf=perf, debug=debug)
+
+        # 组装：检测器出图像观测 -> geometry 反投影出世界坐标 + 归一化方位
+        # bearing -> 物理半径过滤 -> 填成 Detection。accept/reject 在这里决定
+        # （要用到反投影出的斜距和相机内参），检测器本身不掺和。
+        cam_to_world = geometry.cam_to_world_matrix(camera, pose)
+        t_reproject = time.monotonic()
+        detection_msgs = []
+        contour_results = []
+        for obs in observations:
+            world_xy, range_m = geometry.reproject_to_cylinder_top(
+                obs.u, obs.v, camera, pose, cam_to_world, cylinder_height_m)
+            det_msg = None
+            if world_xy is not None:
+                radius_m = obs.radius_px * range_m / camera.fx
+                if min_radius_m <= radius_m <= max_radius_m:
+                    bearing_x, bearing_y = geometry.normalize_bearing(obs.u, obs.v, camera)
+                    det_msg = Detection()
+                    det_msg.target_type = 'cylinder'
+                    det_msg.position.x = float(world_xy[0])
+                    det_msg.position.y = float(world_xy[1])
+                    det_msg.position.z = 0.0
+                    det_msg.bearing_x = float(bearing_x)
+                    det_msg.bearing_y = float(bearing_y)
+                    det_msg.apparent_size = float(radius_m)
+                    det_msg.confidence = float(min(obs.circularity, 1.0))
+                    detection_msgs.append(det_msg)
+            contour_results.append((obs, det_msg))
+        reproject_ms = (time.monotonic() - t_reproject) * 1000.0
+        if perf:
+            perf['fit_reproject_ms'] = perf.pop('fit_ms', 0.0) + reproject_ms
+            perf['total_ms'] = (perf['segment_ms'] + perf['morphology_ms']
+                                + perf['contours_ms'] + perf['fit_reproject_ms'])
+        if debug is not None:
+            debug['contour_results'] = contour_results
 
         for view in active_views:
             self._publish_debug_image(view, image_bgr, debug, msg.header)
@@ -148,7 +182,7 @@ class CvPerceptionNode(Node):
         out = DetectionArray()
         out.header = Header()
         out.header.stamp = self.get_clock().now().to_msg()
-        out.detections = [self._to_msg(d) for d in detections]
+        out.detections = detection_msgs
         self._publisher.publish(out)
 
         self._publish_perf(perf)
@@ -169,35 +203,23 @@ class CvPerceptionNode(Node):
             out_bgr = cv2.cvtColor(debug['mask'], cv2.COLOR_GRAY2BGR)
         elif view == 'contours':
             out_bgr = image_bgr.copy()
-            for contour, det in debug['contour_results']:
-                color = (0, 200, 0) if det is not None else (128, 128, 128)  # 接受=绿，拒绝=灰
-                cv2.drawContours(out_bgr, [contour], -1, color, 2)
+            for obs, det_msg in debug['contour_results']:
+                color = (0, 200, 0) if det_msg is not None else (128, 128, 128)  # 接受=绿，拒绝=灰
+                cv2.drawContours(out_bgr, [obs.contour], -1, color, 2)
         elif view == 'annotated':
             out_bgr = image_bgr.copy()
-            for contour, det in debug['contour_results']:
-                if det is None:
+            for obs, det_msg in debug['contour_results']:
+                if det_msg is None:
                     continue
-                (u, v), r_px = cv2.minEnclosingCircle(contour)  # 只用于画图定位，不是检测算法的一部分
-                cv2.circle(out_bgr, (int(u), int(v)), int(r_px), (0, 200, 0), 2)
-                label = f'{det.apparent_radius_m:.2f}m {det.confidence:.2f}'
-                cv2.putText(out_bgr, label, (int(u) - 30, int(v) - int(r_px) - 6),
+                cv2.circle(out_bgr, (int(obs.u), int(obs.v)), int(obs.radius_px), (0, 200, 0), 2)
+                label = f'{det_msg.apparent_size:.2f}m {det_msg.confidence:.2f}'
+                cv2.putText(out_bgr, label, (int(obs.u) - 30, int(obs.v) - int(obs.radius_px) - 6),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 200, 0), 1, cv2.LINE_AA)
         else:
             return
         out_msg = self._bridge.cv2_to_imgmsg(out_bgr, encoding='bgr8')
         out_msg.header = header
         self._debug_image_publishers[view].publish(out_msg)
-
-    @staticmethod
-    def _to_msg(det: cv_pipeline.Detection) -> Detection:
-        msg = Detection()
-        msg.target_type = 'cylinder'
-        msg.position.x = det.position_ned[0]
-        msg.position.y = det.position_ned[1]
-        msg.position.z = 0.0
-        msg.apparent_size = det.apparent_radius_m
-        msg.confidence = det.confidence
-        return msg
 
     def _publish_perf(self, perf):
         status = DiagnosticStatus()
