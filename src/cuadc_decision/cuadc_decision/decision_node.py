@@ -41,10 +41,11 @@ _SERVICE_SPECS = {
 }
 
 
-def _roll_pitch_from_quaternion(x, y, z, w):
+def _rpy_from_quaternion(x, y, z, w):
     roll = math.atan2(2.0 * (w * x + y * z), 1.0 - 2.0 * (x * x + y * y))
     pitch = math.asin(max(-1.0, min(1.0, 2.0 * (w * y - z * x))))
-    return roll, pitch
+    yaw = math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+    return roll, pitch, yaw
 
 
 class DecisionNode(Node):
@@ -62,6 +63,7 @@ class DecisionNode(Node):
         )
         self._pending_service_name = None
         self._pending_service_future = None
+        self._yaw_rad = 0.0  # 仅诊断用：确认全程锁 yaw（末端伺服时机头不转），不进 ctx
 
         self._service_clients = {
             name: self.create_client(request_cls, topic)
@@ -118,7 +120,7 @@ class DecisionNode(Node):
 
     def _on_attitude(self, msg):
         q = msg.orientation
-        self._ctx.roll_rad, self._ctx.pitch_rad = _roll_pitch_from_quaternion(q.x, q.y, q.z, q.w)
+        self._ctx.roll_rad, self._ctx.pitch_rad, self._yaw_rad = _rpy_from_quaternion(q.x, q.y, q.z, q.w)
 
     def _on_battery(self, msg):
         self._ctx.battery_fraction = msg.percentage
@@ -191,6 +193,7 @@ class DecisionNode(Node):
             twist_msg.twist.linear.x = vx  # 前（机体系），见 04-interfaces.md cmd/velocity
             twist_msg.twist.linear.y = vy  # 右
             twist_msg.twist.linear.z = vz  # 下
+            twist_msg.twist.angular.z = 0.0  # yaw_rate=0：末端伺服锁当前航向、不自动转向（全程锁 yaw）
             self._velocity_pub.publish(twist_msg)
 
         if result.service_call is not None:
@@ -205,11 +208,27 @@ class DecisionNode(Node):
                 throttle_duration_sec=1.0)
 
         if self._ctx.current_state == mission_logic.State.APPROACH_DROP_TARGET:
-            # 诊断进近阶段抖动用，节流稍快（0.3s）才看得出振荡，不是 1Hz 那种
-            # 状态概览级别的日志。
+            # 诊断进近阶段抖动/收敛用，节流稍快（0.3s）才看得出振荡。yaw 确认
+            # 全程锁 yaw 生效（末端应基本不变）；v 是发给飞控的机体系速度；其余
+            # 直接读接近单元内部状态（诊断用，不碰控制路径）：off=跟踪到的姿态
+            # 补偿水平偏移(前,右)米、miss=连续失配帧（涨=丢目标在 coast）、
+            # dist2lock=到锁定目标的真实世界水平距离（地面真值，判断在靠近还是
+            # 飞离）、h=离地高。
+            vt = result.velocity_target
+            vstr = f'({vt[0]:.2f},{vt[1]:.2f},{vt[2]:.2f})' if vt is not None else 'None'
+            ast = mission_logic._ACTIVE_APPROACH.state
+            off = ast.prev_off_meas
+            offstr = f'({off[0]:.2f},{off[1]:.2f})' if off is not None else 'None'
+            dist = None
+            if ast.locked is not None and self._ctx.local_position_xy is not None:
+                dist = math.hypot(self._ctx.local_position_xy[0] - ast.locked.x,
+                                  self._ctx.local_position_xy[1] - ast.locked.y)
+            diststr = f'{dist:.2f}' if dist is not None else 'None'
+            hstr = f'{-self._ctx.local_position_z:.2f}' if self._ctx.local_position_z is not None else 'None'
             self.get_logger().info(
-                f'[ATTITUDE] roll={self._ctx.roll_rad} pitch={self._ctx.pitch_rad} '
-                f'hspeed={self._ctx.horizontal_speed} vspeed={self._ctx.vertical_speed}',
+                f'[APPROACH] phase={ast.phase} yaw={self._yaw_rad:.3f} v={vstr} '
+                f'off={offstr} miss={ast.miss} dist2lock={diststr} h={hstr} '
+                f'hspeed={self._ctx.horizontal_speed}',
                 throttle_duration_sec=0.3)
 
         self._status_pub.publish(String(data=self._ctx.current_state))

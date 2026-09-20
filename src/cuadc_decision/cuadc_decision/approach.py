@@ -32,8 +32,9 @@ class ApproachConfig:
     min_conf: float = 0.5                 # 只对置信度够的检测伺服
     # 粗接近(PBVS) -> 交接
     coarse_radius_m: float = 1.0          # 水平进到这么近(且看得见)才考虑切末端
-    refine_gate_m: float = 0.4            # 硬锁:粗段只用离锁定目标这么近的检测刷新
+    refine_gate_m: float = 0.4            # 硬锁世界坐标关联门:粗/末段都只认离锁定目标这么近的检测(筒间距~1.5m,足够区分)
     handoff_off_m: float = 0.6            # 末端交接:估计水平误差小于此且有检测才切
+    handoff_speed_mps: float = 0.4        # 交接还要求对地速度降到此以下:粗段先在目标上方停稳再交接,否则带大动量冲进末端必过冲
     # 末端 IBVS PID(条件积分 + D on measurement)
     kp: float = 1.2
     ki: float = 0.4
@@ -41,12 +42,7 @@ class ApproachConfig:
     v_max_mps: float = 1.0
     i_zone_m: float = 0.4                 # 只在近端积分,防大接近段积分饱和回弹
     lever_arm_m: Tuple[float, float] = (0.0, 0.0)  # 机体系(前,右)投放机构杆臂,米;sim 默认见 yaml、real empirical 测
-    # bearing 跟踪器(硬锁:门 + 连续失配后仅在门内重锁,绝不跳别的筒)
-    track_alpha: float = 0.5
-    track_beta: float = 0.1
-    track_gate_norm: float = 0.12         # 归一化 bearing 关联门(正常跟踪)
-    reacquire_gate_norm: float = 0.25     # 重锁门:比关联门宽,但仍围绕上次 bearing
-    max_coast_ticks: int = 4
+    max_coast_ticks: int = 4              # 末段连续失配超过此帧数就悬停,不靠陈旧偏移乱冲
     # 降高
     descend_rate_mps: float = 0.4
     descend_pause_off_m: float = 0.30     # 水平误差大于此暂停降高、先追回来
@@ -60,12 +56,11 @@ class ApproachConfig:
 @dataclass
 class ApproachState:
     phase: str = 'coarse'                 # coarse -> terminal
-    locked: Optional[Candidate] = None    # 锁定目标(世界坐标),粗段用
-    tx: Optional[Tuple[float, float]] = None      # 跟踪的 bearing (bx, by)
-    tv: Tuple[float, float] = (0.0, 0.0)
-    miss: int = 0
+    locked: Optional[Candidate] = None    # 锁定目标(世界坐标),粗/末段硬锁都用它关联
+    miss: int = 0                         # 末段连续失配帧数(丢检测),超阈值悬停
     integ: Tuple[float, float] = (0.0, 0.0)
-    prev_off: Optional[Tuple[float, float]] = None
+    prev_off: Optional[Tuple[float, float]] = None       # 上一帧偏移,PID 的 D 项(on measurement)用
+    prev_off_meas: Optional[Tuple[float, float]] = None  # 上一次有检测时的偏移,短暂丢失时 coast 用
     stable_since: Optional[float] = None
 
 
@@ -91,8 +86,9 @@ def _nearest_within(dets, x, y, gate):
 
 class CoarsePbvsThenTerminalIbvs:
     """粗接近用世界坐标 PBVS 把飞机带到目标附近(把筒弄进视野),末端切像素
-    IBVS 精对准——对定位误差免疫(见 ADR-0005)。全程硬锁选定目标:粗段按
-    世界坐标门、末段按 bearing 门关联,别的筒进视野不跳。"""
+    IBVS 精对准——对定位误差免疫(见 ADR-0005)。全程硬锁选定目标:粗/末段
+    都按世界坐标最近门关联(姿态无关、能区分相邻筒),别的筒进视野不跳;末段
+    伺服用 bearing 姿态补偿偏移(定位无关)——关联用世界、控制用 bearing。"""
 
     name = 'coarse_pbvs_then_terminal_ibvs'
 
@@ -132,9 +128,10 @@ class CoarsePbvsThenTerminalIbvs:
             bearing = (best.bearing_x, best.bearing_y)
             off = self._bearing_to_off(bearing, ctx, h)
             e = (off[0] - cfg.lever_arm_m[0], off[1] - cfg.lever_arm_m[1])
-            if math.hypot(*e) <= cfg.handoff_off_m:
+            settled = ctx.horizontal_speed is not None and ctx.horizontal_speed <= cfg.handoff_speed_mps
+            if math.hypot(*e) <= cfg.handoff_off_m and settled:
                 st.phase = 'terminal'
-                st.tx, st.tv, st.miss = bearing, (0.0, 0.0), 0
+                st.miss, st.prev_off_meas = 0, off
                 st.integ, st.prev_off, st.stable_since = (0.0, 0.0), None, None
         return ApproachOutput(position_target=aim)
 
@@ -142,17 +139,36 @@ class CoarsePbvsThenTerminalIbvs:
 
     def _terminal(self, ctx, dets, h, now) -> ApproachOutput:
         cfg, st = self.cfg, self.state
-        self._track(dets)
-        if st.tx is None:
-            return ApproachOutput(velocity_target=(0.0, 0.0, 0.0))  # 彻底没目标:悬停,不乱冲
+        # 硬锁沿用粗段的世界坐标最近门关联:姿态无关——裸 bearing 会随机身俯仰/
+        # 横滚摆动(高速交接的减速俯仰能把 bearing 甩出关联门、误判丢锁),世界
+        # 坐标不会;且定位偏置在"检测与锁定目标的相对量"里抵消,能稳定区分相邻
+        # 筒。伺服仍用 bearing 反算的姿态补偿偏移(定位无关、cm 级,见 ADR-0005)
+        # ——关联用世界、控制用 bearing,各取所长。
+        target = st.locked
+        best = _nearest_within(dets, target.x, target.y, cfg.refine_gate_m) if target is not None else None
+        if best is not None:
+            st.locked = Candidate(best.position.x, best.position.y, best.apparent_size)
+            st.miss = 0
+            off = self._bearing_to_off((best.bearing_x, best.bearing_y), ctx, h)
+            st.prev_off_meas = off
+        else:
+            st.miss += 1
+            if st.prev_off_meas is None or st.miss > cfg.max_coast_ticks:
+                # 彻底丢目标:悬停(零机体速度),绝不靠陈旧偏移继续冲(那正是之前
+                # 跑飞的原因),清 PID 状态,等重新关联。
+                st.integ, st.prev_off, st.stable_since = (0.0, 0.0), None, None
+                return ApproachOutput(velocity_target=(0.0, 0.0, 0.0))
+            off = st.prev_off_meas  # 短暂丢失:保持上次偏移 coast 几帧
 
-        off = self._bearing_to_off(st.tx, ctx, h)
         e = (off[0] - cfg.lever_arm_m[0], off[1] - cfg.lever_arm_m[1])
         doff = (0.0, 0.0) if st.prev_off is None else (
             (off[0] - st.prev_off[0]) / cfg.dt_s, (off[1] - st.prev_off[1]) / cfg.dt_s)
         st.prev_off = off
-        raw = (cfg.kp * e[0] + cfg.ki * st.integ[0] - cfg.kd * doff[0],
-               cfg.kp * e[1] + cfg.ki * st.integ[1] - cfg.kd * doff[1])
+        # 本控制器是"位置误差 e=off-lever -> 速度指令",不是常规"误差 -> 力"。
+        # 接近目标时 off 减小、doff<0,阻尼项应 +kd*doff(使指令减小、提前减速),
+        # 才是真阻尼;写成 -kd*doff 反而助推过冲(高动量交接时尤其明显)。
+        raw = (cfg.kp * e[0] + cfg.ki * st.integ[0] + cfg.kd * doff[0],
+               cfg.kp * e[1] + cfg.ki * st.integ[1] + cfg.kd * doff[1])
         v = (_clip(raw[0], cfg.v_max_mps), _clip(raw[1], cfg.v_max_mps))
         integ = list(st.integ)
         for i in (0, 1):  # 条件积分:近端且未饱和才积分
@@ -179,42 +195,6 @@ class CoarsePbvsThenTerminalIbvs:
         else:
             st.stable_since = None
         return ApproachOutput(velocity_target=(v[0], v[1], 0.0))
-
-    def _track(self, dets):
-        """alpha-beta 跟踪器,bearing 空间硬锁:关联门内正常更新,连续失配后
-        只在(较宽的)重锁门内重锁,门外的检测(别的筒)一律不认。"""
-        cfg, st = self.cfg, self.state
-        meas = self._associate(dets)  # 仅返回重锁门内、离 tx 最近的 bearing,否则 None
-        if meas is None:
-            st.miss += 1
-            st.tx = (st.tx[0] + st.tv[0] * cfg.dt_s, st.tx[1] + st.tv[1] * cfg.dt_s)  # coast
-            return
-        pred = (st.tx[0] + st.tv[0] * cfg.dt_s, st.tx[1] + st.tv[1] * cfg.dt_s)
-        r = (meas[0] - pred[0], meas[1] - pred[1])
-        if math.hypot(*r) <= cfg.track_gate_norm:
-            st.tx = (pred[0] + cfg.track_alpha * r[0], pred[1] + cfg.track_alpha * r[1])
-            st.tv = (st.tv[0] + cfg.track_beta / cfg.dt_s * r[0],
-                     st.tv[1] + cfg.track_beta / cfg.dt_s * r[1])
-            st.miss = 0
-        else:
-            st.miss += 1
-            if st.miss >= cfg.max_coast_ticks:  # 连续失配:在重锁门内重锁(associate 已保证门内)
-                st.tx, st.tv, st.miss = meas, (0.0, 0.0), 0
-            else:
-                st.tx = pred  # 先 coast 几帧
-
-    def _associate(self, dets):
-        """返回离当前 tracked bearing 最近、且在重锁门内的检测 bearing;门外
-        (别的位置的筒)返回 None——硬锁的关键,进视野的别的筒不会被吸附。"""
-        st, cfg = self.state, self.cfg
-        if st.tx is None:
-            return None
-        best, best_dist = None, cfg.reacquire_gate_norm
-        for d in dets:
-            dist = math.hypot(d.bearing_x - st.tx[0], d.bearing_y - st.tx[1])
-            if dist < best_dist:
-                best_dist, best = dist, (d.bearing_x, d.bearing_y)
-        return best
 
     def _bearing_to_off(self, bearing, ctx, h):
         """归一化 bearing -> 目标相对「正下方」的水平偏移(米,机体前/右),含姿态

@@ -116,14 +116,20 @@ ros2 launch cuadc_decision decision_bringup.launch.py \
   这条已被证明稳定的缝」，**不**预先给「检测 × 控制」的组合建框架——那是
   cv_explore 沙盒用文件夹探索的事，不是生产需求。
 
-## 已知问题：末端 IBVS 在 Gazebo 闭环还没收敛（调查中）
+## 末端对准的两个关键设计（Gazebo 闭环踩坑后定的）
 
-离线单测里末端 IBVS 收敛到 ~1cm，但 2026-09-21 在 Gazebo（桩感知发 bearing、
-SITL 真动力学）跑，APPROACH 持续发 `cmd/velocity`、但 90s 内没压到投放门，被
-`_DROP_PHASE_TIMEOUT_S` 兜底跳走。**领先假设**：[04](../../docs/spec/04-interfaces.md)
-的 `Set Velocity` 保留飞控**自动朝向**（面向飞行方向），末端速度控制时机身随速度
-矢量转 yaw、机体前/右轴跟着转，成了绕圈而不是收敛。**下一步**：末端锁 yaw（用
-`~/cmd/yaw`，或末端水平改用机体系 `position_target`——两者都不自动转向，见 04），
-并给 approach 加实时日志（tracked bearing / off / v / herr）定位。另注：真实 CV 的
-端到端还被 Block A 卡住（感知在当前 sim 世界检出为 0，见
-[`cuadc_perception/README.md`](../cuadc_perception/README.md) 检测器约定）。
+离线点质量模型抓不到、只有 Gazebo+SITL 真动力学才暴露的两点，都已修正并
+验证（桩感知发 bearing，两个筒端到端投放成功、自动 RTL）：
+
+- **全程锁 yaw**：`Set Velocity` 现在带 `yaw_rate=0`（见
+  [04](../../docs/spec/04-interfaces.md) 自动朝向行为）。否则飞控默认自动朝向
+  会让机身随速度矢量转 yaw、机体前/右轴跟着转，末端成了绕圈而非收敛。
+- **末端硬锁关联走世界坐标、伺服走 bearing**：裸 bearing 会随机身俯仰摆动
+  （高速交接的减速俯仰能把 bearing 甩出关联门→误判丢锁→靠陈旧值跑飞）；
+  关联改到世界坐标最近门（姿态无关、能区分相邻筒、定位偏置在相对量里抵消），
+  控制仍用 bearing 姿态补偿偏移（定位无关，[ADR-0005](../../docs/spec/adr/0005-terminal-align-visual-servoing.md)）。
+  另外交接要等粗段在目标上方停稳（速度门）才切，不带动量冲进末端。
+
+仍开口：**真实 CV** 端到端被 Block A 卡住（感知在当前 sim 世界检出为 0，见
+[`cuadc_perception/README.md`](../cuadc_perception/README.md) 检测器约定）——以上
+末端验证用的是桩感知发 bearing。

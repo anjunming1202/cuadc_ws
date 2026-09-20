@@ -29,7 +29,7 @@ function setDot(id, level) {
 
 function quatToYaw(x, y, z, w) {
   // 标准 ArduPilot/MAVLink 姿态四元数惯例，跟 decision_node.py 的
-  // _roll_pitch_from_quaternion 是同一套公式的 yaw 分量。
+  // _rpy_from_quaternion 是同一套公式的 yaw 分量。
   return Math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z));
 }
 function quatToRollPitchDeg(x, y, z, w) {

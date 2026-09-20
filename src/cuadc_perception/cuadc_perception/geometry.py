@@ -75,7 +75,7 @@ def reproject_to_cylinder_top(u, v, camera: CameraParams, pose: VehiclePose,
 
 def _quaternion_to_matrix(x, y, z, w):
     """机体->世界旋转矩阵，标准四元数公式，跟 decision_node.py 里
-    `_roll_pitch_from_quaternion` 提取 roll/pitch 用的是同一个约定
+    `_rpy_from_quaternion` 提取 roll/pitch/yaw 用的是同一个约定
     （ArduPilot/MAVLink 姿态四元数）。"""
     return np.array([
         [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
