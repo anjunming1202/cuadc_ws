@@ -27,6 +27,7 @@ class ApproachConfig:
     (见 cuadc_decision/README.md 配置分层)。"""
     cruise_alt_m: float = 2.0
     drop_alt_m: float = 1.0
+    cylinder_height_m: float = 0.3        # 圆筒高;末端反算深度=离地高-筒高(相机到筒顶平面),见 _bearing_to_off
     dt_s: float = 0.1                     # tick 周期(对应 decision tick_rate_hz=10),积分/微分用
     min_conf: float = 0.5                 # 只对置信度够的检测伺服
     # 粗接近(PBVS) -> 交接
@@ -229,9 +230,10 @@ class CoarsePbvsThenTerminalIbvs:
         cp, sp = math.cos(pitch), math.sin(pitch)
         r1 = (r[0], cr * r[1] - sr * r[2], sr * r[1] + cr * r[2])          # R_x(roll) @ r
         lvl = (cp * r1[0] + sp * r1[2], r1[1], -sp * r1[0] + cp * r1[2])   # R_y(pitch) @ r1
-        if lvl[2] <= 1e-6:
-            return (0.0, 0.0)  # 射线接近水平,解不出合理交点
-        t = h / lvl[2]
+        depth = h - self.cfg.cylinder_height_m  # 相机到筒顶平面的竖直距离(不是离地高),否则偏心杆臂会系统性偏
+        if lvl[2] <= 1e-6 or depth <= 0.0:
+            return (0.0, 0.0)  # 射线接近水平 / 高度异常,解不出合理交点
+        t = depth / lvl[2]
         return (t * lvl[0], t * lvl[1])  # (前, 右)
 
 

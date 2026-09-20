@@ -115,3 +115,15 @@ ros2 launch cuadc_decision decision_bringup.launch.py \
   契约、三条对外接口。**自由的部分**：approach 内部实现。抽象只做到「approach
   这条已被证明稳定的缝」，**不**预先给「检测 × 控制」的组合建框架——那是
   cv_explore 沙盒用文件夹探索的事，不是生产需求。
+
+## 已知问题：末端 IBVS 在 Gazebo 闭环还没收敛（调查中）
+
+离线单测里末端 IBVS 收敛到 ~1cm，但 2026-09-21 在 Gazebo（桩感知发 bearing、
+SITL 真动力学）跑，APPROACH 持续发 `cmd/velocity`、但 90s 内没压到投放门，被
+`_DROP_PHASE_TIMEOUT_S` 兜底跳走。**领先假设**：[04](../../docs/spec/04-interfaces.md)
+的 `Set Velocity` 保留飞控**自动朝向**（面向飞行方向），末端速度控制时机身随速度
+矢量转 yaw、机体前/右轴跟着转，成了绕圈而不是收敛。**下一步**：末端锁 yaw（用
+`~/cmd/yaw`，或末端水平改用机体系 `position_target`——两者都不自动转向，见 04），
+并给 approach 加实时日志（tracked bearing / off / v / herr）定位。另注：真实 CV 的
+端到端还被 Block A 卡住（感知在当前 sim 世界检出为 0，见
+[`cuadc_perception/README.md`](../cuadc_perception/README.md) 检测器约定）。

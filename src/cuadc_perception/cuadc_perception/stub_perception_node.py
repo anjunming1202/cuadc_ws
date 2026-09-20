@@ -7,11 +7,14 @@ import math
 import random
 import time
 
+import numpy as np
 import rclpy
 from geometry_msgs.msg import PoseStamped
 from rclpy.node import Node
+from sensor_msgs.msg import Imu
 from std_msgs.msg import Header
 
+from cuadc_perception import geometry
 from cuadc_perception_msgs.msg import Detection, DetectionArray
 
 # 圆筒地面真值，需要跟 cuadc_sim/field/config.py 的 DROP_CYLINDERS /
@@ -41,6 +44,13 @@ _RECON_CYLINDER_POSITIONS = {
 
 _DETECTIONS_TOPIC = '/perception/detections'
 _LOCAL_POSITION_TOPIC = '/cuadc_interface/telemetry/local_position'
+_ATTITUDE_TOPIC = '/cuadc_interface/telemetry/attitude'
+
+# 桩也要发 bearing（末端 IBVS 用，见 05 契约）。前向投影用：内参对方位方向
+# 无影响（方位=射线在相机系的比值），只需默认 nadir 挂载；圆筒顶面在
+# down=-高度，跟真实感知反投影到筒顶平面一致。
+_CAM_MOUNT = geometry.CameraParams(fx=1.0, fy=1.0, cx=0.0, cy=0.0)
+_CYLINDER_TOP_DOWN_M = -0.3
 
 
 def _world_xy_to_ned(world_x, world_y):
@@ -78,13 +88,21 @@ class StubPerceptionNode(Node):
         self._publisher = self.create_publisher(DetectionArray, _DETECTIONS_TOPIC, 10)
         self._local_position_sub = self.create_subscription(
             PoseStamped, _LOCAL_POSITION_TOPIC, self._on_local_position, 10)
+        self.create_subscription(Imu, _ATTITUDE_TOPIC, self._on_attitude, 10)
         self._current_xy = None
+        self._pos_ned = None   # (north, east, down)，前向投影 bearing 用
+        self._orient = None    # (x, y, z, w) 机体->世界，前向投影 bearing 用
 
         rate_hz = self.get_parameter('publish_rate_hz').value
         self._timer = self.create_timer(1.0 / rate_hz, self._on_timer)
 
     def _on_local_position(self, msg):
         self._current_xy = (msg.pose.position.x, msg.pose.position.y)
+        self._pos_ned = (msg.pose.position.x, msg.pose.position.y, msg.pose.position.z)
+
+    def _on_attitude(self, msg):
+        q = msg.orientation
+        self._orient = (q.x, q.y, q.z, q.w)
 
     def _on_timer(self):
         if self._current_xy is None:
@@ -119,16 +137,31 @@ class StubPerceptionNode(Node):
             f'[PERF] frame built in {elapsed_ms:.2f}ms, n={len(detections)}',
             throttle_duration_sec=1.0)
 
-    @staticmethod
-    def _make_detection(north, east, radius, noise_stddev):
+    def _make_detection(self, north, east, radius, noise_stddev):
         detection = Detection()
         detection.target_type = 'cylinder'
         detection.position.x = north + (random.gauss(0.0, noise_stddev) if noise_stddev > 0.0 else 0.0)
         detection.position.y = east + (random.gauss(0.0, noise_stddev) if noise_stddev > 0.0 else 0.0)
         detection.position.z = 0.0
+        detection.bearing_x, detection.bearing_y = self._bearing_of(north, east)
         detection.apparent_size = radius
         detection.confidence = 1.0
         return detection
+
+    def _bearing_of(self, north, east):
+        """前向投影圆筒顶中心 -> 归一化方位 (u-cx)/fx, (v-cy)/fy，与感知
+        normalize_bearing 一致（方向只取决于射线在相机系的比值，与内参无关，
+        所以决策 _bearing_to_off 能精确反出真实相对偏移）。缺姿态时回 (0,0)。"""
+        if self._pos_ned is None or self._orient is None:
+            return (0.0, 0.0)
+        pose = geometry.VehiclePose(position_ned=self._pos_ned, orientation_xyzw=self._orient)
+        cam_to_world = geometry.cam_to_world_matrix(_CAM_MOUNT, pose)
+        rel = np.array([north - self._pos_ned[0], east - self._pos_ned[1],
+                        _CYLINDER_TOP_DOWN_M - self._pos_ned[2]])
+        cam_vec = cam_to_world.T @ rel  # world -> cam
+        if cam_vec[2] <= 1e-3:
+            return (0.0, 0.0)  # 目标在相机后方/接近成像平面，方位无意义
+        return (float(cam_vec[0] / cam_vec[2]), float(cam_vec[1] / cam_vec[2]))
 
 
 def main(args=None):
