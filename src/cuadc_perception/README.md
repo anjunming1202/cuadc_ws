@@ -27,7 +27,33 @@ ros2 launch cuadc_perception cv_perception_bringup.launch.py
 了 stub，排查了很久才发现），一个脚本名直接对应一种场景，见仓库根
 `README.md` Quickstart 表格。
 
-## CV 算法：六步流水线
+## 检测器库：可替换的 CV 算法（一处声明，统一输出）
+
+会有多种 CV 算法要试（阈值+形态学、径向对称、以后可能的轻量网络…），组织
+约定是「一处声明、统一输出、可替换」：
+
+- 每个 CV 算法是一个**纯函数**：输入一帧图像（+ 该算法自己的参数），输出
+  **同一种结果**——筒的**像素中心 `(u,v)` + 视在半径(px) + 置信度**。统一
+  输出就是「可替换」的来源；输入参数各算法可以不一样，无所谓。这些函数
+  维护在一处（`cuadc_perception` 内的检测器模块），签名一致、可互换。
+- 选哪个检测器由**配置**决定——像 `cuadc_decision/drop_strategy.py` 那样一个
+  轻量的 `name -> 函数` dict + 一个「当前用哪个」的选择就够，**不做插件
+  框架**。下面的六步流水线是第一个检测器。
+- **反投影 / 归一化不写进检测器**：像素中心 → 世界坐标（反投影到筒顶平面）、
+  像素 → 归一化方位 `bearing_x/y`（除掉内参，见
+  [ADR-0005](../../docs/spec/adr/0005-terminal-align-visual-servoing.md)）都放在
+  一处共享的 geometry 助手里。感知节点的组装顺序是：**选检测器 → 拿到像素
+  结果 → geometry 助手补上 world position + bearing → 填成 `Detection` 发布**。
+  好处：检测器保持纯图像空间、与内参/姿态/sim-real 解耦、能脱离节点单测；
+  内参/姿态换算只维护一份。
+- **与决策的边界（重要）**：决策侧的 approach **不 import 这些 CV 函数**，它
+  通过 `/perception/detections` 话题拿 `Detection`（契约见
+  [`05-...`](../../docs/spec/05-perception-decision-interface.md)）。所以「换
+  CV 算法」= 改**感知这边**的配置；「不同任务阶段用不同检测器」要靠 05 里
+  预留的「决策→感知开关」（MVP 不做），不是让决策直接调 CV——这样才守住
+  「感知无状态、不知任务阶段、跟决策只隔一条话题」的边界。
+
+## CV 算法：六步流水线（第一个检测器）
 
 对每一帧 `/camera/image_raw` 做（`cv_pipeline.detect_cylinders`）：
 
@@ -51,6 +77,11 @@ ros2 launch cuadc_perception cv_perception_bringup.launch.py
 6. **Confidence**：轮廓面积 / 外接圆面积（`circularity`）。越接近 1
    说明形状越规则（越像一个圆），斜视/噪声导致的不规则形状会明显
    偏低。第一版只用这一个信号，没有加权多个因子。
+
+> 迁移说明：当前 `cv_pipeline` 把第 5 步反投影也打包在检测器里（直接返回
+> 世界坐标）。按上面「检测器库」约定，迁移会把**反投影 + 归一化方位拆到
+> 共享 geometry 助手**、检测器只保留纯图像空间的 1–4/6 步（输出像素中心 +
+> 半径 + 置信度），由感知节点再组装成 `Detection`。
 
 反投影用到的相机内参默认值是 sim 实测值（
 `~/ardupilot_gazebo/models/gimbal_small_3d/model.sdf`：

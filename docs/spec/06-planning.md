@@ -96,6 +96,14 @@ RTL_OR_LAND            — 切 RTL/LAND，等落在 H 点内、螺旋桨停止�
 系统偏差磨掉。感知层要不要额外做视差修正，是感知模块自己的算法设计
 问题，不在这份状态机文档的范围内。
 
+> `APPROACH_DROP_TARGET` 的接近控制形态已细化为「粗接近（PBVS，世界坐标）→
+> 末端对准（IBVS，像素误差）」的 hybrid，决策与理由见
+> [ADR-0005](adr/0005-terminal-align-visual-servoing.md)。上一段的视差自愈
+> 论证在 IBVS 下依然成立：末端把筒顶中心压向画面正下方，趋于正上方时筒顶
+> 中心与地面中心重合，是同一个自愈机制。这套接近怎么组织成一个可替换的
+> approach 单元属实现细节、不在本文档范围（见开头「实现细节不构成契约」的
+> 说明），落点见 [`cuadc_decision/README.md`](../../src/cuadc_decision/README.md)。
+
 ## "先投放后侦察"的判定依据
 
 赛规要求"先投放、后侦察"。`NAVIGATE_TO_RECON_ZONE` 的进入条件是**两次

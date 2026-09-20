@@ -55,3 +55,63 @@ ros2 launch cuadc_decision decision_bringup.launch.py \
 
 另开一个终端 `ros2 topic echo /cuadc_decision/mission_state` 能拿到干净的、
 只有当前状态的实时视图，不用在主日志里找。
+
+## 投放接近（APPROACH）：可替换的「阶段策略」单元
+
+任务状态机（`SEARCH → APPROACH → DROP`，见
+[`06-planning.md`](../../docs/spec/06-planning.md)）、状态间的 transition、
+以及三条对外接口（感知 `Detection`、接口层运动指令、投放 `set_relay`）是
+**固定框架**；`APPROACH_DROP_TARGET` 这一阶段**内部怎么把飞机对到筒上**是
+**自由、可替换**的部分。要试新的接近算法，就写一个新的 approach 单元换掉
+旧的、transition 不变——这是 `drop_strategy.py` 那套「可插拔一层、独立于
+状态转移」的做法用在更大粒度上。
+
+- **approach 单元的接口**：跟 `drop_strategy` 同样轻量——一个 approach 是一组
+  `enter/loop/exit`（`loop` 每 tick 吃 `ctx`、吐运动指令 +「对齐好没有 / 该不
+  该投」的判定），注册进一个 `name -> approach` dict，一个「当前用哪个」切换/
+  实验，不动状态机主干。
+- **approach 自己的自由度**：粗/精子流程、先水平后下降、降高时机、末端切 IBVS
+  的条件、（要的话）动态调焦、以及**用哪个检测结果**——都在 approach 内部
+  决定。检测本身是感知那边的可替换库（见
+  [`cuadc_perception/README.md`](../cuadc_perception/README.md)），approach 通过
+  `Detection` 话题消费、**不自己跑 CV**。调焦同理：**决定**在 approach、
+  **执行**走 item 3 的相机控制服务端点（见
+  [`camera-tuning.md`](../../docs/spec/camera-tuning.md)）——一个资源一个持有者。
+- **命名**：approach 名字要长、点出算法形态（它编码整套「怎么接近」，不是一个
+  小旋钮）。第一份 = **`coarse_pbvs_then_terminal_ibvs`**（粗接近世界坐标
+  PBVS、末端像素 IBVS，决策见
+  [ADR-0005](../../docs/spec/adr/0005-terminal-align-visual-servoing.md)）。以后
+  有新形态再加（如 `spiral_search_then_ibvs`），不复用一个太泛的名字。
+- **运动指令**：粗接近用位置指令（`~/cmd/position_target_local`，现在就在用）；
+  末端 IBVS 用 `~/cmd/velocity`（[04](../../docs/spec/04-interfaces.md) 已有，
+  **机身系**前/右/下速度）。下视固定相机下像素误差方向天然就是机身水平方向，
+  IBVS 输出直接是机身系速度，不用转地理 NED。注意 `GUID_TIMEOUT`（默认 3s
+  惯性）：末端按几 Hz 持续发速度，投放前压到近零速再触发 `set_relay`。
+  `TickResult` 现在只有 `position_target` + `service_call`，迁移要给它加一个
+  **速度指令**字段（内部结构，由 `decision_node` 翻成对应 04 调用）。
+
+## 配置分层：场景选 sim/real，参数按 approach 分文件
+
+- **sim/real 选择**沿用现有先例：不靠一个参数默认值二选一，而是**场景启动
+  脚本**各起各的（`run_mission_sim.sh` / `run_mission_hardware.sh` /
+  `run_mission_stub_sim.sh`，见仓库根 `README.md` Quickstart）。
+- **每个 approach 的可调参数**（增益、门限、降高率、投放容差…）放进**该
+  approach 自己的 yaml**，且**显式标 sim / real**
+  （`coarse_pbvs_then_terminal_ibvs.sim.yaml` / `.real.yaml` 并排，不做一个
+  语义含糊的 base），哪套由启动场景选。增益/门限的**起点**来自 cv_explore 的
+  offline sim（`servo_align/README`），上 Gazebo/真机再重调，不是最终值。
+- **cv_explore 沙盒不强制 yaml**：沙盒里参数用文件里看得见的常量 + README
+  记录即可；yaml 提炼是**迁移到生产**才做的规范，沙盒图快、不背这个包袱。
+
+## 迁移边界：哪些写死、哪些自由
+
+- **现状**：`mission_logic._tick_approach_drop_target` 是闭环 **PBVS**（用
+  `position_target` 发绝对局部坐标），直接写死在状态机方法里，没抽成可替换
+  单元。
+- **迁移做两件事**：(1) 把 approach 抽成上面的可替换单元（dict + enter/loop/
+  exit + `TickResult` 加速度字段）；(2) 落地第一份
+  `coarse_pbvs_then_terminal_ibvs`（粗段沿用现有 PBVS、末端加 IBVS）。
+- **有意写死/耦合的部分**（迁移不动）：任务 FSM 的状态与转移（06）、transition
+  契约、三条对外接口。**自由的部分**：approach 内部实现。抽象只做到「approach
+  这条已被证明稳定的缝」，**不**预先给「检测 × 控制」的组合建框架——那是
+  cv_explore 沙盒用文件夹探索的事，不是生产需求。
