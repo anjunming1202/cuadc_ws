@@ -70,6 +70,8 @@ class DecisionNode(Node):
 
         self._position_target_pub = self.create_publisher(
             PositionTarget, f'{_INTERFACE_NS}/cmd/position_target_local', 10)
+        self._velocity_pub = self.create_publisher(
+            TwistStamped, f'{_INTERFACE_NS}/cmd/velocity', 10)
         self._status_pub = self.create_publisher(String, '~/mission_state', 10)
 
         self.create_subscription(Bool, f'{_INTERFACE_NS}/status/connected', self._on_connected, 10)
@@ -181,6 +183,15 @@ class DecisionNode(Node):
             target_msg.y = y
             target_msg.z = z
             self._position_target_pub.publish(target_msg)
+
+        if result.velocity_target is not None:
+            vx, vy, vz = result.velocity_target
+            twist_msg = TwistStamped()
+            twist_msg.header.stamp = self.get_clock().now().to_msg()
+            twist_msg.twist.linear.x = vx  # 前（机体系），见 04-interfaces.md cmd/velocity
+            twist_msg.twist.linear.y = vy  # 右
+            twist_msg.twist.linear.z = vz  # 下
+            self._velocity_pub.publish(twist_msg)
 
         if result.service_call is not None:
             self._maybe_dispatch_service_call(result.service_call)

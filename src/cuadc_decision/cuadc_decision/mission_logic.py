@@ -140,6 +140,7 @@ class ServiceResult:
 class TickResult:
     next_state: Optional[str] = None
     position_target: Optional[Tuple[float, float, float]] = None  # (x, y, z)，同 telemetry/local_position 坐标系
+    velocity_target: Optional[Tuple[float, float, float]] = None  # (前,右,下) 机体系速度 m/s，末端 IBVS 用，见 04-interfaces.md cmd/velocity
     service_call: Optional[ServiceCallRequest] = None
 
 
