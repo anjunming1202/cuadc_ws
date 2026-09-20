@@ -1,0 +1,13 @@
+# color_pad 检测器 —— Gazebo sim 档(浅蓝落点盘 + 白筒,实测采样)。
+# OpenCV HSV: H 0-179, S/V 0-255。字段 = ColorPadConfig 字段。
+blue_lo: [95, 40, 110]
+blue_hi: [115, 255, 255]
+white_lo: [0, 0, 165]
+white_hi: [180, 60, 255]
+proc_w: 640              # sim 原生 640,不降采样
+morph_k: 5
+min_mat_area_frac: 0.01
+hole_area_lo: 0.004
+hole_area_hi: 0.5
+min_tube_ratio: 0.10
+max_tube_offset: 0.90

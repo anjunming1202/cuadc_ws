@@ -126,8 +126,9 @@ ros.subscribe('/perception/detections', 'cuadc_perception_msgs/DetectionArray', 
 });
 
 const perfChart = new RollingChart(document.getElementById('chart-perf'));
-// kv.* 这几个 key 名字权威来源是 cv_pipeline.py 的 detect_cylinders()
-// 里填 perf dict 的地方——改了那边的 key 名，这里要跟着改，不然对应的
+// kv.* 这几个 key 名字权威来源是 detectors/ 里检测器填 perf dict 的地方
+// （segment_ms/morphology_ms/contours_ms/fit_ms）——改了那边的 key 名，这里
+// 要跟着改，不然对应的
 // stat 会一直显示 "--"（不会报错，容易漏掉）。
 ros.subscribe('/cuadc_perception_cv/perf', 'diagnostic_msgs/DiagnosticArray', (m) => {
   const status = m.status[0];

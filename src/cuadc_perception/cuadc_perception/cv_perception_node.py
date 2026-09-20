@@ -1,10 +1,11 @@
-"""真实感知节点：订阅相机图像 + 遥测（位置/姿态），跑 cv_pipeline 里的
-传统 CV 算法，发布跟桩节点同一份契约（docs/spec/05-perception-decision-interface.md）
+"""真实感知节点：订阅相机图像 + 遥测（位置/姿态），跑 `detectors/` 里选定的
+检测器，发布跟桩节点同一份契约（docs/spec/05-perception-decision-interface.md）
 的 DetectionArray——决策层不需要区分对面是桩还是这个节点。
 
-这里只做 ROS2 接线（订阅/参数/发布），算法本身在 cv_pipeline.py（纯
-函数，不依赖 rclpy，可以脱离节点单测），跟 mission_logic.py/decision_node.py
-的分层原则一致。
+这里只做 ROS2 接线（订阅/参数/发布），算法本身在 `detectors/`（纯函数，不依赖
+rclpy，可以脱离节点单测），跟 mission_logic.py/decision_node.py 的分层原则一致。
+用哪个检测器 = `detector` 参数、sim/real = `profile` 参数（检测器库约定见
+cuadc_perception/README.md）。
 
 按图像帧率处理（收到一帧处理一帧），不像桩节点那样用固定频率定时器
 ——桩节点没有真实数据源触发，只能自己定频率；这里数据源就是相机本身
@@ -22,7 +23,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import Image, Imu
 from std_msgs.msg import Header, String
 
-from cuadc_perception import cv_pipeline, geometry
+from cuadc_perception import detectors, geometry
 from cuadc_perception_msgs.msg import Detection, DetectionArray
 
 _DETECTIONS_TOPIC = '/perception/detections'
@@ -66,7 +67,12 @@ class CvPerceptionNode(Node):
         self.declare_parameter('cylinder_height_m', 0.3)
         self.declare_parameter('min_radius_m', 0.05)
         self.declare_parameter('max_radius_m', 0.18)
-        self.declare_parameter('morph_kernel_px', 5)
+        # 用哪个检测器 + sim/real 档:检测器算法在 detectors/,各自可调参数
+        # (HSV 阈值/形态学/几何门)在 detectors/<detector>.<profile>.yaml 跟着
+        # 方法走(见 cuadc_perception/README.md 检测器库)。profile 由场景启动
+        # 脚本选(sim / real),不用改代码。
+        self.declare_parameter('detector', detectors.ACTIVE_DEFAULT)
+        self.declare_parameter('profile', 'sim')
         # 每种调试图像各自一个布尔开关，默认全关。运行时用
         # `ros2 param set /cuadc_perception_cv debug_<view>_enabled true`切换
         # （cuadc_viz 网页的格子走的也是这个参数服务），不用重启节点。用
@@ -82,6 +88,14 @@ class CvPerceptionNode(Node):
         # 代码，前端多勾也不会真的让机上多算。超过上限的按 _DEBUG_VIEWS
         # 的顺序丢弃靠后的，不报错，只打限流日志。
         self.declare_parameter('max_concurrent_debug_views', 4)
+
+        # 选定检测器 + 载入它的 sim/real 配置(一次,启动时)。配置从
+        # detectors/<detector>.<profile>.yaml 读,跟着方法走。
+        detector_name = self.get_parameter('detector').value
+        profile = self.get_parameter('profile').value
+        self._detector = detectors.DETECTORS[detector_name]
+        self._detector_cfg = self._detector.load_config(profile)
+        self.get_logger().info(f'[DETECTOR] {detector_name} (profile={profile})')
 
         self._bridge = CvBridge()
         self._latest_position_ned = None  # (north, east, down)
@@ -136,9 +150,8 @@ class CvPerceptionNode(Node):
         active_views = self._active_debug_views()
         perf = {}
         debug = {} if active_views else None
-        observations = cv_pipeline.detect_cylinders_pixels(
-            image_bgr, morph_kernel_px=self.get_parameter('morph_kernel_px').value,
-            perf=perf, debug=debug)
+        observations = self._detector.detect_cylinders_pixels(
+            image_bgr, self._detector_cfg, perf=perf, debug=debug)
 
         # 组装：检测器出图像观测 -> geometry 反投影出世界坐标 + 归一化方位
         # bearing -> 物理半径过滤 -> 填成 Detection。accept/reject 在这里决定
