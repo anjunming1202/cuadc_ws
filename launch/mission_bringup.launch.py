@@ -56,6 +56,7 @@ def generate_launch_description():
     decision_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution(
             [FindPackageShare('cuadc_decision'), 'launch', 'decision_bringup.launch.py'])),
+        launch_arguments={'profile': LaunchConfiguration('profile')}.items(),
     )
 
     return LaunchDescription([connection_arg, profile_arg, interface_launch, cv_perception_launch, decision_launch])

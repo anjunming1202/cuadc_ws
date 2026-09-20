@@ -1,30 +1,33 @@
-"""投放接近的可替换「阶段策略」单元。
-
-任务状态机(SEARCH->APPROACH->DROP,见 docs/spec/06-planning.md)与 transition
-契约是固定框架;`APPROACH_DROP_TARGET` 内部**怎么把飞机对到筒上**是可替换的
-部分——每个 approach 是一个类,注册进 APPROACHES,改 ACTIVE_APPROACH 切换/实验,
-不动状态机主干(用法同 drop_strategy.py,粒度更大)。约定见
-cuadc_decision/README.md;末端用 IBVS 的决策见
-docs/spec/adr/0005-terminal-align-visual-servoing.md。
+"""投放接近的第一份「阶段策略」:粗接近世界坐标 PBVS(把筒弄进视野)-> 末端
+像素 IBVS 精对准(对定位误差免疫)。决策见
+docs/spec/adr/0005-terminal-align-visual-servoing.md;组织/迁移约定见
+cuadc_decision/README.md(一个 approach 一个模块 + 同名 sim/real yaml 跟着放)。
 
 纯 Python,不依赖 rclpy——可脱离节点单测(含末端 IBVS 控制律)。approach 只消费
-MissionContext(遥测 + 检测),吐 ApproachOutput(位置或速度指令 + 是否可投),不碰
-ROS 类型;decision_node 把它翻译成 position_target / velocity_target。
+MissionContext(遥测 + 检测),吐 ApproachOutput,不碰 ROS 类型。可调参数(增益/
+门限/降高率/投放容差…)由 `<此目录>/<NAME>.{sim,real}.yaml` 提供,`load_config`
+读取,场景启动脚本选 profile。
 """
 
 import math
 import time
-from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional, Tuple
 
+import yaml
+
+from cuadc_decision.approaches.base import ApproachOutput
 from cuadc_decision.drop_strategy import Candidate
+
+NAME = 'coarse_pbvs_then_terminal_ibvs'
 
 
 @dataclass
 class ApproachConfig:
-    """approach 的可调参数。默认是离线 sim 起点值(见 cv_explore/servo_align),
-    上 Gazebo/真机按真实延迟/动力学重调;sim/real 分别用各自 yaml 覆盖
-    (见 cuadc_decision/README.md 配置分层)。"""
+    """approach 的可调参数。字段名 = yaml 键。默认值只是兜底(纯单测/import 用),
+    正常从 <NAME>.<profile>.yaml 读:sim 是 Gazebo 验证值,real 上真机按真实
+    延迟/动力学重调。"""
     cruise_alt_m: float = 2.0
     drop_alt_m: float = 1.0
     cylinder_height_m: float = 0.3        # 圆筒高;末端反算深度=离地高-筒高(相机到筒顶平面),见 _bearing_to_off
@@ -41,7 +44,7 @@ class ApproachConfig:
     kd: float = 0.3
     v_max_mps: float = 1.0
     i_zone_m: float = 0.4                 # 只在近端积分,防大接近段积分饱和回弹
-    lever_arm_m: Tuple[float, float] = (0.0, 0.0)  # 机体系(前,右)投放机构杆臂,米;sim 默认见 yaml、real empirical 测
+    lever_arm_m: Tuple[float, float] = (0.0, 0.0)  # 机体系(前,右)投放机构杆臂,米;sim 无物理机构=0、real empirical 测
     max_coast_ticks: int = 4              # 末段连续失配超过此帧数就悬停,不靠陈旧偏移乱冲
     # 降高
     descend_rate_mps: float = 0.4
@@ -53,6 +56,18 @@ class ApproachConfig:
     stable_hold_s: float = 1.0            # 上述连续满足这么久才可投
 
 
+def load_config(profile: str) -> ApproachConfig:
+    """从 `<此目录>/<NAME>.<profile>.yaml` 读配置(profile 通常 'sim'/'real')。"""
+    path = Path(__file__).parent / f'{NAME}.{profile}.yaml'
+    with open(path) as fh:
+        data = yaml.safe_load(fh) or {}
+    return ApproachConfig(**data)
+
+
+def create(config: Optional[ApproachConfig] = None) -> 'CoarsePbvsThenTerminalIbvs':
+    return CoarsePbvsThenTerminalIbvs(config)
+
+
 @dataclass
 class ApproachState:
     phase: str = 'coarse'                 # coarse -> terminal
@@ -62,13 +77,6 @@ class ApproachState:
     prev_off: Optional[Tuple[float, float]] = None       # 上一帧偏移,PID 的 D 项(on measurement)用
     prev_off_meas: Optional[Tuple[float, float]] = None  # 上一次有检测时的偏移,短暂丢失时 coast 用
     stable_since: Optional[float] = None
-
-
-@dataclass
-class ApproachOutput:
-    position_target: Optional[Tuple[float, float, float]] = None  # (x,y,z) 局部 NED,粗段
-    velocity_target: Optional[Tuple[float, float, float]] = None  # (前,右,下) 机体系速度,末端
-    drop_ready: bool = False
 
 
 def _clip(v, lim):
@@ -90,7 +98,7 @@ class CoarsePbvsThenTerminalIbvs:
     都按世界坐标最近门关联(姿态无关、能区分相邻筒),别的筒进视野不跳;末段
     伺服用 bearing 姿态补偿偏移(定位无关)——关联用世界、控制用 bearing。"""
 
-    name = 'coarse_pbvs_then_terminal_ibvs'
+    name = NAME
 
     def __init__(self, cfg: Optional[ApproachConfig] = None):
         self.cfg = cfg or ApproachConfig()
@@ -215,13 +223,3 @@ class CoarsePbvsThenTerminalIbvs:
             return (0.0, 0.0)  # 射线接近水平 / 高度异常,解不出合理交点
         t = depth / lvl[2]
         return (t * lvl[0], t * lvl[1])  # (前, 右)
-
-
-APPROACHES = {
-    'coarse_pbvs_then_terminal_ibvs': CoarsePbvsThenTerminalIbvs,
-}
-ACTIVE_APPROACH = 'coarse_pbvs_then_terminal_ibvs'  # 改这行切换/实验(以后有新形态再加)
-
-
-def create_active(cfg: Optional[ApproachConfig] = None):
-    return APPROACHES[ACTIVE_APPROACH](cfg)

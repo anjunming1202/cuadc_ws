@@ -29,7 +29,7 @@ import time
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
-from cuadc_decision import approach as approach_mod
+from cuadc_decision import approaches
 from cuadc_decision import drop_strategy
 from cuadc_decision.drop_strategy import Candidate
 
@@ -63,8 +63,8 @@ _DROP_RELAY_CHANNEL = 0
 _MIN_DETECTION_CONFIDENCE = 0.5  # 桩节点恒发 1.0 用不上，先占住真实 CV 的过滤点
 
 # 接近阶段的全部参数（进近半径、投放高度/容差、姿态补偿、投放门、投放机构
-# 杆臂等）搬到 approach.py 的 ApproachConfig，由可替换的接近单元自己持有，
-# 见 cuadc_decision/README.md「投放接近」。
+# 杆臂等）在 approaches/ 里该 approach 的 ApproachConfig + sim/real yaml，由可
+# 替换的接近单元自己持有，见 cuadc_decision/README.md「投放接近」。
 
 
 def _world_xy_to_ned(world_x, world_y):
@@ -109,11 +109,19 @@ _RECON_PHASE_TIMEOUT_S = 90.0
 _DROP_STATES = frozenset({State.SEARCH_DROP_TARGETS, State.APPROACH_DROP_TARGET, State.DROP_PAYLOAD})
 _RECON_STATES = frozenset({State.SURVEY_RECON_ZONE})
 
-# 可替换的接近阶段策略实例（粗 PBVS -> 末端 IBVS 等，见 approach.py）。持有跨
-# tick 的接近内部状态（跟踪器/锁定目标）;进入 APPROACH 时 _tick_search 调
-# .enter() 重置。换算法改 approach.ACTIVE_APPROACH，不动状态机。接近的全部
-# 可调参数在 approach.ApproachConfig，不再散落本文件常量。
-_ACTIVE_APPROACH = approach_mod.create_active()
+# 可替换的接近阶段策略实例（粗 PBVS -> 末端 IBVS 等，见 approaches/）。持有跨
+# tick 的接近内部状态（锁定目标）;进入 APPROACH 时 _tick_search 调 .enter() 重置。
+# 换算法改 approaches.ACTIVE，不动状态机。可调参数在该 approach 的 sim/real yaml。
+# 这里用 dataclass 默认建一个（纯单测/import 期不读文件）;decision_node 起来后按
+# profile 调 configure_approach() 换成对应档,见下。
+_ACTIVE_APPROACH = approaches.create_active()
+
+
+def configure_approach(profile):
+    """按 sim/real profile 从 yaml 载入当前 approach 的配置,重建活动实例。
+    decision_node 在 __init__ 里调一次（profile 参数由场景启动脚本给）。"""
+    global _ACTIVE_APPROACH
+    _ACTIVE_APPROACH = approaches.create_active(profile=profile)
 
 
 # ---- decision_node.py 与这里交换数据用的普通数据类型（不含任何 ROS 类型）----
@@ -352,7 +360,7 @@ def _tick_search_drop_targets(ctx):
 
 def _tick_approach_drop_target(ctx):
     # 接近的内部实现是可替换的 approach 单元（粗 PBVS -> 末端 IBVS 等），见
-    # approach.py / cuadc_decision/README.md。这里只把它的输出翻成 TickResult：
+    # approaches/ / cuadc_decision/README.md。这里只把它的输出翻成 TickResult：
     # 对齐并稳住（drop_ready）就转 DROP，否则发它要的运动指令（粗段位置、末端速度）。
     out = _ACTIVE_APPROACH.loop(ctx)
     if out.drop_ready:

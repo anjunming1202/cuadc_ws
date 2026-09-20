@@ -8,14 +8,19 @@
 [`04-interfaces.md`](../../docs/spec/04-interfaces.md)。本文件不重复
 描述这些内容。
 
-代码分三层：
+代码分层：
 - `mission_logic.py`——纯 Python，状态机本身、每个阶段的判断逻辑，不
   依赖 rclpy，可以脱离 ROS2 节点单独单元测试。
 - `drop_strategy.py`——投放目标选哪个筒的策略，纯 Python，独立于状态机。
   每个策略是一个函数（签名见文件头），注册进 `STRATEGIES` 字典，改
   `ACTIVE_STRATEGY` 指向哪个就切换/实验哪个策略，不用改 `mission_logic.py`。
+  （策略是小函数、没有各自的 config，就留一个文件；不像 `approaches/` 那样
+  开文件夹——一个方法一个文件夹只在方法带 config/多文件时才值得。）
+- `approaches/`——投放接近的可替换「阶段策略」，一个 approach 一个模块 + 各自
+  的 sim/real config yaml 跟着放（组织同 `cuadc_perception/detectors/`），详见
+  下面「投放接近」。
 - `decision_node.py`——唯一碰 ROS2 API 的地方，订阅遥测/检测、调用
-  接口层 service、发布位置指令，每个 tick 把数据交给 `mission_logic`
+  接口层 service、发布位置/速度指令，每个 tick 把数据交给 `mission_logic`
   处理，再把结果翻译回真正的 ROS2 调用。
 
 ```
@@ -92,14 +97,17 @@ ros2 launch cuadc_decision decision_bringup.launch.py \
 
 ## 配置分层：场景选 sim/real，参数按 approach 分文件
 
-- **sim/real 选择**沿用现有先例：不靠一个参数默认值二选一，而是**场景启动
-  脚本**各起各的（`run_mission_sim.sh` / `run_mission_hardware.sh` /
-  `run_mission_stub_sim.sh`，见仓库根 `README.md` Quickstart）。
-- **每个 approach 的可调参数**（增益、门限、降高率、投放容差…）放进**该
-  approach 自己的 yaml**，且**显式标 sim / real**
-  （`coarse_pbvs_then_terminal_ibvs.sim.yaml` / `.real.yaml` 并排，不做一个
-  语义含糊的 base），哪套由启动场景选。增益/门限的**起点**来自 cv_explore 的
-  offline sim（`servo_align/README`），上 Gazebo/真机再重调，不是最终值。
+- **每个 approach 的可调参数**（增益、门限、降高率、投放容差、投放机构杆臂…）
+  放进 `approaches/<approach>.<profile>.yaml`——**跟着方法放**、显式标 `sim`/`real`
+  （`coarse_pbvs_then_terminal_ibvs.sim.yaml` / `.real.yaml` 并排，不做语义含糊
+  的 base），组织同 `cuadc_perception/detectors/`。sim 是 Gazebo 验证值；real
+  当前是占位副本，上真机按真实延迟/动力学重调、杆臂实测。
+- **sim/real 选择**沿用 `connection` 那套：不靠一个参数默认值二选一，而是
+  **场景启动脚本**把 `profile` 写死（`run_mission_sim.sh`=sim /
+  `run_mission_hardware.sh`=real / `run_mission_stub_sim.sh` 走桩不涉及）。
+  `profile` 经 `mission_bringup` 传到 `decision_node`，`decision_node.__init__`
+  调 `mission_logic.configure_approach(profile)` 载入对应 yaml 重建活动 approach。
+  同一个 `profile` 也选感知检测器的档（见 `cuadc_perception/README.md`）。
 - **cv_explore 沙盒不强制 yaml**：沙盒里参数用文件里看得见的常量 + README
   记录即可；yaml 提炼是**迁移到生产**才做的规范，沙盒图快、不背这个包袱。
 

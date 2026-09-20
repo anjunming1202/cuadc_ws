@@ -57,6 +57,11 @@ class DecisionNode(Node):
         # 跟正常任务流程完全一样（见 docs/spec/06-planning.md）。
         self.declare_parameter('initial_state', 'INIT')
         self.declare_parameter('stop_after_drop', False)
+        # 接近算法的 sim/real config 档，跟感知 profile 同一个道理，由场景启动
+        # 脚本给（run_mission_sim.sh=sim / run_mission_hardware.sh=real）；载入对应
+        # yaml 重建活动 approach，见 approaches/ + cuadc_decision/README.md 配置分层。
+        self.declare_parameter('profile', 'sim')
+        mission_logic.configure_approach(self.get_parameter('profile').value)
         self._ctx = mission_logic.MissionContext(
             current_state=self.get_parameter('initial_state').value,
             stop_after_drop=self.get_parameter('stop_after_drop').value,
