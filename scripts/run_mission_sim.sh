@@ -31,8 +31,8 @@ source "$REPO_ROOT/scripts/activate_env.sh"
 LOG_FILTER="${LOG_FILTER:-}"
 
 if [[ -n "$LOG_FILTER" ]]; then
-    ros2 launch "$REPO_ROOT/launch/mission_bringup.launch.py" connection:=udp:127.0.0.1:14550 "$@" \
+    ros2 launch "$REPO_ROOT/launch/mission_bringup.launch.py" connection:=udp:127.0.0.1:14550 profile:=sim "$@" \
         2>&1 | grep --line-buffered -E "$LOG_FILTER"
 else
-    exec ros2 launch "$REPO_ROOT/launch/mission_bringup.launch.py" connection:=udp:127.0.0.1:14550 "$@"
+    exec ros2 launch "$REPO_ROOT/launch/mission_bringup.launch.py" connection:=udp:127.0.0.1:14550 profile:=sim "$@"
 fi

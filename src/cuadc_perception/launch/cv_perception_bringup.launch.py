@@ -31,8 +31,9 @@ def generate_launch_description():
         'min_radius_m', default_value='0.05', description='候选物理半径下限（米），过滤明显不合理的检测')
     max_radius_arg = DeclareLaunchArgument(
         'max_radius_m', default_value='0.18', description='候选物理半径上限（米）')
-    morph_kernel_arg = DeclareLaunchArgument(
-        'morph_kernel_px', default_value='5', description='形态学去噪核大小（像素）')
+    profile_arg = DeclareLaunchArgument(
+        'profile', default_value='sim',
+        description='检测器的 sim/real 档：读 detectors/<detector>.<profile>.yaml，仿真 sim、真机 real')
     debug_annotated_arg = DeclareLaunchArgument(
         'debug_annotated_enabled', default_value='false', description='是否发布标注调试图，运行时可用 ros2 param set 切换')
     debug_contours_arg = DeclareLaunchArgument(
@@ -60,7 +61,7 @@ def generate_launch_description():
             'cylinder_height_m': LaunchConfiguration('cylinder_height_m'),
             'min_radius_m': LaunchConfiguration('min_radius_m'),
             'max_radius_m': LaunchConfiguration('max_radius_m'),
-            'morph_kernel_px': LaunchConfiguration('morph_kernel_px'),
+            'profile': LaunchConfiguration('profile'),
             'debug_annotated_enabled': LaunchConfiguration('debug_annotated_enabled'),
             'debug_contours_enabled': LaunchConfiguration('debug_contours_enabled'),
             'debug_mask_enabled': LaunchConfiguration('debug_mask_enabled'),
@@ -70,7 +71,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         fx_arg, fy_arg, cx_arg, cy_arg, roll_arg, pitch_arg, yaw_arg,
-        cylinder_height_arg, min_radius_arg, max_radius_arg, morph_kernel_arg,
+        cylinder_height_arg, min_radius_arg, max_radius_arg, profile_arg,
         debug_annotated_arg, debug_contours_arg, debug_mask_arg, max_concurrent_debug_arg,
         cv_perception_node,
     ])
