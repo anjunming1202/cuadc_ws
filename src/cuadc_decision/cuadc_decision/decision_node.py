@@ -212,6 +212,17 @@ class DecisionNode(Node):
                 f'[DETECT] n={len(self._ctx.detections)} sizes=[{sizes}]',
                 throttle_duration_sec=1.0)
 
+        if self._ctx.current_state == mission_logic.State.SEARCH_DROP_TARGETS:
+            # 诊断 SEARCH 候选聚类质量：每个聚类的均值位置 + 累计样本数,
+            # 看均值有没有被斜视早样本拖偏 / 有没有把两个筒并成一簇。
+            parts = []
+            for c in self._ctx.drop_task.clusters:
+                mx, my, _ = mission_logic._cluster_mean(c)
+                parts.append(f'({mx:.1f},{my:.1f})x{len(c)}')
+            self.get_logger().info(
+                f'[SEARCH] clusters={len(parts)} used={len(self._ctx.drop_task.used_positions)} '
+                f'[{"; ".join(parts)}]', throttle_duration_sec=1.0)
+
         if self._ctx.current_state == mission_logic.State.APPROACH_DROP_TARGET:
             # 诊断进近阶段抖动/收敛用，节流稍快（0.3s）才看得出振荡。yaw 确认
             # 全程锁 yaw 生效（末端应基本不变）；v 是发给飞控的机体系速度；其余
@@ -229,10 +240,20 @@ class DecisionNode(Node):
                 dist = math.hypot(self._ctx.local_position_xy[0] - ast.locked.x,
                                   self._ctx.local_position_xy[1] - ast.locked.y)
             diststr = f'{dist:.2f}' if dist is not None else 'None'
+            # near_det=离锁定目标最近的实时检测世界距离。粗段停在目标上却迟迟不
+            # 交接时,这个值 >refine_gate(0.4) 就说明选定的聚类位置和实测筒对不上
+            # （聚类均值被斜视样本拖偏 / 并簇),即 Block B 的关联问题。
+            ndist = None
+            if ast.locked is not None:
+                dets_xy = [(d.position.x, d.position.y) for d in self._ctx.detections
+                           if d.target_type == 'cylinder']
+                if dets_xy:
+                    ndist = min(math.hypot(dx - ast.locked.x, dy - ast.locked.y) for dx, dy in dets_xy)
+            ndstr = f'{ndist:.2f}' if ndist is not None else 'None'
             hstr = f'{-self._ctx.local_position_z:.2f}' if self._ctx.local_position_z is not None else 'None'
             self.get_logger().info(
                 f'[APPROACH] phase={ast.phase} yaw={self._yaw_rad:.3f} v={vstr} '
-                f'off={offstr} miss={ast.miss} dist2lock={diststr} h={hstr} '
+                f'off={offstr} miss={ast.miss} dist2lock={diststr} near_det={ndstr} h={hstr} '
                 f'hspeed={self._ctx.horizontal_speed}',
                 throttle_duration_sec=0.3)
 
