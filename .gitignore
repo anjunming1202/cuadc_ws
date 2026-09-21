@@ -11,3 +11,6 @@ mav.parm
 
 # Captured image datasets (large; dataset tooling itself lives on feature/cylinder-dataset)
 src/cylinder_dataset/data/
+
+# cv_explore sandbox: track the exploration CODE, not the per-run output images
+src/cv_explore/**/out/
