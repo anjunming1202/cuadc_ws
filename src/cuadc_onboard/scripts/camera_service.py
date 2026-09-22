@@ -34,8 +34,9 @@ def build_pipeline(w: int, h: int, fps: int, bitrate: int) -> Gst.Pipeline:
         f"h264parse config-interval=-1 ! rtph264pay config-interval=1 pt=96 ! "
         f"tee name=t "
         f"t. ! queue ! udpsink host=127.0.0.1 port=5602 sync=false async=false "
-        f"t. ! queue ! udpsink host=127.0.0.1 port=5603 sync=false async=false"
-    )
+        f"t. ! queue ! udpsink host=127.0.0.1 port=5603 sync=false async=false "
+        f"t. ! queue ! udpsink host=127.0.0.1 port=5604 sync=false async=false"
+    )  # 5602 本地(CV/调参) 5603 转地面 5604 机载录制(onboard_record 读;无人读则内核丢弃)
     return Gst.parse_launch(desc)
 
 
