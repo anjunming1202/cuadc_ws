@@ -15,6 +15,8 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
+import ctypes.util
 import signal
 import subprocess
 import sys
@@ -25,9 +27,19 @@ VIDEO_PORT = 5604
 VIDEO_CAPS = "application/x-rtp,media=video,encoding-name=H264,payload=96"
 
 
+def _set_pdeathsig() -> None:
+    """子进程 preexec:父进程一死,内核给本子进程发 SIGTERM —— 防 ssh 断线/父被杀时
+    gst/ros2 变孤儿继续占住 5604(下次录制就废)。"""
+    try:
+        libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6", use_errno=True)
+        libc.prctl(1, signal.SIGTERM)  # PR_SET_PDEATHSIG = 1
+    except Exception:
+        pass
+
+
 class Recorder:
     """机载录制后端:start() 拉起视频(gst)+rosbag(ros2 bag)子进程,stop() 发 SIGINT 干净收尾。
-    子进程各自独立会话(start_new_session),不吃终端的 Ctrl-C,由 stop() 有序收尾。"""
+    子进程设 PR_SET_PDEATHSIG:父进程一死就自杀,绝不留孤儿占 5604/相机。"""
 
     def __init__(self, out_dir: Path, video: bool = True, bag: bool = True,
                  topics: list[str] | None = None) -> None:
@@ -49,12 +61,12 @@ class Recorder:
                    "!", "rtpjitterbuffer", "latency=200",
                    "!", "rtph264depay", "!", "h264parse",
                    "!", "mpegtsmux", "!", "filesink", f"location={ts}"]
-            self._procs.append(("video", subprocess.Popen(cmd, start_new_session=True)))
+            self._procs.append(("video", subprocess.Popen(cmd, preexec_fn=_set_pdeathsig)))
         if self._bag:
             bagdir = self._dir / f"{self.prefix}_bag"
             cmd = ["ros2", "bag", "record", "-o", str(bagdir)]
             cmd += self._topics if self._topics else ["-a"]
-            self._procs.append(("bag", subprocess.Popen(cmd, start_new_session=True)))
+            self._procs.append(("bag", subprocess.Popen(cmd, preexec_fn=_set_pdeathsig)))
         return self.prefix
 
     def dead(self) -> list[str]:
@@ -83,6 +95,12 @@ def main() -> None:
 
     rec = Recorder(args.dir, video=not args.no_video, bag=not args.no_bag, topics=args.topics)
     prefix = rec.start(args.label)
+
+    def _graceful(_signum, _frame):
+        raise KeyboardInterrupt   # SIGTERM / SIGHUP(ssh 断线) 也走优雅收尾
+
+    signal.signal(signal.SIGTERM, _graceful)
+    signal.signal(signal.SIGHUP, _graceful)
     print(f"[rec] 录制中 -> {args.dir}/{prefix}{{.ts,_bag}}   (Ctrl-C 停)", flush=True)
     try:
         while True:
