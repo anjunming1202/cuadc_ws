@@ -367,10 +367,13 @@
       }
 
       function watchForStall(gen) {
+        // CV preview is intentionally low-fps (~10); buffered.end often pauses
+        // between frames and used to trigger a reconnect loop (画面卡住闪烁).
+        // Only stall-watch the clean 30fps path.
+        if (stateKey === "cv") {
+          return;
+        }
         lastMediaBytes = 0;
-        // CV path is lighter but burstier than clean video; give it more slack
-        // before declaring stall (otherwise reconnect loop = 闪屏).
-        const stallMs = stateKey === "cv" ? 8000 : 2500;
         stallTimer = setInterval(() => {
           if (gen !== generation || !player) {
             return;
@@ -386,7 +389,7 @@
             return;
           }
           lastMediaBytes = marker;
-        }, stallMs);
+        }, 2500);
       }
 
       function startPlayer() {
@@ -410,10 +413,10 @@
           },
           {
             enableStashBuffer: true,
-            stashInitialSize: 128,
-            liveBufferLatencyChasing: true,
-            liveBufferLatencyMaxLatency: 1.2,
-            liveBufferLatencyMinRemain: 0.3,
+            stashInitialSize: stateKey === "cv" ? 256 : 128,
+            liveBufferLatencyChasing: stateKey !== "cv",
+            liveBufferLatencyMaxLatency: stateKey === "cv" ? 3.0 : 1.2,
+            liveBufferLatencyMinRemain: stateKey === "cv" ? 0.8 : 0.3,
           }
         );
 

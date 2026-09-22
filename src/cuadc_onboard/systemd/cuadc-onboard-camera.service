@@ -1,6 +1,6 @@
 [Unit]
-Description=cuadc_onboard controllable camera service (H264/RTP tee + runtime controls)
-# 相机独占;编码 H264 tee 到本地 5602(CV/采集/调参)+ 5603(video-forward 转地面)。
+Description=cuadc_onboard controllable camera service (raw tee + H264 + runtime controls)
+# 相机独占; raw NV12 tee → 编码 5602/5603 + shmsink /tmp/cuadc-cam-raw.shm（CV 直吃）。
 # 运行时可控:监听 5610 收 JSON 改曝光/增益/对焦(libcamerasrc runtime 属性)。
 # 自己不发地面:干净图传 video-forward(5603→5600),CV 预览 cv-preview+cv-forward。
 After=network.target
@@ -10,7 +10,7 @@ Type=simple
 User=wly
 Environment=GST_PLUGIN_PATH=/usr/local/lib/aarch64-linux-gnu/gstreamer-1.0
 ExecStart=/usr/bin/python3 /opt/cuadc-onboard/camera_service.py
-Restart=on-failure
+Restart=always
 RestartSec=3
 
 [Install]
