@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Serve DroneLink video + telemetry on http://127.0.0.1:<port>/.
 
-Video: Python owns the air-side UDP ports (5600 RTP / 5601 shared), forwards
-RTP+RTCP to localhost for one shared FFmpeg remux (MPEG-TS), fans out to
-/stream.ts clients. JSON datagrams that arrive on :5601 (legacy Pi) or :5701
-are exposed as /telemetry.json for the HUD.
+Video: Python owns air-side UDP ports — clean 5600 (+5601 shared) and CV
+preview 5606 — forwards RTP to localhost FFmpeg remux (MPEG-TS), fans out to
+/stream.ts and /stream_cv.ts. JSON on :5601 (legacy) or :5701 → /telemetry.json.
 """
 
 from __future__ import annotations
@@ -29,8 +28,11 @@ DEFAULT_PORT = 8765
 DEFAULT_TELEMETRY_PORT = 5701  # preferred once Pi unit is updated
 AIR_RTP_PORT = 5600
 AIR_SHARED_PORT = 5601  # legacy telemetry JSON and/or RTCP from some stacks
-LOCAL_RTP_PORT = 15600  # FFmpeg loopback RTP
-LOCAL_RTCP_PORT = 15601  # FFmpeg loopback RTCP
+AIR_CV_RTP_PORT = 5606  # CV preview downlink (Pi cv-forward)
+LOCAL_RTP_PORT = 15600  # FFmpeg loopback RTP (clean)
+LOCAL_RTCP_PORT = 15601  # FFmpeg loopback RTCP (clean)
+LOCAL_CV_RTP_PORT = 15610  # FFmpeg loopback RTP (CV)
+LOCAL_CV_RTCP_PORT = 15611  # FFmpeg loopback RTCP (CV)
 TELEMETRY_STALE_S = 2.0
 CLIENT_QUEUE_MAX = 64  # ~ drop old TS if a slow browser falls behind
 
@@ -101,19 +103,25 @@ def _ffmpeg_cmd(ffmpeg_bin: str, sdp_path: Path) -> list[str]:
     ]
 
 
-def write_loopback_sdp(path: Path) -> None:
+def write_loopback_sdp(
+    path: Path,
+    *,
+    rtp_port: int,
+    rtcp_port: int,
+    session_name: str = "DroneLink H264 loopback",
+) -> None:
     path.write_text(
         "\n".join(
             [
                 "v=0",
                 "o=- 0 0 IN IP4 127.0.0.1",
-                "s=DroneLink H264 loopback",
+                f"s={session_name}",
                 "c=IN IP4 127.0.0.1",
                 "t=0 0",
-                f"m=video {LOCAL_RTP_PORT} RTP/AVP 96",
+                f"m=video {rtp_port} RTP/AVP 96",
                 "a=rtpmap:96 H264/90000",
                 "a=fmtp:96 packetization-mode=1",
-                f"a=rtcp:{LOCAL_RTCP_PORT} IN IP4 127.0.0.1",
+                f"a=rtcp:{rtcp_port} IN IP4 127.0.0.1",
                 "",
             ]
         ),
@@ -188,6 +196,61 @@ class AirLinkProxy:
             # Non-JSON: treat as RTCP (or other) and forward to loopback FFmpeg.
             try:
                 self._fwd.sendto(payload, ("127.0.0.1", LOCAL_RTCP_PORT))
+            except OSError:
+                pass
+        sock.close()
+
+
+class SimpleRtpProxy:
+    """Own one air UDP port; forward datagrams to a localhost RTP port (no demux)."""
+
+    def __init__(
+        self,
+        air_port: int,
+        local_rtp_port: int,
+        *,
+        air_bind: str = "0.0.0.0",
+        name: str = "rtp",
+    ) -> None:
+        self._air_bind = air_bind
+        self._air_port = air_port
+        self._local_rtp_port = local_rtp_port
+        self._name = name
+        self._stop = threading.Event()
+        self._fwd = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((self._air_bind, self._air_port))
+        sys.stderr.write(
+            f"{self._name} proxy listening on {self._air_bind}:{self._air_port} "
+            f"-> 127.0.0.1:{self._local_rtp_port}\n"
+        )
+        self._thread = threading.Thread(
+            target=self._loop, args=(sock,), name=f"{self._name}-rtp", daemon=True
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        try:
+            self._fwd.close()
+        except OSError:
+            pass
+
+    def _loop(self, sock: socket.socket) -> None:
+        sock.settimeout(0.5)
+        while not self._stop.is_set():
+            try:
+                payload, _addr = sock.recvfrom(65535)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            try:
+                self._fwd.sendto(payload, ("127.0.0.1", self._local_rtp_port))
             except OSError:
                 pass
         sock.close()
@@ -293,7 +356,9 @@ class RemuxHub:
 
 
 _hub: RemuxHub | None = None
+_cv_hub: RemuxHub | None = None
 _proxy: AirLinkProxy | None = None
+_cv_proxy: SimpleRtpProxy | None = None
 
 
 def _telemetry_snapshot() -> dict:
@@ -370,14 +435,16 @@ class ViewerHandler(BaseHTTPRequestHandler):
             self._send_bytes(body, "application/json; charset=utf-8")
             return
         if path == "/stream.ts":
-            self._stream_ts()
+            self._stream_ts(_hub, "clean remux hub")
+            return
+        if path == "/stream_cv.ts":
+            self._stream_ts(_cv_hub, "CV remux hub")
             return
         self.send_error(404)
 
-    def _stream_ts(self) -> None:
-        global _hub
-        if _hub is None:
-            self.send_error(503, "remux hub not ready")
+    def _stream_ts(self, hub: RemuxHub | None, hub_label: str) -> None:
+        if hub is None:
+            self.send_error(503, f"{hub_label} not ready")
             return
         self.send_response(200)
         self.send_header("Content-Type", "video/mp2t")
@@ -385,7 +452,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
 
-        q = _hub.subscribe()
+        q = hub.subscribe()
         try:
             while True:
                 chunk = q.get()
@@ -395,11 +462,11 @@ class ViewerHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
         finally:
-            _hub.unsubscribe(q)
+            hub.unsubscribe(q)
 
 
 def main() -> None:
-    global _hub, _proxy
+    global _hub, _cv_hub, _proxy, _cv_proxy
 
     parser = argparse.ArgumentParser(description="DroneLink localhost video viewer")
     parser.add_argument("--host", default=DEFAULT_HOST, help="HTTP bind address")
@@ -419,17 +486,37 @@ def main() -> None:
 
     _proxy = AirLinkProxy(air_bind="0.0.0.0")
     _proxy.start()
+    _cv_proxy = SimpleRtpProxy(
+        AIR_CV_RTP_PORT, LOCAL_CV_RTP_PORT, air_bind="0.0.0.0", name="CV"
+    )
+    _cv_proxy.start()
 
-    loopback_sdp = Path(tempfile.gettempdir()) / "dronelink_loopback.sdp"
-    write_loopback_sdp(loopback_sdp)
+    tmp = Path(tempfile.gettempdir())
+    loopback_sdp = tmp / "dronelink_loopback.sdp"
+    write_loopback_sdp(
+        loopback_sdp,
+        rtp_port=LOCAL_RTP_PORT,
+        rtcp_port=LOCAL_RTCP_PORT,
+        session_name="DroneLink clean H264",
+    )
+    cv_sdp = tmp / "dronelink_cv_loopback.sdp"
+    write_loopback_sdp(
+        cv_sdp,
+        rtp_port=LOCAL_CV_RTP_PORT,
+        rtcp_port=LOCAL_CV_RTCP_PORT,
+        session_name="DroneLink CV H264",
+    )
 
     _hub = RemuxHub(ffmpeg_bin, loopback_sdp)
     _hub.start()
+    _cv_hub = RemuxHub(ffmpeg_bin, cv_sdp)
+    _cv_hub.start()
 
     server = ThreadingHTTPServer((args.host, args.port), ViewerHandler)
     print(f"DroneLink viewer: http://{args.host}:{args.port}/")
     print(f"FFmpeg: {ffmpeg_bin}")
-    print(f"Air RTP/shared: 0.0.0.0:{AIR_RTP_PORT}/:{AIR_SHARED_PORT} -> loopback")
+    print(f"Clean RTP/shared: 0.0.0.0:{AIR_RTP_PORT}/:{AIR_SHARED_PORT} -> /stream.ts")
+    print(f"CV RTP: 0.0.0.0:{AIR_CV_RTP_PORT} -> /stream_cv.ts")
     print(f"Telemetry UDP: {args.telemetry_bind}:{args.telemetry_port} (+ JSON on :{AIR_SHARED_PORT})")
     print("Ctrl+C to stop.")
     try:
@@ -439,8 +526,12 @@ def main() -> None:
     finally:
         if _hub is not None:
             _hub.stop()
+        if _cv_hub is not None:
+            _cv_hub.stop()
         if _proxy is not None:
             _proxy.stop()
+        if _cv_proxy is not None:
+            _cv_proxy.stop()
         server.server_close()
 
 

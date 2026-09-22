@@ -3,7 +3,7 @@
 并监听 UDP 控制口在运行时改曝光/增益/对焦/AE/AF/WB。
 
 - 只产**本地**端点(5602 给 CV/采集/调参读帧;5603 给 video-forward 转地面),
-  自己不发地面——"发地面"只在 video-forward 一处(读 5603 → 192.168.50.2:5600)。
+  自己不发地面——干净图传 video-forward(5603→5600),CV 预览 cv-preview+cv-forward。
 - 控制口(默认 udp:127.0.0.1:5610)收 JSON,PLAYING 态直接 g_object_set 到
   libcamerasrc,例如 {"ae":false,"exposure_us":1000,"gain":8.0,"af":"manual","lens":1.5}。
 - libcamerasrc 属性运行时可控(该机 0.7.2 实测),故不需 picamera2、复用现有 gst 栈。

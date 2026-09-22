@@ -2,7 +2,7 @@
 Description=cuadc_onboard controllable camera service (H264/RTP tee + runtime controls)
 # 相机独占;编码 H264 tee 到本地 5602(CV/采集/调参)+ 5603(video-forward 转地面)。
 # 运行时可控:监听 5610 收 JSON 改曝光/增益/对焦(libcamerasrc runtime 属性)。
-# 发地面不在这里,由 cuadc-onboard-video-forward(读 5603→5600)唯一负责。
+# 自己不发地面:干净图传 video-forward(5603→5600),CV 预览 cv-preview+cv-forward。
 After=network.target
 
 [Service]

@@ -15,8 +15,11 @@ scripts/   通信程序（能手动跑，不依赖 systemd）
              telem_ground.py  数传发送：读扇出 → JSON 发地面 HUD（消费者）
 systemd/   自启薄壳
              cuadc-onboard-fanout.service   底座：串口扇出
-             cuadc-onboard-camera.service   底座：相机 tee（本地 5602 + 地面 5600）
+             cuadc-onboard-camera.service   底座：相机 tee（本地 5602 + 5603）
              cuadc-onboard-telem.service    消费者：数传（ground-monitor profile 拉起）
+             cuadc-onboard-video-forward.service  消费者：干净图传 5603→5600
+             cuadc-onboard-cv-preview.service     消费者：5602→标注→5604
+             cuadc-onboard-cv-forward.service     消费者：CV 预览 5604→5606
              cuadc-onboard-profile.service  oneshot applier：按 profile 起消费者
              apply-profile.sh               applier 逻辑（读 /etc/cuadc-onboard/profile）
 deploy.sh  幂等安装到 Pi 系统路径并 enable 底座 + profile applier
@@ -30,7 +33,9 @@ deploy.sh  幂等安装到 Pi 系统路径并 enable 底座 + profile applier
 | 相机本地帧 | `udp:127.0.0.1:5602` | H.264/RTP（CV/采集/调参读帧） |
 | 相机控制口 | `udpin:127.0.0.1:5610` | JSON（`{ae,exposure_us,gain,af,lens,…}` 运行时改拍摄参数） |
 | 图传转发输入 | `udp:127.0.0.1:5603` | H.264/RTP（video-forward 读它转地面） |
-| 图传→地面 | `192.168.50.2:5600` | H.264/RTP（由 video-forward 消费者产生） |
+| CV 预览本地 | `udp:127.0.0.1:5604` | H.264/RTP（cv-preview 产出；cv-forward 转地面） |
+| 图传→地面 | `192.168.50.2:5600` | H.264/RTP（video-forward） |
+| CV 预览→地面 | `192.168.50.2:5606` | H.264/RTP（cv-forward） |
 | 地面数据总线 | `udp:127.0.0.1:5700` | JSON（含 `topic`） |
 | GCS | `192.168.50.2:14560` | MAVLink |
 
@@ -55,7 +60,7 @@ cv2.VideoCapture(
   gst 应用非静态 gst-launch）。
 - **消费者**（只连端点、不碰硬件）由 profile 选择性自启：`/etc/cuadc-onboard/profile`
   写 `none` / `ground-monitor` / `mission`，oneshot applier 按名拉起。`ground-monitor`
-  起 **数传 + video-forward（图传转发 5603→地面）**。改 profile 后
+  起 **数传 + video-forward（5603→5600）+ cv-preview/cv-forward（5602→5604→5606）**。改 profile 后
   `systemctl restart cuadc-onboard-profile` 即时生效（applier 幂等:先停受管消费者再按
   profile 起）。`none` 时底座在跑、本地端点有数据，但地面什么都没有。
 

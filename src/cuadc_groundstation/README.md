@@ -9,9 +9,9 @@
 ## 布局
 
 ```
-server.py             收 5600 RTP 视频(经本机 ffmpeg 转 MPEG-TS)+ 5701/5601 遥测 JSON，
-                        在 http://127.0.0.1:8765/ 提供网页(视频 + HUD)
-index.html / mpegts.js 网页前端(mpegts.js 播放 /stream.ts，HUD 读 /telemetry.json)
+server.py             收 5600 干净图传 + 5606 CV 预览(本机 ffmpeg 转 MPEG-TS)+ 5701/5601 遥测，
+                        在 http://127.0.0.1:8765/ 提供双画面网页 + HUD
+index.html / mpegts.js 网页前端(/stream.ts + /stream_cv.ts，HUD 读 /telemetry.json)
 send_fake_telemetry.py 无飞控时本机灌假遥测测 HUD
 DroneLink.sdp          air-link 参考(运行时不读，ffmpeg 用自动生成的 loopback SDP)
 start.bat              Windows 启动:从本目录跑 python server.py
@@ -23,13 +23,13 @@ start.bat              Windows 启动:从本目录跑 python server.py
 **ffmpeg**(`winget install --id Gyan.FFmpeg -e`)。机载端(Pi)已在推流。
 
 1. 双击 `start.bat`(或在本目录 `python server.py`)。
-2. 浏览器打开 **http://127.0.0.1:8765/** → 视频 + 遥测 HUD。
+2. 浏览器打开 **http://127.0.0.1:8765/** → 左干净图传 / 右 CV 预览 + 遥测 HUD。
 
 无飞控自测 HUD:另开一个终端 `python send_fake_telemetry.py`(默认发 127.0.0.1:5701)。
 
 ## 端点
 
-收的端口就是机载端点契约的地面一侧(图传 `:5600`、遥测 JSON `:5701`/`:5601`)。
+收的端口就是机载端点契约的地面一侧(干净图传 `:5600`、CV 预览 `:5606`、遥测 JSON `:5701`/`:5601`)。
 契约单一真源见 [`docs/spec/onboard-runtime.md`](../../docs/spec/onboard-runtime.md),此处不复制。
 
 ## 部署

@@ -22,6 +22,7 @@ install -d "$OPT" "$ETC"
 install -m 0755 "$SRC_DIR/scripts/mav_fanout.py"     "$OPT/mav_fanout.py"
 install -m 0755 "$SRC_DIR/scripts/telem_ground.py"   "$OPT/telem_ground.py"
 install -m 0755 "$SRC_DIR/scripts/camera_service.py" "$OPT/camera_service.py"
+install -m 0755 "$SRC_DIR/scripts/cv_preview.py"     "$OPT/cv_preview.py"
 install -m 0755 "$SRC_DIR/systemd/apply-profile.sh"  "$OPT/apply-profile.sh"
 
 for u in "$SRC_DIR"/systemd/*.service; do
@@ -39,7 +40,7 @@ systemctl daemon-reload
 systemctl enable cuadc-onboard-fanout.service \
                  cuadc-onboard-camera.service \
                  cuadc-onboard-profile.service
-# video-forward 不在 base:它是"图传转发"消费者,由 ground-monitor profile 拉起(见 apply-profile.sh)
+# video-forward / cv-preview / cv-forward 不在 base:由 ground-monitor profile 拉起(见 apply-profile.sh)
 
 echo
 echo "installed + enabled base (fanout, camera) + profile applier."

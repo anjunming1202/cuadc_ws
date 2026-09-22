@@ -38,6 +38,21 @@
       font-weight: 600;
       letter-spacing: 0.02em;
     }
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    #cpuBadge {
+      font-size: 0.85rem;
+      font-variant-numeric: tabular-nums;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    #cpuBadge.warn { color: var(--warn); }
+    #cpuBadge.hot { color: var(--bad); }
     #status {
       font-size: 0.85rem;
       color: var(--muted);
@@ -45,9 +60,39 @@
     #status.ok { color: var(--ok); }
     #status.bad { color: var(--bad); }
     main {
-      max-width: 1280px;
+      max-width: 1600px;
       margin: 0 auto;
       padding: 1rem 1.25rem 2rem;
+    }
+    .stages {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.85rem;
+    }
+    @media (max-width: 960px) {
+      .stages { grid-template-columns: 1fr; }
+    }
+    .stage-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .stage-label {
+      font-size: 0.8rem;
+      color: var(--muted);
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }
+    .stage-label .pill {
+      display: inline-block;
+      margin-left: 0.35rem;
+      padding: 0.1rem 0.4rem;
+      border-radius: 3px;
+      font-size: 0.72rem;
+      text-transform: none;
+      letter-spacing: 0;
+      background: #243040;
+      color: var(--accent);
     }
     .stage {
       position: relative;
@@ -113,50 +158,79 @@
 <body>
   <header>
     <h1>DroneLink</h1>
-    <div id="status">初始化…</div>
+    <div class="header-right">
+      <div id="cpuBadge">Pi CPU: —</div>
+      <div id="status">初始化…</div>
+    </div>
   </header>
   <main>
-    <div class="stage">
-      <video id="video" muted autoplay playsinline></video>
-      <div class="hud" id="hud">
-        <div class="hud-title">
-          <span>Telemetry</span>
-          <span class="telem-state missing" id="telemState">无数据</span>
+    <div class="stages">
+      <div class="stage-wrap">
+        <div class="stage-label">原始图传 <span class="pill">:5600 → /stream.ts</span></div>
+        <div class="stage">
+          <video id="videoClean" muted autoplay playsinline></video>
+          <div class="hud" id="hud">
+            <div class="hud-title">
+              <span>Telemetry</span>
+              <span class="telem-state missing" id="telemState">无数据</span>
+            </div>
+            <div class="hud-grid">
+              <span>高度</span><span id="vAlt">—</span>
+              <span>姿态</span><span id="vAtt">—</span>
+              <span>模式</span><span id="vMode">—</span>
+              <span>电量</span><span id="vBatt">—</span>
+              <span>Pi CPU</span><span id="vCpu">—</span>
+            </div>
+          </div>
         </div>
-        <div class="hud-grid">
-          <span>高度</span><span id="vAlt">—</span>
-          <span>姿态</span><span id="vAtt">—</span>
-          <span>模式</span><span id="vMode">—</span>
-          <span>电量</span><span id="vBatt">—</span>
+      </div>
+      <div class="stage-wrap">
+        <div class="stage-label">OpenCV 预览 <span class="pill">:5606 → /stream_cv.ts</span></div>
+        <div class="stage">
+          <video id="videoCv" muted autoplay playsinline></video>
         </div>
       </div>
     </div>
     <p class="hint">
-      视频：<code>/stream.ts</code>（FFmpeg 从 RTP 转封装）。遥测：UDP JSON
-      <code>:5701</code> → <code>/telemetry.json</code>。
-      Pi 推流默认 <code>192.168.50.2:5600</code>（视频）/ <code>:5701</code>（遥测）。
+      左：干净图传 <code>/stream.ts</code>（机载 5603→5600）。
+      右：CV 预览 <code>/stream_cv.ts</code>（5602→标注→5604→5606）。
+      遥测：UDP JSON <code>:5701</code> → <code>/telemetry.json</code>。
     </p>
   </main>
   <script src="/mpegts.js"></script>
   <script>
     const statusEl = document.getElementById("status");
-    const videoEl = document.getElementById("video");
+    const cpuBadgeEl = document.getElementById("cpuBadge");
     const telemStateEl = document.getElementById("telemState");
     const vAlt = document.getElementById("vAlt");
     const vAtt = document.getElementById("vAtt");
     const vMode = document.getElementById("vMode");
     const vBatt = document.getElementById("vBatt");
+    const vCpu = document.getElementById("vCpu");
 
-    let player = null;
-    let reconnectTimer = null;
-    let stallTimer = null;
-    let reconnectAttempt = 0;
-    let lastMediaBytes = 0;
-    let generation = 0;
+    const streamState = { clean: "初始化", cv: "初始化" };
 
-    function setStatus(text, kind) {
-      statusEl.textContent = text;
-      statusEl.className = kind || "";
+    function setCpuDisplay(pct) {
+      if (typeof pct !== "number" || !Number.isFinite(pct)) {
+        cpuBadgeEl.textContent = "Pi CPU: —";
+        cpuBadgeEl.className = "";
+        vCpu.textContent = "—";
+        return;
+      }
+      const text = pct.toFixed(0) + "%";
+      cpuBadgeEl.textContent = "Pi CPU: " + text;
+      vCpu.textContent = text;
+      cpuBadgeEl.className = pct >= 85 ? "hot" : (pct >= 70 ? "warn" : "");
+    }
+
+    function refreshStatus() {
+      const c = streamState.clean;
+      const v = streamState.cv;
+      statusEl.textContent = "原始: " + c + "  ·  OpenCV: " + v;
+      const bothOk = c === "播放中" && v === "播放中";
+      const anyBad = c.indexOf("中断") >= 0 || v.indexOf("中断") >= 0
+        || c.indexOf("不支持") >= 0 || v.indexOf("不支持") >= 0;
+      statusEl.className = bothOk ? "ok" : (anyBad ? "bad" : "");
     }
 
     function fmtNum(v, digits) {
@@ -175,6 +249,7 @@
         vAtt.textContent = "—";
         vMode.textContent = "—";
         vBatt.textContent = "—";
+        setCpuDisplay(null);
         return;
       }
 
@@ -219,6 +294,8 @@
       } else {
         vBatt.textContent = volts + " V";
       }
+
+      setCpuDisplay(typeof data.cpu_pct === "number" ? data.cpu_pct : null);
     }
 
     async function pollTelemetry() {
@@ -233,131 +310,165 @@
       }
     }
 
-    function clearTimers() {
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
-        reconnectTimer = null;
-      }
-      if (stallTimer) {
-        clearInterval(stallTimer);
-        stallTimer = null;
-      }
-    }
+    function createStreamPlayer(opts) {
+      const videoEl = opts.videoEl;
+      const streamPath = opts.streamPath;
+      const stateKey = opts.stateKey;
+      let player = null;
+      let reconnectTimer = null;
+      let stallTimer = null;
+      let reconnectAttempt = 0;
+      let lastMediaBytes = 0;
+      let generation = 0;
 
-    function destroyPlayer() {
-      clearTimers();
-      if (!player) {
-        return;
+      function setStreamStatus(text) {
+        streamState[stateKey] = text;
+        refreshStatus();
       }
-      try {
-        player.pause();
-        player.unload();
-        player.detachMediaElement();
-        player.destroy();
-      } catch (err) {
-        console.warn("player destroy", err);
-      }
-      player = null;
-    }
 
-    function scheduleReconnect(reason) {
-      if (reconnectTimer) {
-        return;
+      function clearTimers() {
+        if (reconnectTimer) {
+          clearTimeout(reconnectTimer);
+          reconnectTimer = null;
+        }
+        if (stallTimer) {
+          clearInterval(stallTimer);
+          stallTimer = null;
+        }
       }
-      reconnectAttempt += 1;
-      const delayMs = Math.min(3000, 400 * reconnectAttempt);
-      setStatus(`流中断（${reason}），${delayMs}ms 后重连…`, "bad");
-      reconnectTimer = setTimeout(() => {
-        reconnectTimer = null;
-        startPlayer();
-      }, delayMs);
-    }
 
-    function watchForStall(gen) {
-      lastMediaBytes = 0;
-      stallTimer = setInterval(() => {
-        if (gen !== generation || !player) {
+      function destroyPlayer() {
+        clearTimers();
+        if (!player) {
           return;
         }
-        const buffered = videoEl.buffered;
-        let end = 0;
-        if (buffered.length > 0) {
-          end = buffered.end(buffered.length - 1);
+        try {
+          player.pause();
+          player.unload();
+          player.detachMediaElement();
+          player.destroy();
+        } catch (err) {
+          console.warn("player destroy", err);
         }
-        const marker = Math.floor(end * 1000);
-        if (marker === lastMediaBytes && !videoEl.paused && videoEl.readyState >= 2) {
-          scheduleReconnect("卡顿");
-          return;
-        }
-        lastMediaBytes = marker;
-      }, 2500);
-    }
-
-    function startPlayer() {
-      destroyPlayer();
-      generation += 1;
-      const gen = generation;
-
-      if (!window.mpegts || !mpegts.getFeatureList().mseLivePlayback) {
-        setStatus("当前浏览器不支持 MSE 直播播放", "bad");
-        return;
+        player = null;
       }
 
-      const url = "/stream.ts?t=" + Date.now();
-      player = mpegts.createPlayer(
-        {
-          type: "mse",
-          isLive: true,
-          hasAudio: false,
-          hasVideo: true,
-          url: url,
-        },
-        {
-          enableStashBuffer: true,
-          stashInitialSize: 128,
-          liveBufferLatencyChasing: true,
-          liveBufferLatencyMaxLatency: 1.2,
-          liveBufferLatencyMinRemain: 0.3,
-        }
-      );
-
-      player.attachMediaElement(videoEl);
-      player.on(mpegts.Events.ERROR, (type, detail, info) => {
-        if (gen !== generation) {
+      function scheduleReconnect(reason) {
+        if (reconnectTimer) {
           return;
         }
-        console.error("mpegts error", type, detail, info);
-        const reason = detail || type || "播放错误";
+        reconnectAttempt += 1;
+        const delayMs = Math.min(3000, 400 * reconnectAttempt);
+        setStreamStatus("中断（" + reason + "），重连中");
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null;
+          startPlayer();
+        }, delayMs);
+      }
+
+      function watchForStall(gen) {
+        lastMediaBytes = 0;
+        // CV path is lighter but burstier than clean video; give it more slack
+        // before declaring stall (otherwise reconnect loop = 闪屏).
+        const stallMs = stateKey === "cv" ? 8000 : 2500;
+        stallTimer = setInterval(() => {
+          if (gen !== generation || !player) {
+            return;
+          }
+          const buffered = videoEl.buffered;
+          let end = 0;
+          if (buffered.length > 0) {
+            end = buffered.end(buffered.length - 1);
+          }
+          const marker = Math.floor(end * 1000);
+          if (marker === lastMediaBytes && !videoEl.paused && videoEl.readyState >= 2) {
+            scheduleReconnect("卡顿");
+            return;
+          }
+          lastMediaBytes = marker;
+        }, stallMs);
+      }
+
+      function startPlayer() {
         destroyPlayer();
-        scheduleReconnect(String(reason));
-      });
-      player.load();
-      const playPromise = player.play();
-      if (playPromise && typeof playPromise.catch === "function") {
-        playPromise.catch((err) => {
+        generation += 1;
+        const gen = generation;
+
+        if (!window.mpegts || !mpegts.getFeatureList().mseLivePlayback) {
+          setStreamStatus("不支持 MSE");
+          return;
+        }
+
+        const url = streamPath + "?t=" + Date.now();
+        player = mpegts.createPlayer(
+          {
+            type: "mse",
+            isLive: true,
+            hasAudio: false,
+            hasVideo: true,
+            url: url,
+          },
+          {
+            enableStashBuffer: true,
+            stashInitialSize: 128,
+            liveBufferLatencyChasing: true,
+            liveBufferLatencyMaxLatency: 1.2,
+            liveBufferLatencyMinRemain: 0.3,
+          }
+        );
+
+        player.attachMediaElement(videoEl);
+        player.on(mpegts.Events.ERROR, (type, detail, info) => {
           if (gen !== generation) {
             return;
           }
-          console.warn("autoplay blocked or failed", err);
-          setStatus("已连接流，点击页面以开始播放", "bad");
+          console.error("mpegts error", stateKey, type, detail, info);
+          const reason = detail || type || "播放错误";
+          destroyPlayer();
+          scheduleReconnect(String(reason));
         });
+        player.load();
+        const playPromise = player.play();
+        if (playPromise && typeof playPromise.catch === "function") {
+          playPromise.catch((err) => {
+            if (gen !== generation) {
+              return;
+            }
+            console.warn("autoplay blocked or failed", err);
+            setStreamStatus("点击页面以播放");
+          });
+        }
+        setStreamStatus(reconnectAttempt ? "重连中…" : "拉流中…");
+        videoEl.addEventListener(
+          "playing",
+          () => {
+            if (gen !== generation) {
+              return;
+            }
+            reconnectAttempt = 0;
+            setStreamStatus("播放中");
+            watchForStall(gen);
+          },
+          { once: true }
+        );
       }
-      setStatus(reconnectAttempt ? `重连中（第 ${reconnectAttempt} 次）…` : "正在拉流…", "");
-      videoEl.addEventListener(
-        "playing",
-        () => {
-          if (gen !== generation) {
-            return;
-          }
-          reconnectAttempt = 0;
-          setStatus("播放中", "ok");
-          watchForStall(gen);
-        },
-        { once: true }
-      );
+
+      return { start: startPlayer };
     }
 
-    startPlayer();
+    const cleanPlayer = createStreamPlayer({
+      videoEl: document.getElementById("videoClean"),
+      streamPath: "/stream.ts",
+      stateKey: "clean",
+    });
+    const cvPlayer = createStreamPlayer({
+      videoEl: document.getElementById("videoCv"),
+      streamPath: "/stream_cv.ts",
+      stateKey: "cv",
+    });
+
+    cleanPlayer.start();
+    cvPlayer.start();
     pollTelemetry();
     setInterval(pollTelemetry, 200);
   </script>

@@ -1,0 +1,17 @@
+[Unit]
+Description=cuadc_onboard CV preview (local 5602 -> labeled H264 -> 5604)
+# Step 1: burn-in "OpenCV processed" so ground can verify the second path.
+# Does not open the camera; reads camera-service tee output on :5602.
+After=cuadc-onboard-camera.service
+Wants=cuadc-onboard-camera.service
+
+[Service]
+Type=simple
+User=wly
+Environment=GST_PLUGIN_PATH=/usr/local/lib/aarch64-linux-gnu/gstreamer-1.0
+ExecStart=/usr/bin/python3 /opt/cuadc-onboard/cv_preview.py --src-port 5602 --dst-port 5604 --width 960 --height 540 --max-fps 15 --bitrate 1500 --label "OpenCV processed"
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
