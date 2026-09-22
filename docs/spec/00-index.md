@@ -85,6 +85,10 @@ ArduPilot（GUIDED 模式为主）
 [`camera-tuning.md`](camera-tuning.md)——目标是给感知一组真实运动下够清晰、
 曝光/噪声可接受的相机设置（伴随机侧相机，与飞控内部调参无关）。
 
+在**真实条件**（风扰/传感器噪声/感知时延/相机成像）下无头多轮跑 Gazebo + 真实
+CV 全流程、以第二次投放成功率量化 SEARCH（及后续）算法改动是否更稳的**仿真
+压力测试台**设计单独维护在 [`sim-stress-testbed.md`](sim-stress-testbed.md)。
+
 ## 非目标
 
 不覆盖：飞控内部调参（PID、Failsafe 配置等）、机体结构设计、电源/供电
