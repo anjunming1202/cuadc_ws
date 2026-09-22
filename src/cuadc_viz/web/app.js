@@ -29,7 +29,7 @@ function setDot(id, level) {
 
 function quatToYaw(x, y, z, w) {
   // 标准 ArduPilot/MAVLink 姿态四元数惯例，跟 decision_node.py 的
-  // _roll_pitch_from_quaternion 是同一套公式的 yaw 分量。
+  // _rpy_from_quaternion 是同一套公式的 yaw 分量。
   return Math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z));
 }
 function quatToRollPitchDeg(x, y, z, w) {
@@ -126,8 +126,9 @@ ros.subscribe('/perception/detections', 'cuadc_perception_msgs/DetectionArray', 
 });
 
 const perfChart = new RollingChart(document.getElementById('chart-perf'));
-// kv.* 这几个 key 名字权威来源是 cv_pipeline.py 的 detect_cylinders()
-// 里填 perf dict 的地方——改了那边的 key 名，这里要跟着改，不然对应的
+// kv.* 这几个 key 名字权威来源是 detectors/ 里检测器填 perf dict 的地方
+// （segment_ms/morphology_ms/contours_ms/fit_ms）——改了那边的 key 名，这里
+// 要跟着改，不然对应的
 // stat 会一直显示 "--"（不会报错，容易漏掉）。
 ros.subscribe('/cuadc_perception_cv/perf', 'diagnostic_msgs/DiagnosticArray', (m) => {
   const status = m.status[0];

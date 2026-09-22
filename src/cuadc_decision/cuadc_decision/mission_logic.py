@@ -29,6 +29,7 @@ import time
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
+from cuadc_decision import approaches
 from cuadc_decision import drop_strategy
 from cuadc_decision.drop_strategy import Candidate
 
@@ -53,7 +54,6 @@ class State:
 _CRUISE_ALTITUDE_M = 2.0
 _ALTITUDE_TOLERANCE_M = 0.5
 _POSITION_TOLERANCE_M = 0.5
-_APPROACH_TOLERANCE_M = 0.15
 _SEARCH_SETTLE_SECONDS = 1.5
 _CLUSTER_MATCH_THRESHOLD_M = 0.6
 _MIN_CLUSTER_SAMPLES = 3
@@ -62,21 +62,9 @@ _DROP_CYLINDER_COUNT = 3  # 投放区规则保证固定 3 个筒，位置随机�
 _DROP_RELAY_CHANNEL = 0
 _MIN_DETECTION_CONFIDENCE = 0.5  # 桩节点恒发 1.0 用不上，先占住真实 CV 的过滤点
 
-_DROP_ALTITUDE_M = 1.0  # 占位：真实投放高度待实机确定
-_DROP_ALTITUDE_TOLERANCE_M = 0.3
-_APPROACH_REFINE_THRESHOLD_M = 0.4  # 进近目标匹配半径，比 SEARCH 聚类的 0.6m 更紧，避免吸附到旁边的筒
-_COARSE_APPROACH_RADIUS_M = 1.0  # 占位待真实 FOV 定，先靠近到这个范围内再开始水平+高度一起收敛，避免过早丢视野
-# 相机到投放机构的固定偏移（世界系 NED，米）。占位 0，待装机实测标定；
-# 假设全程偏航基本不变（现有状态机不发偏航指令），偏航会漂移则要改成
-# 按当前偏航角旋转的机体系偏移。
-_DROP_MECHANISM_OFFSET_M = (0.0, 0.0)
-
-# 投放前的"真正对齐"判定：位置/高度到位只是必要条件，姿态没摆平、还在
-# 动的话不算真正稳住——单个 tick 摸到容差边缘不算数，见 _tick_approach_drop_target。
-_LEVEL_TOLERANCE_RAD = 0.1  # 约 5.7°，roll/pitch 都要在这个范围内才算摆平
-_HORIZONTAL_SPEED_TOLERANCE_MPS = 0.2
-_VERTICAL_SPEED_TOLERANCE_MPS = 0.2
-_STABLE_HOLD_SECONDS = 1.0  # 上面这些条件要连续满足这么久才触发投放
+# 接近阶段的全部参数（进近半径、投放高度/容差、姿态补偿、投放门、投放机构
+# 杆臂等）在 approaches/ 里该 approach 的 ApproachConfig + sim/real yaml，由可
+# 替换的接近单元自己持有，见 cuadc_decision/README.md「投放接近」。
 
 
 def _world_xy_to_ned(world_x, world_y):
@@ -121,6 +109,20 @@ _RECON_PHASE_TIMEOUT_S = 90.0
 _DROP_STATES = frozenset({State.SEARCH_DROP_TARGETS, State.APPROACH_DROP_TARGET, State.DROP_PAYLOAD})
 _RECON_STATES = frozenset({State.SURVEY_RECON_ZONE})
 
+# 可替换的接近阶段策略实例（粗 PBVS -> 末端 IBVS 等，见 approaches/）。持有跨
+# tick 的接近内部状态（锁定目标）;进入 APPROACH 时 _tick_search 调 .enter() 重置。
+# 换算法改 approaches.ACTIVE，不动状态机。可调参数在该 approach 的 sim/real yaml。
+# 这里用 dataclass 默认建一个（纯单测/import 期不读文件）;decision_node 起来后按
+# profile 调 configure_approach() 换成对应档,见下。
+_ACTIVE_APPROACH = approaches.create_active()
+
+
+def configure_approach(profile):
+    """按 sim/real profile 从 yaml 载入当前 approach 的配置,重建活动实例。
+    decision_node 在 __init__ 里调一次（profile 参数由场景启动脚本给）。"""
+    global _ACTIVE_APPROACH
+    _ACTIVE_APPROACH = approaches.create_active(profile=profile)
+
 
 # ---- decision_node.py 与这里交换数据用的普通数据类型（不含任何 ROS 类型）----
 
@@ -140,6 +142,7 @@ class ServiceResult:
 class TickResult:
     next_state: Optional[str] = None
     position_target: Optional[Tuple[float, float, float]] = None  # (x, y, z)，同 telemetry/local_position 坐标系
+    velocity_target: Optional[Tuple[float, float, float]] = None  # (前,右,下) 机体系速度 m/s，末端 IBVS 用，见 04-interfaces.md cmd/velocity
     service_call: Optional[ServiceCallRequest] = None
 
 
@@ -151,8 +154,6 @@ class DropTaskState:
     selected_target: Optional[Candidate] = None
     phase_entered_monotonic: Optional[float] = None
     waypoint_index: int = 0
-    approach_step: str = 'close_in'  # 'close_in' -> 'converge'，见 _tick_approach_drop_target
-    stable_since_monotonic: Optional[float] = None  # 持续稳定判定用，见 _tick_approach_drop_target
 
 
 @dataclass
@@ -222,20 +223,6 @@ def _dispatch_and_await(ctx, service_name, kwargs, on_success):
 
 
 # ---- 投放目标选哪个：见 drop_strategy.py，这里只负责调用 ----
-
-def _refine_target(target, detections, match_threshold):
-    """进近阶段用：用离当前估计最近的检测替换掉它——离得越近信得越准，
-    不固守 SEARCH 阶段离得远时候算出来的均值。本帧没匹配上（比如快到
-    正上方视野盲区）就保持上一个估计不变。"""
-    best, best_dist = None, match_threshold
-    for d in detections:
-        if d.target_type != 'cylinder' or d.confidence < _MIN_DETECTION_CONFIDENCE:
-            continue
-        dist = math.hypot(d.position.x - target.x, d.position.y - target.y)
-        if dist < best_dist:
-            best_dist, best = dist, d
-    return Candidate(best.position.x, best.position.y, best.apparent_size) if best else target
-
 
 def _update_clusters(clusters, points, match_threshold):
     """按最近邻把本帧检测归并进已有聚类（同一个物理目标的历史采样），
@@ -365,46 +352,20 @@ def _tick_search_drop_targets(ctx):
             target = drop_strategy.ACTIVE_STRATEGY(candidates, ctx.drop_task.used_positions, ctx.drop_task.drop_count)
             if target is not None:
                 ctx.drop_task.selected_target = target
-                ctx.drop_task.approach_step = 'close_in'
-                ctx.drop_task.stable_since_monotonic = None
+                _ACTIVE_APPROACH.enter(ctx)  # 以选定目标为锁定种子，清接近内部状态
                 return TickResult(next_state=State.APPROACH_DROP_TARGET)
 
     return TickResult(position_target=(waypoint[0], waypoint[1], -_CRUISE_ALTITUDE_M))
 
 
 def _tick_approach_drop_target(ctx):
-    ctx.drop_task.selected_target = _refine_target(
-        ctx.drop_task.selected_target, ctx.detections, _APPROACH_REFINE_THRESHOLD_M)
-    target = ctx.drop_task.selected_target
-    aim_x = target.x + _DROP_MECHANISM_OFFSET_M[0]
-    aim_y = target.y + _DROP_MECHANISM_OFFSET_M[1]
-
-    if ctx.drop_task.approach_step == 'close_in':
-        if not _arrived(ctx.local_position_xy, (aim_x, aim_y), _COARSE_APPROACH_RADIUS_M):
-            return TickResult(position_target=(aim_x, aim_y, -_CRUISE_ALTITUDE_M))
-        ctx.drop_task.approach_step = 'converge'
-
-    # converge：水平和高度一起收敛，不分先后——离得越近估计越准。真正
-    # "对齐"除了位置/高度到位，姿态也要摆平、飞机也要基本停住，而且这些
-    # 条件要连续满足一段时间才算数——单个 tick 摸到容差边缘不算（抖动的
-    # 时候偶然经过目标点不代表真的稳住了，实测踩过这个坑）。
-    stable_now = (
-        _arrived(ctx.local_position_xy, (aim_x, aim_y), _APPROACH_TOLERANCE_M)
-        and ctx.local_position_z is not None
-        and -ctx.local_position_z <= _DROP_ALTITUDE_M + _DROP_ALTITUDE_TOLERANCE_M
-        and ctx.roll_rad is not None and abs(ctx.roll_rad) <= _LEVEL_TOLERANCE_RAD
-        and ctx.pitch_rad is not None and abs(ctx.pitch_rad) <= _LEVEL_TOLERANCE_RAD
-        and ctx.horizontal_speed is not None and ctx.horizontal_speed <= _HORIZONTAL_SPEED_TOLERANCE_MPS
-        and ctx.vertical_speed is not None and abs(ctx.vertical_speed) <= _VERTICAL_SPEED_TOLERANCE_MPS
-    )
-    if stable_now:
-        if ctx.drop_task.stable_since_monotonic is None:
-            ctx.drop_task.stable_since_monotonic = time.monotonic()
-        elif time.monotonic() - ctx.drop_task.stable_since_monotonic >= _STABLE_HOLD_SECONDS:
-            return TickResult(next_state=State.DROP_PAYLOAD)
-    else:
-        ctx.drop_task.stable_since_monotonic = None
-    return TickResult(position_target=(aim_x, aim_y, -_DROP_ALTITUDE_M))
+    # 接近的内部实现是可替换的 approach 单元（粗 PBVS -> 末端 IBVS 等），见
+    # approaches/ / cuadc_decision/README.md。这里只把它的输出翻成 TickResult：
+    # 对齐并稳住（drop_ready）就转 DROP，否则发它要的运动指令（粗段位置、末端速度）。
+    out = _ACTIVE_APPROACH.loop(ctx)
+    if out.drop_ready:
+        return TickResult(next_state=State.DROP_PAYLOAD)
+    return TickResult(position_target=out.position_target, velocity_target=out.velocity_target)
 
 
 def _tick_drop_payload(ctx):

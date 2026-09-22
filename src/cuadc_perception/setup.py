@@ -9,6 +9,9 @@ setup(
     name=package_name,
     version='0.0.0',
     packages=find_packages(exclude=['test']),
+    # 检测器的 sim/real config yaml 跟着方法放在 detectors/,随包一起装,节点
+    # 用 __file__ 相对路径读(见 detectors/color_pad.py load_config)。
+    package_data={'cuadc_perception.detectors': ['*.yaml']},
     data_files=[
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),

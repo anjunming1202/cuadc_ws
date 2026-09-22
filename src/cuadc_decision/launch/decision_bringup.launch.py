@@ -26,6 +26,10 @@ def generate_launch_description():
         default_value='false',
         description='硬件单点测试用：两次投放完成后直接 RTL，不去侦察区',
     )
+    profile_arg = DeclareLaunchArgument(
+        'profile', default_value='sim',
+        description='接近算法 sim/real config 档，选 approaches/<approach>.<profile>.yaml，仿真 sim、真机 real',
+    )
 
     decision_node = Node(
         package='cuadc_decision',
@@ -38,7 +42,8 @@ def generate_launch_description():
             # launch 参数本质是字符串，'true'/'false' 要显式转成 bool，
             # 不然节点里 declare_parameter(..., False) 会因为类型不匹配报错
             'stop_after_drop': ParameterValue(LaunchConfiguration('stop_after_drop'), value_type=bool),
+            'profile': LaunchConfiguration('profile'),
         }],
     )
 
-    return LaunchDescription([tick_rate_arg, initial_state_arg, stop_after_drop_arg, decision_node])
+    return LaunchDescription([tick_rate_arg, initial_state_arg, stop_after_drop_arg, profile_arg, decision_node])

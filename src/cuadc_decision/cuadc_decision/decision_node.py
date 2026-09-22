@@ -41,10 +41,11 @@ _SERVICE_SPECS = {
 }
 
 
-def _roll_pitch_from_quaternion(x, y, z, w):
+def _rpy_from_quaternion(x, y, z, w):
     roll = math.atan2(2.0 * (w * x + y * z), 1.0 - 2.0 * (x * x + y * y))
     pitch = math.asin(max(-1.0, min(1.0, 2.0 * (w * y - z * x))))
-    return roll, pitch
+    yaw = math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+    return roll, pitch, yaw
 
 
 class DecisionNode(Node):
@@ -56,12 +57,18 @@ class DecisionNode(Node):
         # 跟正常任务流程完全一样（见 docs/spec/06-planning.md）。
         self.declare_parameter('initial_state', 'INIT')
         self.declare_parameter('stop_after_drop', False)
+        # 接近算法的 sim/real config 档，跟感知 profile 同一个道理，由场景启动
+        # 脚本给（run_mission_sim.sh=sim / run_mission_hardware.sh=real）；载入对应
+        # yaml 重建活动 approach，见 approaches/ + cuadc_decision/README.md 配置分层。
+        self.declare_parameter('profile', 'sim')
+        mission_logic.configure_approach(self.get_parameter('profile').value)
         self._ctx = mission_logic.MissionContext(
             current_state=self.get_parameter('initial_state').value,
             stop_after_drop=self.get_parameter('stop_after_drop').value,
         )
         self._pending_service_name = None
         self._pending_service_future = None
+        self._yaw_rad = 0.0  # 仅诊断用：确认全程锁 yaw（末端伺服时机头不转），不进 ctx
 
         self._service_clients = {
             name: self.create_client(request_cls, topic)
@@ -70,6 +77,8 @@ class DecisionNode(Node):
 
         self._position_target_pub = self.create_publisher(
             PositionTarget, f'{_INTERFACE_NS}/cmd/position_target_local', 10)
+        self._velocity_pub = self.create_publisher(
+            TwistStamped, f'{_INTERFACE_NS}/cmd/velocity', 10)
         self._status_pub = self.create_publisher(String, '~/mission_state', 10)
 
         self.create_subscription(Bool, f'{_INTERFACE_NS}/status/connected', self._on_connected, 10)
@@ -116,7 +125,7 @@ class DecisionNode(Node):
 
     def _on_attitude(self, msg):
         q = msg.orientation
-        self._ctx.roll_rad, self._ctx.pitch_rad = _roll_pitch_from_quaternion(q.x, q.y, q.z, q.w)
+        self._ctx.roll_rad, self._ctx.pitch_rad, self._yaw_rad = _rpy_from_quaternion(q.x, q.y, q.z, q.w)
 
     def _on_battery(self, msg):
         self._ctx.battery_fraction = msg.percentage
@@ -182,6 +191,16 @@ class DecisionNode(Node):
             target_msg.z = z
             self._position_target_pub.publish(target_msg)
 
+        if result.velocity_target is not None:
+            vx, vy, vz = result.velocity_target
+            twist_msg = TwistStamped()
+            twist_msg.header.stamp = self.get_clock().now().to_msg()
+            twist_msg.twist.linear.x = vx  # 前（机体系），见 04-interfaces.md cmd/velocity
+            twist_msg.twist.linear.y = vy  # 右
+            twist_msg.twist.linear.z = vz  # 下
+            twist_msg.twist.angular.z = 0.0  # yaw_rate=0：末端伺服锁当前航向、不自动转向（全程锁 yaw）
+            self._velocity_pub.publish(twist_msg)
+
         if result.service_call is not None:
             self._maybe_dispatch_service_call(result.service_call)
 
@@ -193,12 +212,49 @@ class DecisionNode(Node):
                 f'[DETECT] n={len(self._ctx.detections)} sizes=[{sizes}]',
                 throttle_duration_sec=1.0)
 
-        if self._ctx.current_state == mission_logic.State.APPROACH_DROP_TARGET:
-            # 诊断进近阶段抖动用，节流稍快（0.3s）才看得出振荡，不是 1Hz 那种
-            # 状态概览级别的日志。
+        if self._ctx.current_state == mission_logic.State.SEARCH_DROP_TARGETS:
+            # 诊断 SEARCH 候选聚类质量：每个聚类的均值位置 + 累计样本数,
+            # 看均值有没有被斜视早样本拖偏 / 有没有把两个筒并成一簇。
+            parts = []
+            for c in self._ctx.drop_task.clusters:
+                mx, my, _ = mission_logic._cluster_mean(c)
+                parts.append(f'({mx:.1f},{my:.1f})x{len(c)}')
             self.get_logger().info(
-                f'[ATTITUDE] roll={self._ctx.roll_rad} pitch={self._ctx.pitch_rad} '
-                f'hspeed={self._ctx.horizontal_speed} vspeed={self._ctx.vertical_speed}',
+                f'[SEARCH] clusters={len(parts)} used={len(self._ctx.drop_task.used_positions)} '
+                f'[{"; ".join(parts)}]', throttle_duration_sec=1.0)
+
+        if self._ctx.current_state == mission_logic.State.APPROACH_DROP_TARGET:
+            # 诊断进近阶段抖动/收敛用，节流稍快（0.3s）才看得出振荡。yaw 确认
+            # 全程锁 yaw 生效（末端应基本不变）；v 是发给飞控的机体系速度；其余
+            # 直接读接近单元内部状态（诊断用，不碰控制路径）：off=跟踪到的姿态
+            # 补偿水平偏移(前,右)米、miss=连续失配帧（涨=丢目标在 coast）、
+            # dist2lock=到锁定目标的真实世界水平距离（地面真值，判断在靠近还是
+            # 飞离）、h=离地高。
+            vt = result.velocity_target
+            vstr = f'({vt[0]:.2f},{vt[1]:.2f},{vt[2]:.2f})' if vt is not None else 'None'
+            ast = mission_logic._ACTIVE_APPROACH.state
+            off = ast.prev_off_meas
+            offstr = f'({off[0]:.2f},{off[1]:.2f})' if off is not None else 'None'
+            dist = None
+            if ast.locked is not None and self._ctx.local_position_xy is not None:
+                dist = math.hypot(self._ctx.local_position_xy[0] - ast.locked.x,
+                                  self._ctx.local_position_xy[1] - ast.locked.y)
+            diststr = f'{dist:.2f}' if dist is not None else 'None'
+            # near_det=离锁定目标最近的实时检测世界距离。粗段停在目标上却迟迟不
+            # 交接时,这个值 >refine_gate(0.4) 就说明选定的聚类位置和实测筒对不上
+            # （聚类均值被斜视样本拖偏 / 并簇),即 Block B 的关联问题。
+            ndist = None
+            if ast.locked is not None:
+                dets_xy = [(d.position.x, d.position.y) for d in self._ctx.detections
+                           if d.target_type == 'cylinder']
+                if dets_xy:
+                    ndist = min(math.hypot(dx - ast.locked.x, dy - ast.locked.y) for dx, dy in dets_xy)
+            ndstr = f'{ndist:.2f}' if ndist is not None else 'None'
+            hstr = f'{-self._ctx.local_position_z:.2f}' if self._ctx.local_position_z is not None else 'None'
+            self.get_logger().info(
+                f'[APPROACH] phase={ast.phase} yaw={self._yaw_rad:.3f} v={vstr} '
+                f'off={offstr} miss={ast.miss} dist2lock={diststr} near_det={ndstr} h={hstr} '
+                f'hspeed={self._ctx.horizontal_speed}',
                 throttle_duration_sec=0.3)
 
         self._status_pub.publish(String(data=self._ctx.current_state))

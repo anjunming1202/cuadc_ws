@@ -8,3 +8,6 @@ __pycache__/
 mav.tlog
 mav.tlog.raw
 mav.parm
+
+# Captured image datasets (large; dataset tooling itself lives on feature/cylinder-dataset)
+src/cylinder_dataset/data/

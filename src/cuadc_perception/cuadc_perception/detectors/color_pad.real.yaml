@@ -1,0 +1,14 @@
+# color_pad 检测器 —— 真机档(真实赛场蓝布垫 + 白桶)。HSV census 值源自
+# cv_explore/color_shape 在真实航拍素材(1920×1080)上的实测,已在 cylinder_dataset
+# 真实帧上验证检出。上真机再按现场光照微调。
+blue_lo: [100, 80, 50]
+blue_hi: [130, 255, 255]
+white_lo: [0, 0, 175]
+white_hi: [180, 60, 255]
+proc_w: 960              # 真机 1920 降采样到 960 提速
+morph_k: 7
+min_mat_area_frac: 0.01
+hole_area_lo: 0.004
+hole_area_hi: 0.5
+min_tube_ratio: 0.10
+max_tube_offset: 0.90

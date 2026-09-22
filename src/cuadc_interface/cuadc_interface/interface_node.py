@@ -438,15 +438,18 @@ class InterfaceNode(Node):
             return
         # MAV_FRAME_BODY_OFFSET_NED：vx/vy/vz 是相对当前朝向的机身系速度
         # （前/右/下），不是地理北/东/地——跟 Set Position Target 同样的
-        # 理由（遥控/视觉伺服场景天然是机身系直觉）。yaw 没有改动，仍然
-        # 忽略，保留默认自动朝向，见 04-interfaces.md"自动朝向行为"一节。
+        # 理由（遥控/视觉伺服场景天然是机身系直觉）。yaw_rate（rad/s）取自
+        # twist.angular.z 并在 type_mask 里标为“有效”（不再忽略）：发 0 就是
+        # 锁定当前航向、不自动转向，不发（默认 0）也锁航向。这样 Set Velocity
+        # 跟两个 Set Position Target 一样不自动转向——视觉伺服连续发速度时飞控
+        # 不再把机头转向飞行方向而绕圈，见 04-interfaces.md"自动朝向行为"一节。
         master.mav.set_position_target_local_ned_send(
             0, master.target_system, master.target_component,
             mavutil.mavlink.MAV_FRAME_BODY_OFFSET_NED,
-            0b0000111111000111,
+            0b0000011111000111,
             0, 0, 0,
             msg.twist.linear.x, msg.twist.linear.y, msg.twist.linear.z,
-            0, 0, 0, 0, 0)
+            0, 0, 0, 0, msg.twist.angular.z)
 
     def _on_yaw(self, msg):
         master = self._master

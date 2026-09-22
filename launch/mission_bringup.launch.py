@@ -33,6 +33,13 @@ def generate_launch_description():
         default_value='udp:127.0.0.1:14550',
         description='接口层 MAVLink 连接目标，仿真默认连本机 SITL，真机部署时改成串口',
     )
+    # profile 跟 connection 同一个道理：sim/真机各自的启动脚本把它写死
+    # （run_mission_sim.sh=sim / run_mission_hardware.sh=real），选感知检测器
+    # 的 sim/real config 档，见 cuadc_perception/README.md 配置分层。
+    profile_arg = DeclareLaunchArgument(
+        'profile', default_value='sim',
+        description='感知检测器 sim/real config 档，仿真 sim、真机 real',
+    )
 
     interface_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution(
@@ -43,11 +50,13 @@ def generate_launch_description():
     cv_perception_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution(
             [FindPackageShare('cuadc_perception'), 'launch', 'cv_perception_bringup.launch.py'])),
+        launch_arguments={'profile': LaunchConfiguration('profile')}.items(),
     )
 
     decision_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution(
             [FindPackageShare('cuadc_decision'), 'launch', 'decision_bringup.launch.py'])),
+        launch_arguments={'profile': LaunchConfiguration('profile')}.items(),
     )
 
-    return LaunchDescription([connection_arg, interface_launch, cv_perception_launch, decision_launch])
+    return LaunchDescription([connection_arg, profile_arg, interface_launch, cv_perception_launch, decision_launch])
