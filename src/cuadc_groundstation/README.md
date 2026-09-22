@@ -27,6 +27,15 @@ start.bat              Windows 启动:从本目录跑 python server.py
 
 无飞控自测 HUD:另开一个终端 `python send_fake_telemetry.py`(默认发 127.0.0.1:5701)。
 
+## 录制(每次运行都可开,和任务解耦)
+
+viewer 顶栏「● 录制」按钮开/停,把**当前视频流**录到 `recordings/<时间戳>.ts`
+(+ 同名 `.jsonl`,每秒一条遥测)。录制只是 remux 的一个**订阅者**,不碰视频主路、
+不和任何测试/任务代码耦合——调相机/单点测试/正式任务都照录。`--record-dir <目录>`
+可改落点。端点(前端按钮即调这些):`POST /record/start[?label=xxx]`、
+`POST /record/stop`、`GET /record/status`。录的是地面收到的流(Wi-Fi 副本);
+全质量的权威录制在机载侧(后续做)。
+
 ## 端点
 
 收的端口就是机载端点契约的地面一侧(图传 `:5600`、遥测 JSON `:5701`/`:5601`)。

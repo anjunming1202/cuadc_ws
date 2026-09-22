@@ -21,12 +21,14 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 VIEWER_DIR = Path(__file__).resolve().parent
 DEFAULT_SDP = VIEWER_DIR.parent / "DroneLink.sdp"  # docs / air-link reference
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 DEFAULT_TELEMETRY_PORT = 5701  # preferred once Pi unit is updated
+DEFAULT_RECORD_DIR = VIEWER_DIR / "recordings"  # 录制落点(地面机本地,按需查看)
 AIR_RTP_PORT = 5600
 AIR_SHARED_PORT = 5601  # legacy telemetry JSON and/or RTCP from some stacks
 LOCAL_RTP_PORT = 15600  # FFmpeg loopback RTP
@@ -292,8 +294,93 @@ class RemuxHub:
             backoff = min(8.0, backoff * 1.5)
 
 
+class Recorder:
+    """录制:作为 RemuxHub 的一个订阅者,把 MPEG-TS 分片写 <ts>.ts + 同名 <ts>.jsonl 遥测。
+    只是多一个订阅者,不碰视频主路 → 和任何测试/任务代码解耦;按需 start/stop。"""
+
+    def __init__(self, hub: RemuxHub, record_dir: Path) -> None:
+        self._hub = hub
+        self._dir = Path(record_dir)
+        self._lock = threading.Lock()
+        self._active = False
+        self._thread: threading.Thread | None = None
+        self._path: Path | None = None
+        self._telem_path: Path | None = None
+        self._started_mono = 0.0
+        self._bytes = 0
+
+    def start(self, label: str | None = None) -> dict:
+        with self._lock:
+            if self._active:
+                return {"ok": False, "error": "already recording", **self._status_unlocked()}
+            self._dir.mkdir(parents=True, exist_ok=True)
+            stamp = time.strftime("%Y%m%d_%H%M%S")
+            name = f"{stamp}_{label}" if label else stamp
+            self._path = self._dir / f"{name}.ts"
+            self._telem_path = self._dir / f"{name}.jsonl"
+            self._active = True
+            self._bytes = 0
+            self._started_mono = time.monotonic()
+            self._thread = threading.Thread(target=self._run, name="recorder", daemon=True)
+            self._thread.start()
+            sys.stderr.write(f"[rec] start -> {self._path}\n")
+            return {"ok": True, **self._status_unlocked()}
+
+    def stop(self) -> dict:
+        with self._lock:
+            if not self._active:
+                return {"ok": False, "error": "not recording"}
+            st = self._status_unlocked()   # 先取快照(还 active,秒数才对)
+            self._active = False
+            thread = self._thread
+        if thread:
+            thread.join(timeout=3)
+        st["recording"] = False
+        sys.stderr.write(f"[rec] stop  ({st['file']}, {st['seconds']}s, {st['bytes']} B)\n")
+        return {"ok": True, "stopped": True, **st}
+
+    def status(self) -> dict:
+        with self._lock:
+            return self._status_unlocked()
+
+    def _status_unlocked(self) -> dict:
+        return {
+            "recording": self._active,
+            "file": self._path.name if self._path else None,
+            "seconds": round(time.monotonic() - self._started_mono, 1) if self._active else 0.0,
+            "bytes": self._bytes,
+            "dir": str(self._dir),
+        }
+
+    def _run(self) -> None:
+        q = self._hub.subscribe()
+        last_telem = 0.0
+        try:
+            with open(self._path, "wb") as vf, open(self._telem_path, "w", encoding="utf-8") as tf:
+                while self._active:
+                    try:
+                        chunk = q.get(timeout=0.5)
+                    except queue.Empty:
+                        chunk = b""          # 无视频也继续循环(采遥测)
+                    if chunk is None:        # hub 停了
+                        break
+                    if chunk:
+                        vf.write(chunk)
+                        self._bytes += len(chunk)
+                    now = time.monotonic()
+                    if now - last_telem >= 1.0:  # 每秒一条遥测,和视频同名对齐
+                        last_telem = now
+                        tf.write(json.dumps({"t": time.time(), **_telemetry_snapshot()},
+                                            ensure_ascii=False) + "\n")
+                        tf.flush()
+                vf.flush()
+        finally:
+            self._hub.unsubscribe(q)
+
+
 _hub: RemuxHub | None = None
 _proxy: AirLinkProxy | None = None
+_recorder: Recorder | None = None
 
 
 def _telemetry_snapshot() -> dict:
@@ -355,6 +442,10 @@ class ViewerHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _send_json(self, obj: dict) -> None:
+        self._send_bytes(json.dumps(obj, ensure_ascii=False).encode("utf-8"),
+                         "application/json; charset=utf-8")
+
     def do_GET(self) -> None:  # noqa: N802
         path = self.path.split("?", 1)[0]
         if path in ("/", "/index.html"):
@@ -371,6 +462,23 @@ class ViewerHandler(BaseHTTPRequestHandler):
             return
         if path == "/stream.ts":
             self._stream_ts()
+            return
+        if path == "/record/status":
+            self._send_json(_recorder.status() if _recorder else {"recording": False})
+            return
+        self.send_error(404)
+
+    def do_POST(self) -> None:  # noqa: N802
+        path = self.path.split("?", 1)[0]
+        if _recorder is None:
+            self.send_error(503, "recorder not ready")
+            return
+        if path == "/record/start":
+            label = (parse_qs(urlparse(self.path).query).get("label") or [None])[0]
+            self._send_json(_recorder.start(label))
+            return
+        if path == "/record/stop":
+            self._send_json(_recorder.stop())
             return
         self.send_error(404)
 
@@ -399,7 +507,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    global _hub, _proxy
+    global _hub, _proxy, _recorder
 
     parser = argparse.ArgumentParser(description="DroneLink localhost video viewer")
     parser.add_argument("--host", default=DEFAULT_HOST, help="HTTP bind address")
@@ -412,6 +520,8 @@ def main() -> None:
         default=DEFAULT_SDP,
         help="unused for remux (kept for CLI compat); air ports are proxied",
     )
+    parser.add_argument("--record-dir", type=Path, default=DEFAULT_RECORD_DIR,
+                        help="录制输出目录(默认 groundstation/recordings/)")
     args = parser.parse_args()
 
     ffmpeg_bin = find_ffmpeg()
@@ -425,18 +535,22 @@ def main() -> None:
 
     _hub = RemuxHub(ffmpeg_bin, loopback_sdp)
     _hub.start()
+    _recorder = Recorder(_hub, args.record_dir)
 
     server = ThreadingHTTPServer((args.host, args.port), ViewerHandler)
     print(f"DroneLink viewer: http://{args.host}:{args.port}/")
     print(f"FFmpeg: {ffmpeg_bin}")
     print(f"Air RTP/shared: 0.0.0.0:{AIR_RTP_PORT}/:{AIR_SHARED_PORT} -> loopback")
     print(f"Telemetry UDP: {args.telemetry_bind}:{args.telemetry_port} (+ JSON on :{AIR_SHARED_PORT})")
+    print(f"Recordings: {args.record_dir}  (POST /record/start|stop, GET /record/status)")
     print("Ctrl+C to stop.")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nStopped.")
     finally:
+        if _recorder is not None and _recorder.status().get("recording"):
+            _recorder.stop()
         if _hub is not None:
             _hub.stop()
         if _proxy is not None:

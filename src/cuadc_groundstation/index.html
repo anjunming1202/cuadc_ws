@@ -44,6 +44,20 @@
     }
     #status.ok { color: var(--ok); }
     #status.bad { color: var(--bad); }
+    .header-right { display: flex; align-items: center; gap: 0.75rem; }
+    .rec-btn {
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid #2a3340;
+      border-radius: 5px;
+      padding: 0.35rem 0.7rem;
+      font-size: 0.85rem;
+      cursor: pointer;
+      font-variant-numeric: tabular-nums;
+    }
+    .rec-btn:hover { border-color: var(--accent); }
+    .rec-btn.on { background: var(--bad); color: #fff; border-color: var(--bad); }
+    .rec-btn:disabled { opacity: 0.6; cursor: default; }
     main {
       max-width: 1280px;
       margin: 0 auto;
@@ -113,7 +127,10 @@
 <body>
   <header>
     <h1>DroneLink</h1>
-    <div id="status">初始化…</div>
+    <div class="header-right">
+      <button id="recBtn" class="rec-btn" type="button">● 录制</button>
+      <div id="status">初始化…</div>
+    </div>
   </header>
   <main>
     <div class="stage">
@@ -356,6 +373,45 @@
         { once: true }
       );
     }
+
+    // ---- 录制(和视频/任务解耦,只调服务端 /record/*) ----
+    const recBtn = document.getElementById("recBtn");
+    let recOn = false;
+    function fmtDur(sec) {
+      sec = Math.floor(sec || 0);
+      const m = Math.floor(sec / 60), s = sec % 60;
+      return (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s;
+    }
+    function applyRec(st) {
+      recOn = !!(st && st.recording);
+      if (recOn) {
+        recBtn.textContent = "■ 停止 " + fmtDur(st.seconds);
+        recBtn.classList.add("on");
+      } else {
+        recBtn.textContent = "● 录制";
+        recBtn.classList.remove("on");
+      }
+    }
+    async function toggleRec() {
+      recBtn.disabled = true;
+      try {
+        const res = await fetch(recOn ? "/record/stop" : "/record/start", { method: "POST" });
+        applyRec(await res.json());
+      } catch (err) {
+        console.warn("record", err);
+      } finally {
+        recBtn.disabled = false;
+      }
+    }
+    async function pollRec() {
+      try {
+        const res = await fetch("/record/status", { cache: "no-store" });
+        applyRec(await res.json());
+      } catch (err) { /* server down */ }
+    }
+    recBtn.addEventListener("click", toggleRec);
+    pollRec();
+    setInterval(pollRec, 1000);
 
     startPlayer();
     pollTelemetry();
