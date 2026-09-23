@@ -60,14 +60,35 @@ patch = 干净 sim，行为与现在完全一致。
 噪声 → 感知时延 → 相机成像 → **然后**据此改 SEARCH（去离群/确认簇/放宽远筒
 选择门/dedup，见 `cuadc_decision/README.md` 与 `mission_logic.py` 现状）。
 
-## 5. 坑 / 注意
+## 5. 感知时延阈值（标定发现）
+
+用时延层单独扫（其余扰动关、固定布局，每档 3 轮，`--detection-latency-ms`）：
+
+| 时延 | 第二次投放成功率 |
+|---|---|
+| 0 / 100 / 150ms | 100%（每轮投满 2） |
+| 200ms | 33%（拐点） |
+| 250 / 300ms | 0% |
+
+**悬崖极陡**：150ms 满分，200ms 起塌，250ms+ 归零——不是缓降。SEARCH 本身不受
+影响（簇正常形成、选出目标、进 APPROACH）；塌的是**末端 IBVS**——它是盯检测
+`offset` 的 PID 伺服，时延=闭环里的纯滞后(dead-time)，超过约 150ms 就把伺服推向
+极限环振荡，对不准到可投、守卫超时放弃。
+
+- **安全预算：感知端到端时延 ≤ 150ms。** 真机实测值由 cv-field-test 的 on-Pi
+  profiling 给（CV 计算耗时感知节点 `_publish_perf` 已在回传；相机捕获+图传两段需
+  Pi 上测）。
+- 决策：真值 ≤150ms → 末端伺服不必改；落进悬崖(150~250ms) → 需硬化末端 IBVS
+  抗时延（降增益 / 用速度外推目标做时延补偿 / Smith 预估器等）。
+
+## 6. 坑 / 注意
 
 - 拆除**只按 PID/进程组**，绝不 `pkill` 模式串（自杀教训，见 `docs/lessons.md`）。
 - WSL2 下 SITL 相关命令带 `--no-wsl2-network`（见 `docs/lessons.md`）。
 - 每轮 Gazebo 冷启约分钟级，N 取 10–20 量级，**每轮必须有硬超时**。
 - 每轮换不同扰动种子；布局固定。
 
-## 6. 与其它文档
+## 7. 与其它文档
 
 - SEARCH/聚类现状、感知↔决策契约：`cuadc_decision/README.md`、
   [`05-perception-decision-interface.md`](05-perception-decision-interface.md)。
