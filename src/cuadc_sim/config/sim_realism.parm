@@ -1,0 +1,10 @@
+# 仿真真实感注入 —— 叠加在 mission_defaults.parm 之上,建模真实飞行条件下的扰动。
+# 默认不启用:只有 gazebo_bringup 传 sim_realism_params:=<此文件绝对路径> 时才加载
+# (压测台 scripts/run_search_stress.sh --realism-parm 会传)。不传 = 干净 sim,行为不变。
+# 用途与度量见 docs/spec/sim-stress-testbed.md。这里放偏离默认、用于压测的扰动量。
+
+# ---- 风扰(飞控动力学层)----
+# 稳态风 + 湍流:压 APPROACH 位置保持 / 末端 IBVS 的抗扰;2m 巡航高度、需悬停对准。
+SIM_WIND_SPD  4.0    # 平均风速 m/s(户外轻到中等风)
+SIM_WIND_DIR  45     # 风来向 deg
+SIM_WIND_TURB 0.3    # 湍流强度(阵风)

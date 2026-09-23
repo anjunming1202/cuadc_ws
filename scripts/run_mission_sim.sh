@@ -12,7 +12,7 @@
 # 的说明（之前那种"一个脚本+参数默认值决定行为"的设计就是因为默认值
 # 悄悄选中了错误的选项，排查了很久才发现）。
 #
-# Usage: ./scripts/run_mission_sim.sh [extra ros2 launch args, e.g. stop_after_drop:=true]
+# Usage: ./scripts/run_mission_sim.sh [extra ros2 launch args, e.g. scenario:=drop_zone_bench]
 
 # No -u (nounset): ROS2's own setup.bash files reference variables like
 # AMENT_TRACE_SETUP_FILES without a default-value guard, assuming bash's

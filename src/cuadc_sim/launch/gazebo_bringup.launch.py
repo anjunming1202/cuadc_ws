@@ -79,6 +79,13 @@ def generate_launch_description():
         default_value='',
         description="Extra args appended to sim_vehicle.py, e.g. '-w' to wipe EEPROM on first run",
     )
+    sim_realism_params_arg = DeclareLaunchArgument(
+        'sim_realism_params',
+        default_value='',
+        description=('Absolute path to an extra SITL .parm layered on top (wind / sensor noise, '
+                     'see config/sim_realism.parm). Empty = clean sim, behaviour unchanged. '
+                     'Used by the SEARCH stress testbed; see docs/spec/sim-stress-testbed.md.'),
+    )
     camera_gz_topic_arg = DeclareLaunchArgument(
         'camera_gz_topic',
         # Matches GIMBAL_CAMERA_TOPIC in field/gen_world.py -- keep both in
@@ -188,6 +195,11 @@ def generate_launch_description():
             ' --add-param-file ',
             PathJoinSubstitution([get_package_share_directory('cuadc_sim'),
                                    'config', 'mission_defaults.parm']),
+            # Optional realism overlay (wind / sensor noise) layered last so it
+            # wins; empty sim_realism_params -> nothing appended -> clean sim.
+            PythonExpression([
+                "' --add-param-file ' + '", LaunchConfiguration('sim_realism_params'),
+                "' if '", LaunchConfiguration('sim_realism_params'), "' else ''"]),
             # SITL's default build has HAL_WITH_ESC_TELEM=0 (no CAN/serial
             # RCOut), which compiles out the entire body of
             # Copter::takeoff_check() -- the only place that ever clears
@@ -253,6 +265,7 @@ def generate_launch_description():
         world_arg,
         gui_arg,
         extra_sitl_args_arg,
+        sim_realism_params_arg,
         camera_gz_topic_arg,
         camera_fixed_pitch_rad_arg,
         camera_fixed_roll_rad_arg,

@@ -40,6 +40,13 @@ def generate_launch_description():
         'profile', default_value='sim',
         description='感知检测器 sim/real config 档，仿真 sim、真机 real',
     )
+    # scenario 只到决策层（选 mission/scenarios/<scenario>.yaml：initial_state + 跑哪些阶段 +
+    # SEARCH 覆盖）；感知/接口层不认场景。各启动脚本把它写死（正式任务 full_mission、投放区
+    # 单练 drop_zone_bench…），见 docs/spec/mission-config-layer.md。
+    scenario_arg = DeclareLaunchArgument(
+        'scenario', default_value='full_mission',
+        description='任务场景，选 mission/scenarios/<scenario>.yaml，正式任务 full_mission',
+    )
 
     interface_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution(
@@ -56,7 +63,11 @@ def generate_launch_description():
     decision_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution(
             [FindPackageShare('cuadc_decision'), 'launch', 'decision_bringup.launch.py'])),
-        launch_arguments={'profile': LaunchConfiguration('profile')}.items(),
+        launch_arguments={
+            'profile': LaunchConfiguration('profile'),
+            'scenario': LaunchConfiguration('scenario'),
+        }.items(),
     )
 
-    return LaunchDescription([connection_arg, profile_arg, interface_launch, cv_perception_launch, decision_launch])
+    return LaunchDescription([connection_arg, profile_arg, scenario_arg,
+                              interface_launch, cv_perception_launch, decision_launch])
