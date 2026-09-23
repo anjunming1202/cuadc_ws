@@ -14,11 +14,15 @@
 - `drop_strategy.py`——投放目标选哪个筒的策略，纯 Python，独立于状态机。
   每个策略是一个函数（签名见文件头），注册进 `STRATEGIES` 字典，改
   `ACTIVE_STRATEGY` 指向哪个就切换/实验哪个策略，不用改 `mission_logic.py`。
-  （策略是小函数、没有各自的 config，就留一个文件；不像 `approaches/` 那样
-  开文件夹——一个方法一个文件夹只在方法带 config/多文件时才值得。）
+- `search_strategy.py`——SEARCH 阶段的可替换算法（逐帧检测的时序聚类、候选提取、
+  何时可选目标），从 `mission_logic` 抽出，同 `drop_strategy` 的轻量做法，可调参数在
+  同名 `search_strategy.{sim,real}.yaml`（跟着算法放）。
 - `approaches/`——投放接近的可替换「阶段策略」，一个 approach 一个模块 + 各自
   的 sim/real config yaml 跟着放（组织同 `cuadc_perception/detectors/`），详见
   下面「投放接近」。
+- `mission/`——世界/任务/场景参数的单一真源配置层（非算法参数：区中心、扫描航点、
+  一般巡航高度、要投几次、跑哪些阶段、`initial_state`…），sim/real 分文件 + 场景覆盖，
+  详见 [`docs/spec/mission-config-layer.md`](../../docs/spec/mission-config-layer.md)。
 - `decision_node.py`——唯一碰 ROS2 API 的地方，订阅遥测/检测、调用
   接口层 service、发布位置/速度指令，每个 tick 把数据交给 `mission_logic`
   处理，再把结果翻译回真正的 ROS2 调用。
@@ -33,19 +37,15 @@ ros2 launch cuadc_decision decision_bringup.launch.py
 ## Launch 参数
 
 - `tick_rate_hz`（默认 10.0）：状态机 tick 频率。
-- `initial_state`（默认 `INIT`）：硬件单点测试用，跳过前面几个状态直接
-  从某个状态起步，比如让飞机已经悬停在投放区附近时传
-  `initial_state:=NAVIGATE_TO_DROP_ZONE`，不用重新走一遍
-  `WAIT_TASK_START`/`ARM_AND_TAKEOFF`。已知限制：`_DROP_PHASE_TIMEOUT_S`
-  安全超时只在 `NAVIGATE_TO_DROP_ZONE` 到点后才开始计时，直接跳进
-  `SEARCH_DROP_TARGETS`/`APPROACH_DROP_TARGET`/`DROP_PAYLOAD` 不会激活
-  这个超时保护，建议单点测试从 `NAVIGATE_TO_DROP_ZONE` 起步。
-- `stop_after_drop`（默认 `false`）：硬件单点测试用，两次投放都完成后
-  直接切 RTL，不飞去侦察区。
+- `profile`（默认 `sim`）：环境档，选各算法/配置层的 `.sim`/`.real` 文件（见下「配置分层」）。
+- `scenario`（默认 `full_mission`）：跑哪种场景，选 `mission/scenarios/<scenario>.yaml`
+  ——场景自带 `initial_state`（从哪个 state 起跑）和 `phases`（跑哪些阶段），单阶段隔离
+  测试靠它 + `initial_state` 组合实现，不在状态机里加 test-only 分支。首批：`full_mission`、
+  `drop_zone_bench`（投放区单练，投完即 RTL + 放宽 SEARCH 选目标门）、`recon_zone_bench`。
+  完整设计见 [`docs/spec/mission-config-layer.md`](../../docs/spec/mission-config-layer.md)。
 
 ```bash
-ros2 launch cuadc_decision decision_bringup.launch.py \
-    initial_state:=NAVIGATE_TO_DROP_ZONE stop_after_drop:=true
+ros2 launch cuadc_decision decision_bringup.launch.py scenario:=drop_zone_bench
 ```
 
 ## 日志
@@ -95,19 +95,25 @@ ros2 launch cuadc_decision decision_bringup.launch.py \
   `TickResult` 现在只有 `position_target` + `service_call`，迁移要给它加一个
   **速度指令**字段（内部结构，由 `decision_node` 翻成对应 04 调用）。
 
-## 配置分层：场景选 sim/real，参数按 approach 分文件
+## 配置分层：两条正交轴（类别 × sim/real）
 
-- **每个 approach 的可调参数**（增益、门限、降高率、投放容差、投放机构杆臂…）
-  放进 `approaches/<approach>.<profile>.yaml`——**跟着方法放**、显式标 `sim`/`real`
-  （`coarse_pbvs_then_terminal_ibvs.sim.yaml` / `.real.yaml` 并排，不做语义含糊
-  的 base），组织同 `cuadc_perception/detectors/`。sim 是 Gazebo 验证值；real
-  当前是占位副本，上真机按真实延迟/动力学重调、杆臂实测。
-- **sim/real 选择**沿用 `connection` 那套：不靠一个参数默认值二选一，而是
-  **场景启动脚本**把 `profile` 写死（`run_mission_sim.sh`=sim /
-  `run_mission_hardware.sh`=real / `run_mission_stub_sim.sh` 走桩不涉及）。
-  `profile` 经 `mission_bringup` 传到 `decision_node`，`decision_node.__init__`
-  调 `mission_logic.configure_approach(profile)` 载入对应 yaml 重建活动 approach。
-  同一个 `profile` 也选感知检测器的档（见 `cuadc_perception/README.md`）。
+参数按**类别**分开、永不合并，各自跟属主放；再按 **sim/real 分文件**做环境隔离。完整
+设计（判据、场景组合、隔离测试）见
+[`docs/spec/mission-config-layer.md`](../../docs/spec/mission-config-layer.md)，这里只列本包落点：
+
+- **A 世界/任务/场景**（非算法参数）→ `mission/`（`mission.{sim,real}.yaml` + `scenarios/`）。
+- **B 各可替换算法**（跟算法源码放、按算法名命名）→ `approaches/<approach>.{sim,real}.yaml`
+  （增益/门限/降高/投放容差/杆臂…，及**投放区作业高度**——与投放算法绑定）、
+  `search_strategy.{sim,real}.yaml`（SEARCH 聚类/选目标门）；检测器同理在
+  `cuadc_perception/detectors/`。
+- **B′ 顶层 FSM 本体通用参数**（到点容差/阶段超时/安全守卫）→ `mission_logic.{sim,real}.yaml`。
+
+**sim/real 与 scenario 选择**沿用 `connection` 那套：不靠一个参数默认值二选一，而是
+**场景启动脚本**把 `profile`/`scenario` 写死（`run_mission_sim.sh`=sim+full_mission /
+`run_mission_sim_drop_zone_bench.sh`=sim+drop_zone_bench / `run_mission_hardware.sh`=real）。
+两者经 `mission_bringup` 传到 `decision_node.__init__`，那里各层 `load` 后调
+`mission_logic.configure_approach(profile)` + `configure_mission(world, tuning, search)`
+一次性注入（`world` 已含场景覆盖）。同一个 `profile` 也选感知检测器的档。
 - **cv_explore 沙盒不强制 yaml**：沙盒里参数用文件里看得见的常量 + README
   记录即可；yaml 提炼是**迁移到生产**才做的规范，沙盒图快、不背这个包袱。
 

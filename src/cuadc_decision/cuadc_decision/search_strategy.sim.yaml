@@ -1,0 +1,6 @@
+# search_strategy —— sim 档。字段 = SearchConfig 字段。Gazebo 真实 CV 验证值。
+cluster_match_threshold_m: 0.6
+min_cluster_samples: 3
+settle_seconds: 1.5
+min_detection_confidence: 0.5
+min_candidates_before_select: 3     # = 投放区筒数（规则固定 3 个）；bench 场景覆盖成 1

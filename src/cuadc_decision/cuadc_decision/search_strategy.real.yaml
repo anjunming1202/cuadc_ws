@@ -1,0 +1,7 @@
+# search_strategy —— real 档。字段 = SearchConfig 字段。真机上按真实 CV 噪声/视角重调，
+# 先以 sim 档为起点（算法不变，真实检测抖动更大时可放宽 match/加大 min_samples）。
+cluster_match_threshold_m: 0.6
+min_cluster_samples: 3
+settle_seconds: 1.5
+min_detection_confidence: 0.5
+min_candidates_before_select: 3     # = 投放区筒数（规则固定 3 个）；bench 场景覆盖成 1

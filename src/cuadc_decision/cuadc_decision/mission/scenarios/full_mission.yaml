@@ -1,0 +1,4 @@
+# 正式全任务：从头(INIT)跑投放+侦察。恒等场景——不偏离 base，靠 MissionWorld 默认
+# (initial_state=INIT, phases=[drop, recon])。sim/真机同一场景，由脚本选 profile/connection。
+initial_state: INIT
+phases: [drop, recon]
