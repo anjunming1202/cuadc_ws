@@ -6,7 +6,7 @@ cylinder_height_m: 0.3
 dt_s: 0.1
 min_conf: 0.5
 coarse_radius_m: 1.0
-refine_gate_m: 0.4
+refine_gate_m: 0.65
 handoff_off_m: 0.6
 handoff_speed_mps: 0.4
 kp: 1.2

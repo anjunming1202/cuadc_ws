@@ -378,6 +378,10 @@ def _tick_drop_payload(ctx):
             if ctx.stop_after_drop:
                 return TickResult(next_state=State.RTL_OR_LAND)
             return TickResult(next_state=State.NAVIGATE_TO_RECON_ZONE)
+        # 再次搜索前把扫描进度归零:否则 waypoint_index 停在末点，二次搜索原地
+        # 不动、只吃上一轮欠采样的旧簇；归零后重走整条扫描路径给剩余筒补采样
+        # （clusters 保留，样本跨投放累积）。
+        ctx.drop_task.waypoint_index = 0
         return TickResult(next_state=State.SEARCH_DROP_TARGETS)
 
     return _dispatch_and_await(
