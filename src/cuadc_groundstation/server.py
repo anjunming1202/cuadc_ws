@@ -20,12 +20,14 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 VIEWER_DIR = Path(__file__).resolve().parent
 DEFAULT_SDP = VIEWER_DIR.parent / "DroneLink.sdp"  # docs / air-link reference
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 DEFAULT_TELEMETRY_PORT = 5701  # preferred once Pi unit is updated
+DEFAULT_RECORD_DIR = VIEWER_DIR / "recordings"  # 录制落点(地面机本地,按需查看)
 AIR_RTP_PORT = 5600
 AIR_SHARED_PORT = 5601  # legacy telemetry JSON and/or RTCP from some stacks
 AIR_CV_RTP_PORT = 5606  # CV preview downlink (Pi cv-forward)
@@ -355,10 +357,113 @@ class RemuxHub:
             backoff = min(8.0, backoff * 1.5)
 
 
+class Recorder:
+    """录制:给每个 RemuxHub 挂一个订阅者,把 MPEG-TS 分片写文件 + 一份 .jsonl 遥测。
+    默认同时录**干净图传** `<name>.ts` 与 **CV 预览** `<name>_cv.ts`(带检测框),
+    外加每秒一条 `<name>.jsonl` 遥测。只是多几个订阅者,不碰视频主路 → 和任何
+    测试/任务代码解耦;按需 start/stop,现场任何时候都能开。"""
+
+    def __init__(self, hubs: dict[str, RemuxHub], record_dir: Path) -> None:
+        self._hubs = hubs                       # {文件名后缀: hub},如 {"": 干净, "_cv": CV}
+        self._dir = Path(record_dir)
+        self._lock = threading.Lock()
+        self._bytes_lock = threading.Lock()
+        self._active = False
+        self._threads: list[threading.Thread] = []
+        self._name: str | None = None
+        self._telem_path: Path | None = None
+        self._started_mono = 0.0
+        self._bytes = 0
+
+    def start(self, label: str | None = None) -> dict:
+        with self._lock:
+            if self._active:
+                return {"ok": False, "error": "already recording", **self._status_unlocked()}
+            self._dir.mkdir(parents=True, exist_ok=True)
+            stamp = time.strftime("%Y%m%d_%H%M%S")
+            self._name = f"{stamp}_{label}" if label else stamp
+            self._telem_path = self._dir / f"{self._name}.jsonl"
+            self._active = True
+            self._bytes = 0
+            self._started_mono = time.monotonic()
+            self._threads = []
+            for suffix, hub in self._hubs.items():
+                path = self._dir / f"{self._name}{suffix}.ts"
+                t = threading.Thread(target=self._run_video, args=(hub, path),
+                                     name=f"rec{suffix or '-clean'}", daemon=True)
+                t.start()
+                self._threads.append(t)
+            tt = threading.Thread(target=self._run_telem, name="rec-telem", daemon=True)
+            tt.start()
+            self._threads.append(tt)
+            sys.stderr.write(f"[rec] start -> {self._dir}/{self._name}{{.ts,_cv.ts,.jsonl}}\n")
+            return {"ok": True, **self._status_unlocked()}
+
+    def stop(self) -> dict:
+        with self._lock:
+            if not self._active:
+                return {"ok": False, "error": "not recording"}
+            st = self._status_unlocked()   # 先取快照(还 active,秒数才对)
+            self._active = False
+            threads = list(self._threads)
+        for t in threads:
+            t.join(timeout=3)
+        st["recording"] = False
+        sys.stderr.write(f"[rec] stop  ({st['name']}, {st['seconds']}s, {st['bytes']} B)\n")
+        return {"ok": True, "stopped": True, **st}
+
+    def status(self) -> dict:
+        with self._lock:
+            return self._status_unlocked()
+
+    def _status_unlocked(self) -> dict:
+        with self._bytes_lock:
+            nbytes = self._bytes
+        return {
+            "recording": self._active,
+            "name": self._name if self._active else None,
+            "streams": list(self._hubs.keys()),
+            "seconds": round(time.monotonic() - self._started_mono, 1) if self._active else 0.0,
+            "bytes": nbytes,
+            "dir": str(self._dir),
+        }
+
+    def _run_video(self, hub: RemuxHub, path: Path) -> None:
+        q = hub.subscribe()
+        try:
+            with open(path, "wb") as vf:
+                while self._active:
+                    try:
+                        chunk = q.get(timeout=0.5)
+                    except queue.Empty:
+                        continue
+                    if chunk is None:        # hub 停了
+                        break
+                    vf.write(chunk)
+                    with self._bytes_lock:
+                        self._bytes += len(chunk)
+                vf.flush()
+        finally:
+            hub.unsubscribe(q)
+
+    def _run_telem(self) -> None:
+        last = 0.0
+        with open(self._telem_path, "w", encoding="utf-8") as tf:
+            while self._active:
+                now = time.monotonic()
+                if now - last >= 1.0:        # 每秒一条,和视频同名对齐
+                    last = now
+                    tf.write(json.dumps({"t": time.time(), **_telemetry_snapshot()},
+                                        ensure_ascii=False) + "\n")
+                    tf.flush()
+                time.sleep(0.2)
+
+
 _hub: RemuxHub | None = None
 _cv_hub: RemuxHub | None = None
 _proxy: AirLinkProxy | None = None
 _cv_proxy: SimpleRtpProxy | None = None
+_recorder: Recorder | None = None
 
 
 def _telemetry_snapshot() -> dict:
@@ -420,6 +525,10 @@ class ViewerHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _send_json(self, obj: dict) -> None:
+        self._send_bytes(json.dumps(obj, ensure_ascii=False).encode("utf-8"),
+                         "application/json; charset=utf-8")
+
     def do_GET(self) -> None:  # noqa: N802
         path = self.path.split("?", 1)[0]
         if path in ("/", "/index.html"):
@@ -439,6 +548,23 @@ class ViewerHandler(BaseHTTPRequestHandler):
             return
         if path == "/stream_cv.ts":
             self._stream_ts(_cv_hub, "CV remux hub")
+            return
+        if path == "/record/status":
+            self._send_json(_recorder.status() if _recorder else {"recording": False})
+            return
+        self.send_error(404)
+
+    def do_POST(self) -> None:  # noqa: N802
+        path = self.path.split("?", 1)[0]
+        if _recorder is None:
+            self.send_error(503, "recorder not ready")
+            return
+        if path == "/record/start":
+            label = (parse_qs(urlparse(self.path).query).get("label") or [None])[0]
+            self._send_json(_recorder.start(label))
+            return
+        if path == "/record/stop":
+            self._send_json(_recorder.stop())
             return
         self.send_error(404)
 
@@ -466,7 +592,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    global _hub, _cv_hub, _proxy, _cv_proxy
+    global _hub, _cv_hub, _proxy, _cv_proxy, _recorder
 
     parser = argparse.ArgumentParser(description="DroneLink localhost video viewer")
     parser.add_argument("--host", default=DEFAULT_HOST, help="HTTP bind address")
@@ -479,6 +605,8 @@ def main() -> None:
         default=DEFAULT_SDP,
         help="unused for remux (kept for CLI compat); air ports are proxied",
     )
+    parser.add_argument("--record-dir", type=Path, default=DEFAULT_RECORD_DIR,
+                        help="录制输出目录(默认 groundstation/recordings/)")
     args = parser.parse_args()
 
     ffmpeg_bin = find_ffmpeg()
@@ -511,6 +639,7 @@ def main() -> None:
     _hub.start()
     _cv_hub = RemuxHub(ffmpeg_bin, cv_sdp)
     _cv_hub.start()
+    _recorder = Recorder({"": _hub, "_cv": _cv_hub}, args.record_dir)
 
     server = ThreadingHTTPServer((args.host, args.port), ViewerHandler)
     print(f"DroneLink viewer: http://{args.host}:{args.port}/")
@@ -518,12 +647,15 @@ def main() -> None:
     print(f"Clean RTP/shared: 0.0.0.0:{AIR_RTP_PORT}/:{AIR_SHARED_PORT} -> /stream.ts")
     print(f"CV RTP: 0.0.0.0:{AIR_CV_RTP_PORT} -> /stream_cv.ts")
     print(f"Telemetry UDP: {args.telemetry_bind}:{args.telemetry_port} (+ JSON on :{AIR_SHARED_PORT})")
+    print(f"Recordings: {args.record_dir}  (POST /record/start|stop, GET /record/status)")
     print("Ctrl+C to stop.")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nStopped.")
     finally:
+        if _recorder is not None and _recorder.status().get("recording"):
+            _recorder.stop()
         if _hub is not None:
             _hub.stop()
         if _cv_hub is not None:

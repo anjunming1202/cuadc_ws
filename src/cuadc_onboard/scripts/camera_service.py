@@ -3,6 +3,7 @@
 
 - libcamerasrc 出 NV12 后立刻 tee：
   - 一路 x264 → 本地 H.264/RTP 5602(兼容读帧) + 5603(video-forward→地面)
+    + 5605(onboard_record 全质量录制;无人读则内核丢弃)
   - 一路 shmsink raw NV12（本机 OpenCV/cv-preview 直吃，无需再解码）
 - 自己不发地面——干净图传 video-forward(5603→5600),CV 预览 cv-preview+cv-forward。
 - 控制口(默认 udp:127.0.0.1:5610)收 JSON,PLAYING 态直接 g_object_set 到
@@ -60,6 +61,9 @@ def build_pipeline(
         f"tee name=h "
         f"h. ! queue ! udpsink host=127.0.0.1 port=5602 sync=false async=false "
         f"h. ! queue ! udpsink host=127.0.0.1 port=5603 sync=false async=false "
+        # 5605: same clean encode, tapped by onboard_record (full-quality). No
+        # reader -> kernel drops it, so this branch is free when not recording.
+        f"h. ! queue ! udpsink host=127.0.0.1 port=5605 sync=false async=false "
         # Raw NV12 for local CV — drop to cv_fps *before* shm (matches detect rate).
         f"raw. ! queue max-size-buffers=2 leaky=downstream ! "
         f"videorate drop-only=true ! video/x-raw,framerate={cv_fps}/1 ! "
@@ -170,7 +174,7 @@ def main() -> None:
     pipeline.set_state(Gst.State.PLAYING)
     print(
         f"camera-service: {args.width}x{args.height}@{args.fps} "
-        f"raw-tee -> h264 udp:5602+5603 + shm:{args.raw_shm}@{args.cv_fps}fps; "
+        f"raw-tee -> h264 udp:5602+5603+5605 + shm:{args.raw_shm}@{args.cv_fps}fps; "
         f"ctrl {args.control_port}",
         flush=True,
     )

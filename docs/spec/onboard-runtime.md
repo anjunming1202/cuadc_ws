@@ -21,14 +21,14 @@
 ```
 ① 底座层（无条件开机自启 · 持有硬件、产出端点）
    mav_fanout      独占串口 → 主动 keepalive 喂活飞控 → 原始 MAVLink 推到本地 UDP 端点（14550/14551…）
-   camera-service  独占相机 → raw NV12 tee：编码→5602/5603（图传）+ shm raw（CV 直吃）；
+   camera-service  独占相机 → raw NV12 tee：编码→5602/5603（图传）/5605（机载录制）+ shm raw（CV 直吃）；
                      可运行时控制:监听 5610 收 JSON 改曝光/增益/对焦（gst 应用,非静态 gst-launch）
    ground-bus      （预留）被动转发器：本地 5700 有人投才转发到地面，否则空管道
    network/AP、eth 链路
 
 ② 消费者层（profile 选择性自启，或手动跑；都只连端点、不碰硬件）
    数传发送 / video-forward（5603→5600）/ cv-preview+cv-forward（5602→5604→5606）/
-   dataset 采集 / CV / cuadc_interface …
+   onboard_record（录制 5605 全质量 + rosbag）/ dataset 采集 / CV / cuadc_interface …
 ```
 
 **底座不向地面发**：它把硬件变成本地端点（并主动 keepalive 喂活飞控数据流），
@@ -60,6 +60,7 @@ PLAYING 态即改曝光/增益/对焦（实测该机 `libcamerasrc` 这些属性
 | 相机本地帧 | `udp:127.0.0.1:5602` | H.264/RTP | CV/采集/调参 取帧（编码后兼容口），**不开相机** |
 | 相机 raw 帧 | `shm:/tmp/cuadc-cam-raw.shm` | NV12 raw | OpenCV/cv-preview 直吃（相机 raw tee，无需解码） |
 | 图传转发输入 | `udp:127.0.0.1:5603` | H.264/RTP | 相机服务 tee 的一路；video-forward 读它转地面 |
+| 机载录制 tap | `udp:127.0.0.1:5605` | H.264/RTP | 相机服务 tee 的一路(同干净编码)；onboard_record 读它录全质量；无人读则内核丢弃 |
 | CV 预览本地 | `udp:127.0.0.1:5604` | H.264/RTP | cv-preview 标注/处理后的画面；cv-forward 读它转地面 |
 | 相机控制口 | `udpin:127.0.0.1:5610` | JSON datagram | 向相机服务发 `{ae,exposure_us,gain,af,lens,…}` 运行时改拍摄参数 |
 | 图传→地面 | `192.168.50.2:5600` | H.264/RTP | 干净图传；**video-forward** 读 5603 转发 |
