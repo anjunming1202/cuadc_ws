@@ -24,4 +24,4 @@ recon_scan_offsets:
 recon_cylinder_count: 5
 drop_count_target: 2
 drop_recon_split_y_m: 45.0
-drop_relay_channel: 0                 # sim 无物理投放机构
+# 投放执行器参数（RC 通道/PWM/时长）属接口层，不在任务配置层，见 docs/spec/adr/0007

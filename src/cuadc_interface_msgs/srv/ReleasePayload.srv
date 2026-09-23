@@ -1,0 +1,5 @@
+# 执行一次投放：接口层在投放 RC 通道上跑一段定时 RC override（forward→run_s→neutral→释放），
+# 舵机物理动作完成后才返回。空请求——舵机通道/PWM/时长是接口层配置。见 docs/spec/adr/0007。
+---
+bool success
+string message

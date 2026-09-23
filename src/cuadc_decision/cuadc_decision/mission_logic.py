@@ -209,7 +209,7 @@ def _is_near_any(x, y, points, threshold):
 def _dispatch_and_await(ctx, service_name, kwargs, on_success):
     """一次性 service 调用的通用模式：发起一次、等结果，成功就跑
     `on_success()` 拿下一步动作，失败就重试。`set_mode`/`arm`/
-    `takeoff`/`set_relay` 四处一次性调用共用这段逻辑，不各写一遍。"""
+    `takeoff`/`release_payload` 四处一次性调用共用这段逻辑，不各写一遍。"""
     if ctx.last_service_result is not None and ctx.last_service_result.name == service_name:
         ctx.command_dispatched = False
         if ctx.last_service_result.success:
@@ -342,8 +342,9 @@ def _tick_drop_payload(ctx):
         ctx.drop_task.waypoint_index = 0
         return TickResult(next_state=State.SEARCH_DROP_TARGETS)
 
-    return _dispatch_and_await(
-        ctx, 'set_relay', {'channel': _WORLD.drop_relay_channel, 'state': True}, on_success)
+    # 投放执行是接口层的 release_payload（RC override 定时序列，投放物理完成才返回；见
+    # docs/spec/adr/0007）。DROP_PAYLOAD 态不发运动指令=飞机悬停，等投放跑完才转下一阶段。
+    return _dispatch_and_await(ctx, 'release_payload', {}, on_success)
 
 
 def _tick_navigate_to_recon_zone(ctx):

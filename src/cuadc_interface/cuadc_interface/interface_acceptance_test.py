@@ -20,7 +20,7 @@ import rclpy
 from rclpy.node import Node
 
 from cuadc_interface_msgs.msg import EkfStatus
-from cuadc_interface_msgs.srv import Arm, GotoLocation, SetMode, SetRelay, Takeoff
+from cuadc_interface_msgs.srv import Arm, GotoLocation, ReleasePayload, SetMode, Takeoff
 from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import Bool, String
 
@@ -46,7 +46,7 @@ class InterfaceAcceptanceTest(Node):
         self._set_mode_client = self.create_client(SetMode, '/cuadc_interface/set_mode')
         self._takeoff_client = self.create_client(Takeoff, '/cuadc_interface/takeoff')
         self._goto_client = self.create_client(GotoLocation, '/cuadc_interface/goto_location')
-        self._relay_client = self.create_client(SetRelay, '/cuadc_interface/set_relay')
+        self._drop_client = self.create_client(ReleasePayload, '/cuadc_interface/release_payload')
 
         self._latest_mode = None
         self._latest_armed = None
@@ -65,12 +65,12 @@ class InterfaceAcceptanceTest(Node):
         self._check_arm()
         self._check_takeoff()
         self._check_goto_location()
-        self._check_set_relay()
+        self._check_release_payload()
         self._check_land_and_disarm()
 
         self.get_logger().info(
             'interface acceptance test PASSED: set_mode/arm/takeoff/goto_location/'
-            'set_relay/land all confirmed against a live vehicle via the ROS2 contract')
+            'release_payload/land all confirmed against a live vehicle via the ROS2 contract')
         rclpy.shutdown()
 
     def _on_mode(self, msg):
@@ -91,7 +91,7 @@ class InterfaceAcceptanceTest(Node):
             ('set_mode', self._set_mode_client),
             ('takeoff', self._takeoff_client),
             ('goto_location', self._goto_client),
-            ('set_relay', self._relay_client),
+            ('release_payload', self._drop_client),
         ):
             self.get_logger().info(f'waiting for {name} service ...')
             if not client.wait_for_service(timeout_sec=self._service_timeout):
@@ -195,13 +195,14 @@ class InterfaceAcceptanceTest(Node):
             f'goto_location confirmed via telemetry (moved '
             f'{distance_from_base():.1f}m from base)')
 
-    def _check_set_relay(self):
-        self.get_logger().info('calling set_relay(channel=0, state=True) ...')
-        request = SetRelay.Request(channel=0, state=True)
-        result = self._call(self._relay_client, request, 'set_relay')
+    def _check_release_payload(self):
+        # 在空中、已解锁状态调用（release_payload 有 armed 守卫，见 ADR-0007）；服务会跑完
+        # 整段投放 RC override 时序才返回，这里会阻塞约 drop_run_s。
+        self.get_logger().info('calling release_payload() ...')
+        result = self._call(self._drop_client, ReleasePayload.Request(), 'release_payload')
         if not result.success:
-            raise RuntimeError('set_relay returned success=False')
-        self.get_logger().info('set_relay accepted')
+            raise RuntimeError(f'release_payload returned success=False: {result.message}')
+        self.get_logger().info('release_payload accepted')
 
     def _check_land_and_disarm(self):
         # 空中直接 arm(False) 等于断电摔机——flight_acceptance_test.py 把

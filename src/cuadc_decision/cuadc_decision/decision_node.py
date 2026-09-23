@@ -27,7 +27,7 @@ from sensor_msgs.msg import BatteryState, Imu
 from std_msgs.msg import Bool, Empty, String
 
 from cuadc_interface_msgs.msg import FailsafeState, GpsStatus, EkfStatus, PositionTarget
-from cuadc_interface_msgs.srv import Arm, SetMode, Takeoff, SetRelay
+from cuadc_interface_msgs.srv import Arm, SetMode, Takeoff, ReleasePayload
 from cuadc_perception_msgs.msg import DetectionArray
 
 from cuadc_decision import mission_logic
@@ -40,7 +40,7 @@ _SERVICE_SPECS = {
     'set_mode': (SetMode, f'{_INTERFACE_NS}/set_mode'),
     'arm': (Arm, f'{_INTERFACE_NS}/arm'),
     'takeoff': (Takeoff, f'{_INTERFACE_NS}/takeoff'),
-    'set_relay': (SetRelay, f'{_INTERFACE_NS}/set_relay'),
+    'release_payload': (ReleasePayload, f'{_INTERFACE_NS}/release_payload'),
 }
 
 

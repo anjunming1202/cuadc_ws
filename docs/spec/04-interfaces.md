@@ -61,7 +61,7 @@ Set Home Position、Air Speed（多旋翼不适用）。
 | Set Position Target (Local) | topic | `~/cmd/position_target_local` | 复用 `PositionTarget.msg`（局部坐标 x/y/z） | 跟上面那个区别是坐标系：**x/y/z 是绝对局部坐标**（相对起飞点，`MAV_FRAME_LOCAL_NED`），不随发指令时机身朝向变化——适合"目标点在一个不随机身转动的局部坐标里已知"的场景（比如回到一个之前记下的局部坐标点，不用每次重新算相对偏移）。同样**不会自动转向**，见下方"自动朝向行为" |
 | Set Velocity | topic | `~/cmd/velocity` | `geometry_msgs/TwistStamped` | 速度向量控制。**`linear.x/y/z` 是相对当前朝向的机身系速度**（前/右/下，`MAV_FRAME_BODY_OFFSET_NED`），不是地理北/东/地——跟 `Set Position Target` 同样的理由。**`angular.z` 是 yaw 角速度（rad/s），已在 `type_mask` 里标为有效：发 `0` 就是锁定当前航向、不自动转向，不发（默认 0）也锁航向**——跟两个 `Set Position Target` 一样不会自动转向，见下方"自动朝向行为"（视觉伺服连续发速度时不希望飞控把机头转向飞行方向而绕圈）。2026-07-16 SITL 实测确认：停止发送后飞机不会一直按最后速度漂移，但 ArduCopter `GUID_TIMEOUT`（默认 3.0s）之内还是会按惯性继续飞，之后才真正清零速度目标——观察"是否安全停下"要给够超过 3s 的等待时间，否则会误判。**规划/决策不需要为了安全兜底专门维护持续重发的看门狗逻辑**（丢失保护已经内建），但仍建议按合理频率（比如几 Hz）持续发布让控制更平滑——这是体验建议，不是协议要求的安全刚需 |
 | Set Yaw | topic | `~/cmd/yaw` | `std_msgs/Float64`（目标偏航角，弧度） | 摄像头对位/环视用；用 topic 是因为跟 `Set Position Target`/`Set Velocity` 这两个精细控制类原语用法一致（连续流式发布、不用等回应），三者保持统一，方便视觉模块同一套调用风格。**只有飞机静止（没有并发的位置类指令）时才是独立可控的**，见下方"自动朝向行为"。接口层内部会把弧度转度并归一化到 `[0,360)` 再发送——ArduCopter 收到负数会直接拒绝该指令（2026-07-16 SITL 实测确认） |
-| 投放机构输出 | service | `~/set_relay` | 自定义 `SetRelay.srv`（uint8 channel, bool state → bool success） | 底层用 `MAV_CMD_DO_SET_RELAY`，布尔开关量（2026-07-15 已定，不用 PWM Servo） |
+| 投放执行 | service | `~/release_payload` | 自定义 `ReleasePayload.srv`（空请求 → bool success, string message） | 底层是投放 RC 通道的定时 `RC_CHANNELS_OVERRIDE`（override→forward 跑 `drop_run_s`→neutral 停→释放）。投放物理动作完成才返回，调用方（决策 `DROP_PAYLOAD` 态）随之悬停等它跑完。投放通道**平时归遥控器**（飞控 `SERVO*_FUNCTION=RCIN<ch>` 直通），仅本服务被调时短暂接管——原 relay 布尔量方案（2026-07-15）已被硬件子队交付的 PWM 舵机推翻，见 [ADR-0007](adr/0007-drop-servo-vs-relay.md) |
 
 ## 契约总览：遥测（ArduPilot → 接口层 → 规划/决策）
 
@@ -78,7 +78,7 @@ Set Home Position、Air Speed（多旋翼不适用）。
 | GPS Status | `~/telemetry/gps_status` | 自定义（fix_type, satellites_visible, hdop） | |
 | EKF Status | `~/telemetry/ekf_status` | 自定义 | |
 | Failsafe State | `~/status/failsafe` | 自定义（区分具体哪种 failsafe，不只是 bool） | 任务逻辑安全响应依赖这个 |
-| 投放机构状态反馈 | `~/status/relay_state` | 自定义（uint8 channel, bool state） | 确认投放动作真的执行了 |
+| 投放执行状态反馈 | `~/status/drop` | 自定义 `DropStatus`（bool actuated） | 确认投放序列真的执行了（ACK/完成≠载荷一定脱离，无称重/角度闭环，见 [ADR-0007](adr/0007-drop-servo-vs-relay.md)） |
 | Command ACK | `~/status/command_ack` | 自定义（string command, bool result） | |
 
 ## 高度基准：相对高度 vs 海拔，不能混用

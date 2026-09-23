@@ -65,7 +65,7 @@ ros2 launch cuadc_decision decision_bringup.launch.py scenario:=drop_zone_bench
 
 任务状态机（`SEARCH → APPROACH → DROP`，见
 [`06-planning.md`](../../docs/spec/06-planning.md)）、状态间的 transition、
-以及三条对外接口（感知 `Detection`、接口层运动指令、投放 `set_relay`）是
+以及三条对外接口（感知 `Detection`、接口层运动指令、投放 `release_payload`）是
 **固定框架**；`APPROACH_DROP_TARGET` 这一阶段**内部怎么把飞机对到筒上**是
 **自由、可替换**的部分。要试新的接近算法，就写一个新的 approach 单元换掉
 旧的、transition 不变——这是 `drop_strategy.py` 那套「可插拔一层、独立于
@@ -91,7 +91,7 @@ ros2 launch cuadc_decision decision_bringup.launch.py scenario:=drop_zone_bench
   末端 IBVS 用 `~/cmd/velocity`（[04](../../docs/spec/04-interfaces.md) 已有，
   **机身系**前/右/下速度）。下视固定相机下像素误差方向天然就是机身水平方向，
   IBVS 输出直接是机身系速度，不用转地理 NED。注意 `GUID_TIMEOUT`（默认 3s
-  惯性）：末端按几 Hz 持续发速度，投放前压到近零速再触发 `set_relay`。
+  惯性）：末端按几 Hz 持续发速度，投放前压到近零速再触发 `release_payload`。
   `TickResult` 现在只有 `position_target` + `service_call`，迁移要给它加一个
   **速度指令**字段（内部结构，由 `decision_node` 翻成对应 04 调用）。
 
