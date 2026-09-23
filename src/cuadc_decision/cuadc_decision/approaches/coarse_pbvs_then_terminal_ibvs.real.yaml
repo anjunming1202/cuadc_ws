@@ -3,7 +3,7 @@
 #   - kp/ki/kd、handoff_speed_mps：真机速度环延迟更大,增益通常要降、交接更保守;
 #   - lever_arm_m：真实投放机构相对相机的机体系杆臂(米),必须实测,不再是 0;
 #   - drop_tol_m/speed_tol_mps：按真机定位/风况放宽。
-cruise_alt_m: 2.0
+cruise_alt_m: 5.0
 drop_alt_m: 1.0
 cylinder_height_m: 0.3
 dt_s: 0.1
@@ -17,7 +17,7 @@ ki: 0.4
 kd: 0.3
 v_max_mps: 1.0
 i_zone_m: 0.4
-lever_arm_m: [0.0, 0.0]     # TODO: 实测真实投放机构杆臂
+lever_arm_m: [-0.1, 0.05]     # TODO: 实测真实投放机构杆臂
 max_coast_ticks: 4
 descend_rate_mps: 0.4
 descend_pause_off_m: 0.30
