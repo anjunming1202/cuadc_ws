@@ -1,6 +1,0 @@
-# 投放机构 Relay/GPIO 布尔量输出，底层对应 MAV_CMD_DO_SET_RELAY，
-# 见 docs/spec/04-interfaces.md
-uint8 channel
-bool state
----
-bool success

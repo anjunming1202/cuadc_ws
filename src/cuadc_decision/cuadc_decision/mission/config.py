@@ -42,7 +42,6 @@ class MissionWorld:
     recon_cylinder_count: int = 5             # 侦察区覆盖到这么多筒即算完成
     drop_count_target: int = 2                # 投放次数目标
     drop_recon_split_y_m: float = 45.0        # 投放/侦察检测分界（NED east 中点，见 mission_logic 说明）
-    drop_relay_channel: int = 0               # 投放机构 relay 通道（需跟投放机构硬件确认）
     initial_state: str = 'INIT'               # FSM 起跑状态（隔离测试由场景改，见 spec §5）
     phases: List[str] = field(default_factory=lambda: ['drop', 'recon'])  # 跑哪些阶段（取代 stop_after_drop）
     search_overrides: Dict = field(default_factory=dict)  # 场景对 SEARCH 算法(search_strategy)参数的覆盖
