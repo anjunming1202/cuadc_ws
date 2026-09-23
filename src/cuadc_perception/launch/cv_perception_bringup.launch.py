@@ -44,6 +44,21 @@ def generate_launch_description():
         'max_concurrent_debug_views', default_value='4',
         description='同时最多算/发几路调试图像——真机上的硬性保护，跟前端请求了几路无关，见 cuadc_viz/README.md',
     )
+    # 取帧源 + 真机预览(见 docs/spec/adr/0008-perception-raw-frame-multi-sink.md)。
+    # 默认 sim 友好:frame_source=ros(订阅 image_raw)、预览关。真机 launch 传
+    # frame_source:=shm preview_enabled:=true,图像就不进 ROS、标注走 RTP。
+    frame_source_arg = DeclareLaunchArgument(
+        'frame_source', default_value='ros',
+        description='取帧源:sim=ros(订阅/camera/image_raw)、real=shm(读原始帧,图不进ROS)')
+    raw_shm_arg = DeclareLaunchArgument('raw_shm', default_value='/tmp/cuadc-cam-raw.shm')
+    src_width_arg = DeclareLaunchArgument('src_width', default_value='1920')
+    src_height_arg = DeclareLaunchArgument('src_height', default_value='1080')
+    src_fps_arg = DeclareLaunchArgument('src_fps', default_value='10')
+    cv_width_arg = DeclareLaunchArgument('cv_width', default_value='960', description='shm 源出帧/检测/预览分辨率;真机内参要对应这个分辨率')
+    cv_height_arg = DeclareLaunchArgument('cv_height', default_value='540')
+    preview_enabled_arg = DeclareLaunchArgument('preview_enabled', default_value='false', description='真机把标注预览编码推本地 preview_port(cv-forward 转地面)')
+    preview_port_arg = DeclareLaunchArgument('preview_port', default_value='5604')
+    preview_bitrate_arg = DeclareLaunchArgument('preview_bitrate', default_value='1000')
 
     cv_perception_node = Node(
         package='cuadc_perception',
@@ -66,6 +81,16 @@ def generate_launch_description():
             'debug_contours_enabled': LaunchConfiguration('debug_contours_enabled'),
             'debug_mask_enabled': LaunchConfiguration('debug_mask_enabled'),
             'max_concurrent_debug_views': LaunchConfiguration('max_concurrent_debug_views'),
+            'frame_source': LaunchConfiguration('frame_source'),
+            'raw_shm': LaunchConfiguration('raw_shm'),
+            'src_width': LaunchConfiguration('src_width'),
+            'src_height': LaunchConfiguration('src_height'),
+            'src_fps': LaunchConfiguration('src_fps'),
+            'cv_width': LaunchConfiguration('cv_width'),
+            'cv_height': LaunchConfiguration('cv_height'),
+            'preview_enabled': LaunchConfiguration('preview_enabled'),
+            'preview_port': LaunchConfiguration('preview_port'),
+            'preview_bitrate': LaunchConfiguration('preview_bitrate'),
         }],
     )
 
@@ -73,5 +98,7 @@ def generate_launch_description():
         fx_arg, fy_arg, cx_arg, cy_arg, roll_arg, pitch_arg, yaw_arg,
         cylinder_height_arg, min_radius_arg, max_radius_arg, profile_arg,
         debug_annotated_arg, debug_contours_arg, debug_mask_arg, max_concurrent_debug_arg,
+        frame_source_arg, raw_shm_arg, src_width_arg, src_height_arg, src_fps_arg,
+        cv_width_arg, cv_height_arg, preview_enabled_arg, preview_port_arg, preview_bitrate_arg,
         cv_perception_node,
     ])
