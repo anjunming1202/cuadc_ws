@@ -13,7 +13,12 @@ echo "cuadc-onboard profile: ${profile:-none}"
 # 使 applier 成为「把状态收敛到 profile」的幂等操作：改完 profile 文件跑
 # `systemctl restart cuadc-onboard-profile` 就即时生效，不必重启整机。
 # 新增消费者：把其单元加进这里 + 下面对应 profile 的 case 分支。
-KNOWN_CONSUMERS=(cuadc-onboard-telem.service cuadc-onboard-video-forward.service)
+KNOWN_CONSUMERS=(
+  cuadc-onboard-telem.service
+  cuadc-onboard-video-forward.service
+  cuadc-onboard-cv-preview.service
+  cuadc-onboard-cv-forward.service
+)
 
 for u in "${KNOWN_CONSUMERS[@]}"; do
   systemctl stop "$u" 2>/dev/null || true
@@ -24,9 +29,11 @@ case "${profile:-none}" in
     : # 只跑底座，消费者全手动（相机服务仍在推本地端点，只是没人转发到地面）
     ;;
   ground-monitor)
-    # 外场监看：数传 + 图传转发到地面（video-forward 读 5603→5600）
+    # 外场监看：数传 + 干净图传(5603→5600) + CV 预览图传(5602→5604→5606)
     systemctl start cuadc-onboard-telem.service
     systemctl start cuadc-onboard-video-forward.service
+    systemctl start cuadc-onboard-cv-preview.service
+    systemctl start cuadc-onboard-cv-forward.service
     ;;
   mission)
     # 任务侧 bringup 按名引用；任务栈接线前为占位，不阻断底座

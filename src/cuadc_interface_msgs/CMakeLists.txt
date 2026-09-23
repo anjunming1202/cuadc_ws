@@ -10,13 +10,13 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/GpsStatus.msg"
   "msg/EkfStatus.msg"
   "msg/FailsafeState.msg"
-  "msg/RelayState.msg"
+  "msg/DropStatus.msg"
   "msg/CommandAck.msg"
   "srv/Arm.srv"
   "srv/SetMode.srv"
   "srv/Takeoff.srv"
   "srv/GotoLocation.srv"
-  "srv/SetRelay.srv"
+  "srv/ReleasePayload.srv"
 )
 
 ament_package()

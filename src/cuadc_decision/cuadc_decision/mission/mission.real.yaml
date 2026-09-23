@@ -1,0 +1,27 @@
+# 世界/任务参数 —— real 档。字段 = MissionWorld 字段。真机部署时按现场复测更新：区中心/
+# 扫描样式随真实场地（比赛随机布局须现场测）、巡航高度按安全要求、relay 通道按投放机构接线。
+# 先以 sim 档为占位起点；真机测试只改这份，改不到仿真。initial_state/phases 属场景。
+cruise_alt_m: 2.0
+
+drop_zone_center: [32.5, 0.0]
+drop_scan_offsets:
+  - [-1.0, -2.0]
+  - [-1.0, 2.0]
+  - [0.0, 2.0]
+  - [0.0, -2.0]
+  - [1.0, -2.0]
+  - [1.0, 2.0]
+
+recon_zone_center: [57.5, 0.0]
+recon_scan_offsets:
+  - [-1.5, -2.0]
+  - [-1.5, 2.0]
+  - [0.0, 2.0]
+  - [0.0, -2.0]
+  - [1.5, -2.0]
+  - [1.5, 2.0]
+
+recon_cylinder_count: 5
+drop_count_target: 2
+drop_recon_split_y_m: 45.0
+# 投放执行器参数（RC 通道/PWM/时长）属接口层，不在任务配置层，见 docs/spec/adr/0007

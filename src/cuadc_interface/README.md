@@ -9,8 +9,9 @@
 
 `interface_node.py` 已实现 `04-interfaces.md` 里的全部话题/服务，
 全部指令原语（Arm/Set Mode/Takeoff/Go To Location/两个 Set Position
-Target/Set Velocity/Set Yaw/Set Relay）和全部遥测都过真实 SITL 验证过，
-见下方四个测试脚本。
+Target/Set Velocity/Set Yaw；投放原语 2026-09-23 由 relay 改为 Release
+Payload，见 [ADR-0007](../../docs/spec/adr/0007-drop-servo-vs-relay.md)）和
+全部遥测都过 SITL 验证，见下方四个测试脚本。
 
 ## 外部依赖（不 vendor 进本仓库）
 
@@ -42,7 +43,7 @@ ros2 run cuadc_interface interface_acceptance_test
 ros2 run cuadc_interface interface_maneuver_test
 ```
 
-精细机动测试（Set Position Target 局部坐标精调 + Set Relay 投放模拟，
+精细机动测试（Set Position Target 局部坐标精调 + Release Payload 投放模拟，
 见文件顶部说明）：
 
 ```

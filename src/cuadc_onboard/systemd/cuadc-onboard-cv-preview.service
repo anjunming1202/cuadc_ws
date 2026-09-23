@@ -1,0 +1,18 @@
+[Unit]
+Description=cuadc_onboard CV preview (raw shm -> detector boxes -> 5604)
+# 无-ROS 预览模式;代码在 cuadc_perception(本单元只按名引用,见 ADR-0008)。
+# 读 camera-service 的原始 NV12 shm,不开相机。
+After=cuadc-onboard-camera.service
+Wants=cuadc-onboard-camera.service
+
+[Service]
+Type=simple
+User=wly
+Environment=GST_PLUGIN_PATH=/usr/local/lib/aarch64-linux-gnu/gstreamer-1.0
+Environment=PYTHONPATH=/home/wly/cuadc_ws/src/cuadc_perception
+ExecStart=/usr/bin/python3 -m cuadc_perception.cv_preview --raw-shm /tmp/cuadc-cam-raw.shm --src-width 1920 --src-height 1080 --src-fps 10 --port 5604 --width 960 --height 540 --bitrate 1000 --profile real
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

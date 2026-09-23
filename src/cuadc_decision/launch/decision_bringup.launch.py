@@ -6,7 +6,6 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -15,20 +14,14 @@ def generate_launch_description():
         default_value='10.0',
         description='状态机 tick 频率',
     )
-    initial_state_arg = DeclareLaunchArgument(
-        'initial_state',
-        default_value='INIT',
-        description='硬件单点测试用：跳过前面几个状态直接从某个状态起步，'
-                     '比如 NAVIGATE_TO_DROP_ZONE。默认 INIT 跟正常任务一样',
-    )
-    stop_after_drop_arg = DeclareLaunchArgument(
-        'stop_after_drop',
-        default_value='false',
-        description='硬件单点测试用：两次投放完成后直接 RTL，不去侦察区',
-    )
     profile_arg = DeclareLaunchArgument(
         'profile', default_value='sim',
-        description='接近算法 sim/real config 档，选 approaches/<approach>.<profile>.yaml，仿真 sim、真机 real',
+        description='环境档 sim/real，选各算法/配置层的 .sim/.real 文件，仿真 sim、真机 real',
+    )
+    scenario_arg = DeclareLaunchArgument(
+        'scenario', default_value='full_mission',
+        description='跑哪种场景，选 mission/scenarios/<scenario>.yaml（含 initial_state 与跑哪些阶段）：'
+                     'full_mission / drop_zone_bench / recon_zone_bench，见 docs/spec/mission-config-layer.md',
     )
 
     decision_node = Node(
@@ -38,12 +31,9 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'tick_rate_hz': LaunchConfiguration('tick_rate_hz'),
-            'initial_state': LaunchConfiguration('initial_state'),
-            # launch 参数本质是字符串，'true'/'false' 要显式转成 bool，
-            # 不然节点里 declare_parameter(..., False) 会因为类型不匹配报错
-            'stop_after_drop': ParameterValue(LaunchConfiguration('stop_after_drop'), value_type=bool),
             'profile': LaunchConfiguration('profile'),
+            'scenario': LaunchConfiguration('scenario'),
         }],
     )
 
-    return LaunchDescription([tick_rate_arg, initial_state_arg, stop_after_drop_arg, profile_arg, decision_node])
+    return LaunchDescription([tick_rate_arg, profile_arg, scenario_arg, decision_node])

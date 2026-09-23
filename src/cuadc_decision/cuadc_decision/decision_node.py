@@ -18,6 +18,7 @@ docs/spec/06-planning.md 前置讨论。同一时刻只允许一个 service 调�
 
 import math
 import time
+from dataclasses import replace
 
 import rclpy
 from geometry_msgs.msg import PoseStamped, TwistStamped
@@ -26,10 +27,12 @@ from sensor_msgs.msg import BatteryState, Imu
 from std_msgs.msg import Bool, Empty, String
 
 from cuadc_interface_msgs.msg import FailsafeState, GpsStatus, EkfStatus, PositionTarget
-from cuadc_interface_msgs.srv import Arm, SetMode, Takeoff, SetRelay
+from cuadc_interface_msgs.srv import Arm, SetMode, Takeoff, ReleasePayload
 from cuadc_perception_msgs.msg import DetectionArray
 
 from cuadc_decision import mission_logic
+from cuadc_decision import search_strategy
+from cuadc_decision.mission import config as mission_config
 
 _INTERFACE_NS = '/cuadc_interface'
 
@@ -37,7 +40,7 @@ _SERVICE_SPECS = {
     'set_mode': (SetMode, f'{_INTERFACE_NS}/set_mode'),
     'arm': (Arm, f'{_INTERFACE_NS}/arm'),
     'takeoff': (Takeoff, f'{_INTERFACE_NS}/takeoff'),
-    'set_relay': (SetRelay, f'{_INTERFACE_NS}/set_relay'),
+    'release_payload': (ReleasePayload, f'{_INTERFACE_NS}/release_payload'),
 }
 
 
@@ -53,19 +56,23 @@ class DecisionNode(Node):
     def __init__(self):
         super().__init__('cuadc_decision')
 
-        # initial_state/stop_after_drop 是硬件单点测试用的入口，默认值下
-        # 跟正常任务流程完全一样（见 docs/spec/06-planning.md）。
-        self.declare_parameter('initial_state', 'INIT')
-        self.declare_parameter('stop_after_drop', False)
-        # 接近算法的 sim/real config 档，跟感知 profile 同一个道理，由场景启动
-        # 脚本给（run_mission_sim.sh=sim / run_mission_hardware.sh=real）；载入对应
-        # yaml 重建活动 approach，见 approaches/ + cuadc_decision/README.md 配置分层。
+        # profile = sim/real 环境档（选各算法/配置层的 .sim/.real 文件）；scenario = 跑哪种
+        # 场景（full_mission / drop_zone_bench / recon_zone_bench，含 initial_state 与跑哪些
+        # 阶段）。两者由场景启动脚本写死（run_mission_sim.sh=sim / *_drop_zone_bench=该场景 /
+        # run_mission_hardware.sh=real），见 docs/spec/mission-config-layer.md。
         self.declare_parameter('profile', 'sim')
-        mission_logic.configure_approach(self.get_parameter('profile').value)
-        self._ctx = mission_logic.MissionContext(
-            current_state=self.get_parameter('initial_state').value,
-            stop_after_drop=self.get_parameter('stop_after_drop').value,
-        )
+        self.declare_parameter('scenario', 'full_mission')
+        profile = self.get_parameter('profile').value
+        scenario = self.get_parameter('scenario').value
+
+        # A：世界/任务/场景（base + 场景覆盖）；B：SEARCH 算法（基线再叠场景 override）；
+        # B′：FSM 本体调参；接近算法各自按 profile 载入。三层注入 mission_logic。
+        world = mission_config.load(profile, scenario)
+        search = replace(search_strategy.load_config(profile), **world.search_overrides)
+        tuning = mission_logic.load_tuning(profile)
+        mission_logic.configure_approach(profile)
+        mission_logic.configure_mission(world, tuning, search)
+        self._ctx = mission_logic.MissionContext(current_state=world.initial_state)
         self._pending_service_name = None
         self._pending_service_future = None
         self._yaw_rad = 0.0  # 仅诊断用：确认全程锁 yaw（末端伺服时机头不转），不进 ctx
@@ -217,7 +224,7 @@ class DecisionNode(Node):
             # 看均值有没有被斜视早样本拖偏 / 有没有把两个筒并成一簇。
             parts = []
             for c in self._ctx.drop_task.clusters:
-                mx, my, _ = mission_logic._cluster_mean(c)
+                mx, my, _ = search_strategy._cluster_mean(c)
                 parts.append(f'({mx:.1f},{my:.1f})x{len(c)}')
             self.get_logger().info(
                 f'[SEARCH] clusters={len(parts)} used={len(self._ctx.drop_task.used_positions)} '

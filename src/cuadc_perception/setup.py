@@ -28,6 +28,8 @@ setup(
         'console_scripts': [
             'stub_perception_node = cuadc_perception.stub_perception_node:main',
             'cv_perception_node = cuadc_perception.cv_perception_node:main',
+            # 无-ROS 预览模式(相机自检/调参 + ground-monitor 按名引用它),见 ADR-0008
+            'cv_preview = cuadc_perception.cv_preview:main',
         ],
     },
 )

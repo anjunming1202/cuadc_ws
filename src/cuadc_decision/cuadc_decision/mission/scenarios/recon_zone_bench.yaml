@@ -1,0 +1,5 @@
+# 侦察区单练：从侦察前一个 state(NAVIGATE_TO_RECON_ZONE)起，飞抵侦察区→覆盖侦察→RTL。
+# 需要一个「已在空中/近侦察区出生」的仿真世界配合（对应 drop 的 DROP_ZONE_BENCH_SPAWN），
+# 那属 cuadc_sim/field/config.py 的世界建图、本配置层不含——待建。
+initial_state: NAVIGATE_TO_RECON_ZONE
+phases: [recon]

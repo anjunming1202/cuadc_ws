@@ -224,11 +224,50 @@ def _dest_list(hosts: str, ports: str) -> list[tuple[str, int]]:
     return dests
 
 
+class HostCpuSampler:
+    """Total host CPU % from /proc/stat deltas (all cores averaged)."""
+
+    def __init__(self) -> None:
+        self._idle = 0
+        self._total = 0
+        self._pct: float | None = None
+        self._sample()
+
+    @staticmethod
+    def _read() -> tuple[int, int] | None:
+        try:
+            with open("/proc/stat", encoding="ascii") as f:
+                parts = f.readline().split()
+        except OSError:
+            return None
+        if not parts or parts[0] != "cpu" or len(parts) < 5:
+            return None
+        nums = [int(x) for x in parts[1:]]
+        idle = nums[3] + (nums[4] if len(nums) > 4 else 0)  # idle + iowait
+        return idle, sum(nums)
+
+    def _sample(self) -> None:
+        cur = self._read()
+        if cur is None:
+            return
+        idle, total = cur
+        d_total = total - self._total
+        d_idle = idle - self._idle
+        if self._total > 0 and d_total > 0:
+            self._pct = max(0.0, min(100.0, 100.0 * (1.0 - d_idle / d_total)))
+        self._idle, self._total = idle, total
+
+    def percent(self) -> float | None:
+        self._sample()
+        return self._pct
+
+
 def run_forever(args: argparse.Namespace) -> None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     dests = _dest_list(args.dest_host, args.dest_ports)
     period = 1.0 / max(args.hz, 0.1)
     source = MavlinkTelemetrySource(args.device, args.baud)
+    cpu = HostCpuSampler()
     stop = threading.Event()
     print(
         "UDP to " + ", ".join(f"{h}:{p}" for h, p in dests) + f" at {args.hz} Hz",
@@ -240,6 +279,7 @@ def run_forever(args: argparse.Namespace) -> None:
         while not stop.is_set():
             t0 = time.monotonic()
             state = source.snapshot()
+            cpu_pct = cpu.percent()
             payload = {
                 "t": time.time(),
                 "link": state.get("link"),
@@ -250,6 +290,7 @@ def run_forever(args: argparse.Namespace) -> None:
                 "mode": state.get("mode"),
                 "batt_v": state.get("batt_v"),
                 "batt_pct": state.get("batt_pct"),
+                "cpu_pct": None if cpu_pct is None else round(cpu_pct, 1),
             }
             compact = {k: v for k, v in payload.items() if v is not None or k in ("t", "link")}
             blob = json.dumps(compact).encode("utf-8")
@@ -261,11 +302,11 @@ def run_forever(args: argparse.Namespace) -> None:
             if time.monotonic() - last_log > 10.0:
                 last_log = time.monotonic()
                 print(
-                    "health: link={link} mode={mode} alt={alt} roll={roll}".format(
+                    "health: link={link} mode={mode} alt={alt} cpu={cpu}".format(
                         link=compact.get("link"),
                         mode=compact.get("mode"),
                         alt=compact.get("alt_m"),
-                        roll=compact.get("roll_deg"),
+                        cpu=compact.get("cpu_pct"),
                     ),
                     flush=True,
                 )

@@ -30,8 +30,8 @@ WP_YAW_BEHAVIOR。跟 Go To Location（绝对 GPS 坐标 + 默认自动朝向）
     测试套路，不代表精度；间隔刻意短于单次收敛时间，否则测不出"打断"
     这个效果）。
   Phase D 粗飞接近 + 精细对准 + 投放模拟——粗飞 10m 到虚拟投放区 ->
-    Set Position Target 精细对准 -> Set Relay 触发投放 -> 订阅
-    relay_state 确认遥测真的反馈了状态变化（不只看 service success，
+    Set Position Target 精细对准 -> Release Payload 触发投放（RC override 时序）
+    -> 订阅 ~/status/drop 确认遥测真的反馈了投放执行（不只看 service success，
     同 interface_acceptance_test 里"goto_location 光看 success 不看
     真实位移"是同一类坑）。
 
@@ -52,8 +52,8 @@ import time
 import rclpy
 from rclpy.node import Node
 
-from cuadc_interface_msgs.msg import EkfStatus, PositionTarget, RelayState
-from cuadc_interface_msgs.srv import Arm, GotoLocation, SetMode, SetRelay, Takeoff
+from cuadc_interface_msgs.msg import DropStatus, EkfStatus, PositionTarget
+from cuadc_interface_msgs.srv import Arm, GotoLocation, ReleasePayload, SetMode, Takeoff
 from geometry_msgs.msg import PoseStamped
 from sensor_msgs.msg import Imu, NavSatFix
 from std_msgs.msg import Bool
@@ -85,7 +85,6 @@ class InterfacePrecisionTest(Node):
         self.declare_parameter('leg_timeout_sec', 30.0)
         self.declare_parameter('land_timeout_sec', 60.0)
         self.declare_parameter('settle_sec', 1.5)
-        self.declare_parameter('drop_channel', 0)
         self.declare_parameter('yaw_stability_tolerance_deg', 5.0)
         self._service_timeout = self.get_parameter('service_timeout_sec').value
         self._ekf_ready_timeout = self.get_parameter('ekf_ready_timeout_sec').value
@@ -96,14 +95,13 @@ class InterfacePrecisionTest(Node):
         self._leg_timeout = self.get_parameter('leg_timeout_sec').value
         self._land_timeout = self.get_parameter('land_timeout_sec').value
         self._settle_sec = self.get_parameter('settle_sec').value
-        self._drop_channel = self.get_parameter('drop_channel').value
         self._yaw_stability_tolerance_deg = self.get_parameter('yaw_stability_tolerance_deg').value
 
         self._arm_client = self.create_client(Arm, '/cuadc_interface/arm')
         self._set_mode_client = self.create_client(SetMode, '/cuadc_interface/set_mode')
         self._takeoff_client = self.create_client(Takeoff, '/cuadc_interface/takeoff')
         self._goto_client = self.create_client(GotoLocation, '/cuadc_interface/goto_location')
-        self._relay_client = self.create_client(SetRelay, '/cuadc_interface/set_relay')
+        self._drop_client = self.create_client(ReleasePayload, '/cuadc_interface/release_payload')
         self._position_target_pub = self.create_publisher(
             PositionTarget, '/cuadc_interface/cmd/position_target', 10)
         self._position_target_local_pub = self.create_publisher(
@@ -114,7 +112,7 @@ class InterfacePrecisionTest(Node):
         self._latest_position = None  # NavSatFix：goto 距离计算用
         self._latest_local_pose = None  # PoseStamped：x/y/z 是绝对局部 NED 坐标
         self._latest_yaw = None
-        self._latest_relay_state = None
+        self._latest_drop_status = None
         self._results = []  # (name, target, achieved, error) 汇总表
         self.create_subscription(Bool, '/cuadc_interface/status/armed', self._on_armed, 10)
         self.create_subscription(
@@ -125,7 +123,7 @@ class InterfacePrecisionTest(Node):
             PoseStamped, '/cuadc_interface/telemetry/local_position', self._on_local_pose, 10)
         self.create_subscription(Imu, '/cuadc_interface/telemetry/attitude', self._on_attitude, 10)
         self.create_subscription(
-            RelayState, '/cuadc_interface/status/relay_state', self._on_relay_state, 10)
+            DropStatus, '/cuadc_interface/status/drop', self._on_drop_status, 10)
 
         self._wait_for_services()
         self._wait_for_ekf_ready()
@@ -185,8 +183,8 @@ class InterfacePrecisionTest(Node):
         q = msg.orientation
         self._latest_yaw = _yaw_from_quaternion(q.x, q.y, q.z, q.w)
 
-    def _on_relay_state(self, msg):
-        self._latest_relay_state = msg
+    def _on_drop_status(self, msg):
+        self._latest_drop_status = msg
 
     # -- 辅助方法 --
 
@@ -244,7 +242,7 @@ class InterfacePrecisionTest(Node):
             ('set_mode', self._set_mode_client),
             ('takeoff', self._takeoff_client),
             ('goto_location', self._goto_client),
-            ('set_relay', self._relay_client),
+            ('release_payload', self._drop_client),
         ):
             if not client.wait_for_service(timeout_sec=self._service_timeout):
                 raise RuntimeError(
@@ -464,23 +462,21 @@ class InterfacePrecisionTest(Node):
         self._position_target_full(
             1.0, 0.0, 1.5, 'Phase D: Set Position Target (descend, forward-down)')
 
-        self._set_relay_and_confirm(True, 'Phase D: Set Relay (drop)')
-        self._set_relay_and_confirm(False, 'Phase D: Set Relay (reset)')
+        self._release_payload_and_confirm('Phase D: Release Payload (drop)')
 
-    def _set_relay_and_confirm(self, state, label):
-        self.get_logger().info(f'{label}: calling set_relay(channel={self._drop_channel}, '
-                                f'state={state}) ...')
-        result = self._call(
-            self._relay_client, SetRelay.Request(channel=self._drop_channel, state=state), label)
+    def _release_payload_and_confirm(self, label):
+        # release_payload 会跑完整段投放 RC override 时序才返回（阻塞约 drop_run_s），
+        # 完成后接口层发 ~/status/drop（actuated=True）。见 docs/spec/adr/0007。
+        self._latest_drop_status = None
+        self.get_logger().info(f'{label}: calling release_payload() ...')
+        result = self._call(self._drop_client, ReleasePayload.Request(), label)
         if not result.success:
-            raise RuntimeError(f'{label}: set_relay returned success=False')
+            raise RuntimeError(f'{label}: release_payload returned success=False: {result.message}')
         self._wait_for_condition(
-            lambda: self._latest_relay_state is not None
-            and self._latest_relay_state.channel == self._drop_channel
-            and self._latest_relay_state.state == state,
-            f'{label} relay_state telemetry confirming state={state}', self._service_timeout)
-        self._record_result(label, f'state={state}', f'state={self._latest_relay_state.state}',
-                             'confirmed via telemetry')
+            lambda: self._latest_drop_status is not None and self._latest_drop_status.actuated,
+            f'{label} drop status telemetry confirming actuated', self._service_timeout)
+        self._record_result(label, 'actuated=True',
+                            f'actuated={self._latest_drop_status.actuated}', 'confirmed via telemetry')
         self.get_logger().info(f'{label}: confirmed via telemetry')
 
     # -- 收尾 --
