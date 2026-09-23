@@ -75,6 +75,9 @@ class CvPerceptionNode(Node):
         self.declare_parameter('preview_enabled', False)
         self.declare_parameter('preview_port', DEFAULT_PREVIEW_PORT)
         self.declare_parameter('preview_bitrate', 1000)
+        # 逐帧检测判定链日志(px 半径→反投影距离→物理半径→接受/拒因),节流打印。
+        # 默认关;运行时可 `ros2 param set /cuadc_perception_cv detection_log_enabled true` 开。
+        self.declare_parameter('detection_log_enabled', False)
 
         detector_name = self.get_parameter('detector').value
         profile = self.get_parameter('profile').value
@@ -183,6 +186,8 @@ class CvPerceptionNode(Node):
         out.detections = [self._to_msg(d) for d in result.detections]
         self._publisher.publish(out)
         self._publish_perf(result.perf)
+        if self.get_parameter('detection_log_enabled').value:
+            self._log_detection_chain(result)
 
         # sink 2: sim 的 debug Image(给 cuadc_viz)
         for view in active_views:
@@ -198,6 +203,25 @@ class CvPerceptionNode(Node):
             annotated = frame_bgr.copy()
             draw_overlay(annotated, result, self._frame_idx, self._ema_ms)
             self._preview.push(annotated)
+
+    def _log_detection_chain(self, result):
+        """把这一帧每个候选的判定链打成一行(节流~1s):px 半径→反投影距离→物理半径→接受/拒因。
+        地面单点调参用;radius_m 超出 [min,max] 会显示 too_small/too_big(地面高度≈0 时常见)。"""
+        parts = []
+        for i, cr in enumerate(result.contour_results):
+            rng = f'{cr.range_m:.2f}m' if cr.range_m is not None else 'n/a'
+            r_m = f'{cr.radius_m:.3f}m' if cr.radius_m is not None else 'n/a'
+            if cr.detection is not None:
+                d = cr.detection
+                parts.append(f'#{i} px_r={cr.observation.radius_px:.0f} rng={rng} r={r_m} '
+                             f'ACC conf={d.confidence:.2f} world=({d.x:.1f},{d.y:.1f})')
+            else:
+                parts.append(f'#{i} px_r={cr.observation.radius_px:.0f} rng={rng} r={r_m} '
+                             f'REJ({cr.reject_reason})')
+        detail = ' | '.join(parts) if parts else '(no contours)'
+        self.get_logger().info(
+            f'[DET] obs={len(result.observations)} acc={len(result.detections)} | {detail}',
+            throttle_duration_sec=1.0)
 
     @staticmethod
     def _to_msg(det):
@@ -225,12 +249,14 @@ class CvPerceptionNode(Node):
             out_bgr = cv2.cvtColor(debug['mask'], cv2.COLOR_GRAY2BGR)
         elif view == 'contours':
             out_bgr = image_bgr.copy()
-            for obs, det in debug['contour_results']:
+            for cr in debug['contour_results']:
+                obs, det = cr.observation, cr.detection
                 color = (0, 200, 0) if det is not None else (128, 128, 128)
                 cv2.drawContours(out_bgr, [obs.contour], -1, color, 2)
         elif view == 'annotated':
             out_bgr = image_bgr.copy()
-            for obs, det in debug['contour_results']:
+            for cr in debug['contour_results']:
+                obs, det = cr.observation, cr.detection
                 if det is None:
                     continue
                 cv2.circle(out_bgr, (int(obs.u), int(obs.v)), int(obs.radius_px), (0, 200, 0), 2)

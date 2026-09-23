@@ -59,6 +59,9 @@ def generate_launch_description():
     preview_enabled_arg = DeclareLaunchArgument('preview_enabled', default_value='false', description='真机把标注预览编码推本地 preview_port(cv-forward 转地面)')
     preview_port_arg = DeclareLaunchArgument('preview_port', default_value='5604')
     preview_bitrate_arg = DeclareLaunchArgument('preview_bitrate', default_value='1000')
+    detection_log_arg = DeclareLaunchArgument(
+        'detection_log_enabled', default_value='false',
+        description='逐帧打印检测判定链(px半径→反投影距离→物理半径→接受/拒因),运行时也可 ros2 param set')
 
     cv_perception_node = Node(
         package='cuadc_perception',
@@ -91,6 +94,7 @@ def generate_launch_description():
             'preview_enabled': LaunchConfiguration('preview_enabled'),
             'preview_port': LaunchConfiguration('preview_port'),
             'preview_bitrate': LaunchConfiguration('preview_bitrate'),
+            'detection_log_enabled': LaunchConfiguration('detection_log_enabled'),
         }],
     )
 
@@ -100,5 +104,6 @@ def generate_launch_description():
         debug_annotated_arg, debug_contours_arg, debug_mask_arg, max_concurrent_debug_arg,
         frame_source_arg, raw_shm_arg, src_width_arg, src_height_arg, src_fps_arg,
         cv_width_arg, cv_height_arg, preview_enabled_arg, preview_port_arg, preview_bitrate_arg,
+        detection_log_arg,
         cv_perception_node,
     ])

@@ -35,6 +35,7 @@ def generate_launch_description():
         DeclareLaunchArgument('cx', default_value='320.0'),
         DeclareLaunchArgument('cy', default_value='240.0'),
         DeclareLaunchArgument('preview_port', default_value='5604'),
+        DeclareLaunchArgument('detection_log_enabled', default_value='false'),
     ]
 
     interface_launch = IncludeLaunchDescription(
@@ -55,6 +56,7 @@ def generate_launch_description():
             'cx': LaunchConfiguration('cx'),
             'cy': LaunchConfiguration('cy'),
             'preview_port': LaunchConfiguration('preview_port'),
+            'detection_log_enabled': LaunchConfiguration('detection_log_enabled'),
         }.items(),
     )
 

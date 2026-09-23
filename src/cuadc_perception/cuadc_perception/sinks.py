@@ -20,7 +20,8 @@ DEFAULT_PREVIEW_PORT = 5604
 def draw_overlay(frame_bgr: np.ndarray, result, frame_idx: int, ema_ms: float) -> None:
     """把检测框 + 计时信息画到 frame 上（就地）。接受=绿圈+尺寸/置信标签，
     拒绝=灰圈。result 是 perception_core.PerceptionResult。"""
-    for obs, det in result.contour_results:
+    for cr in result.contour_results:
+        obs, det = cr.observation, cr.detection
         u, v, r = int(obs.u), int(obs.v), max(1, int(obs.radius_px))
         if det is not None:
             cv2.circle(frame_bgr, (u, v), r, (0, 220, 0), 2)
