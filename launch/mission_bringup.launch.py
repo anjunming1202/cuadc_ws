@@ -40,11 +40,6 @@ def generate_launch_description():
         'profile', default_value='sim',
         description='感知检测器 sim/real config 档，仿真 sim、真机 real',
     )
-    # 感知时延注入(压测台用):默认 0=不延迟,真机/正式仿真不传即可。
-    detection_latency_arg = DeclareLaunchArgument(
-        'detection_latency_ms', default_value='0.0',
-        description='检测发布延迟(毫秒),建模真实检测流水线时延;0=立即发。见 docs/spec/sim-stress-testbed.md',
-    )
 
     interface_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution(
@@ -55,10 +50,7 @@ def generate_launch_description():
     cv_perception_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution(
             [FindPackageShare('cuadc_perception'), 'launch', 'cv_perception_bringup.launch.py'])),
-        launch_arguments={
-            'profile': LaunchConfiguration('profile'),
-            'detection_latency_ms': LaunchConfiguration('detection_latency_ms'),
-        }.items(),
+        launch_arguments={'profile': LaunchConfiguration('profile')}.items(),
     )
 
     decision_launch = IncludeLaunchDescription(
@@ -67,5 +59,4 @@ def generate_launch_description():
         launch_arguments={'profile': LaunchConfiguration('profile')}.items(),
     )
 
-    return LaunchDescription([connection_arg, profile_arg, detection_latency_arg,
-                              interface_launch, cv_perception_launch, decision_launch])
+    return LaunchDescription([connection_arg, profile_arg, interface_launch, cv_perception_launch, decision_launch])

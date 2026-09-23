@@ -147,9 +147,14 @@ def _run_trial(node, idx, args, logdir):
             gz_cmd.append(f'sim_realism_params:={args.realism_parm}')
         gz_proc, gz_f = _spawn(gz_cmd, gz_log)
 
-        mission_cmd = ['bash', 'scripts/run_mission_sim.sh']
+        # 时延档走 run_mission_sim_delayed.sh(感知↔决策间插 sim-only 延迟节点);
+        # 零延迟走生产 run_mission_sim.sh(与真机同一条链、不含延迟节点)。时延注入
+        # 只在这条 sim-only 支路里,不进任何生产节点/生产 launch。见 spec §3.2。
         if args.detection_latency_ms:
-            mission_cmd.append(f'detection_latency_ms:={args.detection_latency_ms}')
+            mission_cmd = ['bash', 'scripts/run_mission_sim_delayed.sh',
+                           str(args.detection_latency_ms)]
+        else:
+            mission_cmd = ['bash', 'scripts/run_mission_sim.sh']
         mission_proc, mission_f = _spawn(mission_cmd, mission_log)
 
         # 等载具就绪(决策到 WAIT_TASK_START)。Gazebo 冷启慢,给足超时。

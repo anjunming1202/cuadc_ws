@@ -13,7 +13,6 @@ cuadc_perception/README.md）。
 """
 
 import time
-from collections import deque
 
 import cv2
 import rclpy
@@ -89,10 +88,6 @@ class CvPerceptionNode(Node):
         # 代码，前端多勾也不会真的让机上多算。超过上限的按 _DEBUG_VIEWS
         # 的顺序丢弃靠后的，不报错，只打限流日志。
         self.declare_parameter('max_concurrent_debug_views', 4)
-        # 建模相机→CV→决策的真实检测流水线时延:>0 时检测结果缓冲这么多毫秒再发,
-        # 让决策收到的是"过时"的检测(压时延鲁棒性)。0 = 立即发,行为不变。
-        # 见 docs/spec/sim-stress-testbed.md;值可由 cv-field-test 的 profiling 实测给。
-        self.declare_parameter('detection_latency_ms', 0.0)
 
         # 选定检测器 + 载入它的 sim/real 配置(一次,启动时)。配置从
         # detectors/<detector>.<profile>.yaml 读,跟着方法走。
@@ -117,13 +112,6 @@ class CvPerceptionNode(Node):
         self.create_subscription(PoseStamped, _LOCAL_POSITION_TOPIC, self._on_local_position, 10)
         self.create_subscription(Imu, _ATTITUDE_TOPIC, self._on_attitude, 10)
         self.create_subscription(String, _MISSION_STATE_TOPIC, self._on_mission_state, 10)
-
-        # 感知时延注入:>0 才建缓冲队列 + 定时冲刷,干净档(0)完全不走这条路。
-        self._latency_s = max(0.0, self.get_parameter('detection_latency_ms').value / 1000.0)
-        if self._latency_s > 0.0:
-            self._delay_buf = deque()  # [(due_monotonic, DetectionArray), ...]
-            self.create_timer(0.02, self._flush_delayed)  # 50Hz 冲刷到期的检测
-            self.get_logger().info(f'[LATENCY] detection publish delayed {self._latency_s*1000:.0f}ms')
 
     def _on_mission_state(self, msg):
         self._recon_zone_active = (msg.data == _RECON_ZONE_STATE)
@@ -208,16 +196,9 @@ class CvPerceptionNode(Node):
         out.header = Header()
         out.header.stamp = self.get_clock().now().to_msg()
         out.detections = detection_msgs
-        if self._latency_s > 0.0:
-            self._delay_buf.append((time.monotonic() + self._latency_s, out))
-        else:
-            self._publisher.publish(out)
-        self._publish_perf(perf)
+        self._publisher.publish(out)
 
-    def _flush_delayed(self):
-        now = time.monotonic()
-        while self._delay_buf and self._delay_buf[0][0] <= now:
-            self._publisher.publish(self._delay_buf.popleft()[1])
+        self._publish_perf(perf)
 
     def _active_debug_views(self):
         """按 _DEBUG_VIEWS 的固定优先级排，超过 max_concurrent_debug_views

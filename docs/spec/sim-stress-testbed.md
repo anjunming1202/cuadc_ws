@@ -38,21 +38,35 @@
 `mission_state` 记状态时间线 → 判定 → **按捕获的 PID/进程组干净拆除** → 硬
 超时兜底 → 汇总 N 轮成 CSV + 摘要。
 
-### 3.2 真实感注入（三层，默认全关 → 干净 sim 行为不变）
+### 3.2 真实感注入（默认全关 → 干净 sim 行为不变）
 
 | 层 | 注入点 | 内容 |
 |---|---|---|
 | 飞控动力学（风） | `config/sim_realism.parm` + `gazebo_bringup` 新增 `sim_realism_params:=<path>` 再叠一个 `--add-param-file` | `SIM_WIND_SPD` / `SIM_WIND_DIR` / `SIM_WIND_TURB` |
 | 传感器噪声 | 同一 parm 文件 | `SIM_GPS_*`、`SIM_ACC*_RND`、`SIM_GYR*_RND`、`SIM_BARO_RND`（ArduPilot 自带传感器模型） |
-| 感知时延 | `cv_perception_node` 新增 `detection_latency_ms` | 缓冲延迟发布 `DetectionArray`，建模相机→CV→决策实测时延（值可由 cv-field-test profiling 提供），默认 0 |
-| 相机成像 | **外部** `ardupilot_gazebo` 的 iris 相机传感器 SDF 加 `<noise>` | 让真 CV 见到带噪的真实帧 |
+| 感知时延 | **sim-only** `detection_delay_node`（`cuadc_sim`）经压测台 launch 插在感知↔决策之间 | 缓冲延迟转发 `DetectionArray`，建模相机→CV→决策实测时延（值可由 cv-field-test profiling 提供） |
 
-不给 `sim_realism_params`（parm 缺省）+ `detection_latency_ms=0` + 未打相机
-patch = 干净 sim，行为与现在完全一致。
+不给 `sim_realism_params`（parm 缺省）+ 零延迟档 = 干净 sim，行为与现在完全一致。
 
-> ⚠️ 相机成像那层改的是**仓库外**文件（`~/ardupilot_gazebo`，不受本仓库版本
-> 控制）。为可复现：把改动以 **patch/snippet 存进本仓库**（`cuadc_sim/` 下）
-> + 一个 apply 脚本。外部依赖更新/重编可能覆盖它，需重跑 apply。
+> **感知时延为什么不放进生产节点（B 方案）**：时延注入不改任何生产文件
+> （`cv_perception_node`/`cv_perception_bringup`/`mission_bringup` 保持纯净）。
+> 压测台专用的 `launch/mission_sim_delayed.launch.py` 用 `SetRemap` 把感知输出
+> `/perception/detections` 改道到 `_predelay`（只作用于该 launch 里包含的
+> `cv_perception_bringup`），再由 `detection_delay_node` 延迟后发回原话题给决策。
+> 生产链 `mission_bringup` 里没有这个 launch、没有延迟节点、没有 remap，真机/正式
+> 仿真感知→决策零延迟直连——real 不受污染这一点在 `git diff` 层面可证（生产文件
+> 与重构基线逐字节一致）。压测台入口：`run_mission_sim_delayed.sh <delay_ms>`
+> （零延迟仍走 `run_mission_sim.sh`）。
+
+> **相机成像噪声（放弃 SDF 路线）**：原计划改外部 `ardupilot_gazebo` 相机传感器
+> SDF 加 `<noise>`。实测本机 **gz-sim 8.14 + ogre2 相机不吃 `<noise>`**：注入
+> stddev=8 后，两帧（时间戳确不同、即不同渲染）仍逐字节几乎相同（帧间 mean-abs
+> diff=0.003，若生效应≈9）。已排除改错文件（同模型磁盘有源码/编译产物多份拷贝，
+> gz 只认 `GZ_SIM_RESOURCE_PATH` 上那份）和渲染引擎（ogre2 本支持噪声 pass）。
+> 再挖 gz 内部噪声 pass 属外部依赖深坑。成像噪声层**暂跳过**（决策：先做全扰动
+> 组合，成像留到真机阶段——真相机本就有真噪声）。若日后要在 sim 补：走仓库内
+> 注入（`cv_perception_node` 加 `image_noise_stddev`，检测前对帧加噪，与
+> `detection_latency_ms` 同套路），别再走外部 SDF。
 
 ## 4. 构建顺序
 

@@ -44,10 +44,6 @@ def generate_launch_description():
         'max_concurrent_debug_views', default_value='4',
         description='同时最多算/发几路调试图像——真机上的硬性保护，跟前端请求了几路无关，见 cuadc_viz/README.md',
     )
-    detection_latency_arg = DeclareLaunchArgument(
-        'detection_latency_ms', default_value='0.0',
-        description='检测发布延迟（毫秒），建模真实检测流水线时延；0=立即发。压测台注入用，见 docs/spec/sim-stress-testbed.md',
-    )
 
     cv_perception_node = Node(
         package='cuadc_perception',
@@ -70,7 +66,6 @@ def generate_launch_description():
             'debug_contours_enabled': LaunchConfiguration('debug_contours_enabled'),
             'debug_mask_enabled': LaunchConfiguration('debug_mask_enabled'),
             'max_concurrent_debug_views': LaunchConfiguration('max_concurrent_debug_views'),
-            'detection_latency_ms': LaunchConfiguration('detection_latency_ms'),
         }],
     )
 
@@ -78,6 +73,5 @@ def generate_launch_description():
         fx_arg, fy_arg, cx_arg, cy_arg, roll_arg, pitch_arg, yaw_arg,
         cylinder_height_arg, min_radius_arg, max_radius_arg, profile_arg,
         debug_annotated_arg, debug_contours_arg, debug_mask_arg, max_concurrent_debug_arg,
-        detection_latency_arg,
         cv_perception_node,
     ])
