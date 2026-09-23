@@ -7,9 +7,11 @@ Wants=cuadc-onboard-fanout.service
 [Service]
 Type=simple
 User=wly
-# 读扇出 14550（不碰串口），发 DroneLink(192.168.50.2)+以太网(10.10.10.2) 的 5701/5601。
+# 读扇出 14551（不碰串口），发 DroneLink(192.168.50.2)+以太网(10.10.10.2) 的 5701/5601。
+# 用 14551 而非 14550：14550 留给接口层(cuadc_interface)独占——两个 udpin 绑同一端口会
+# 各分走一半心跳、双方都超时重连。fanout 同时向 14550/14551 推流，各消费者各绑一个。
 # 脚本自带重连兜底：扇出还没喂到心跳时它会退避重试，不需要额外等待。
-ExecStart=/home/wly/dronelink-venv/bin/python3 /opt/cuadc-onboard/telem_ground.py --device udpin:127.0.0.1:14550 --dest-host 192.168.50.2,10.10.10.2 --dest-ports 5701,5601 --hz 10
+ExecStart=/home/wly/dronelink-venv/bin/python3 /opt/cuadc-onboard/telem_ground.py --device udpin:127.0.0.1:14551 --dest-host 192.168.50.2,10.10.10.2 --dest-ports 5701,5601 --hz 10
 Restart=always
 RestartSec=3
 
