@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Serve DroneLink video + telemetry on http://127.0.0.1:<port>/.
 
-Video: Python owns the air-side UDP ports (5600 RTP / 5601 shared), forwards
-RTP+RTCP to localhost for one shared FFmpeg remux (MPEG-TS), fans out to
-/stream.ts clients. JSON datagrams that arrive on :5601 (legacy Pi) or :5701
-are exposed as /telemetry.json for the HUD.
+Video: Python owns air-side UDP ports — clean 5600 (+5601 shared) and CV
+preview 5606 — forwards RTP to localhost FFmpeg remux (MPEG-TS), fans out to
+/stream.ts and /stream_cv.ts. JSON on :5601 (legacy) or :5701 → /telemetry.json.
 """
 
 from __future__ import annotations
@@ -21,16 +20,21 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 VIEWER_DIR = Path(__file__).resolve().parent
 DEFAULT_SDP = VIEWER_DIR.parent / "DroneLink.sdp"  # docs / air-link reference
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 DEFAULT_TELEMETRY_PORT = 5701  # preferred once Pi unit is updated
+DEFAULT_RECORD_DIR = VIEWER_DIR / "recordings"  # 录制落点(地面机本地,按需查看)
 AIR_RTP_PORT = 5600
 AIR_SHARED_PORT = 5601  # legacy telemetry JSON and/or RTCP from some stacks
-LOCAL_RTP_PORT = 15600  # FFmpeg loopback RTP
-LOCAL_RTCP_PORT = 15601  # FFmpeg loopback RTCP
+AIR_CV_RTP_PORT = 5606  # CV preview downlink (Pi cv-forward)
+LOCAL_RTP_PORT = 15600  # FFmpeg loopback RTP (clean)
+LOCAL_RTCP_PORT = 15601  # FFmpeg loopback RTCP (clean)
+LOCAL_CV_RTP_PORT = 15610  # FFmpeg loopback RTP (CV)
+LOCAL_CV_RTCP_PORT = 15611  # FFmpeg loopback RTCP (CV)
 TELEMETRY_STALE_S = 2.0
 CLIENT_QUEUE_MAX = 64  # ~ drop old TS if a slow browser falls behind
 
@@ -101,19 +105,25 @@ def _ffmpeg_cmd(ffmpeg_bin: str, sdp_path: Path) -> list[str]:
     ]
 
 
-def write_loopback_sdp(path: Path) -> None:
+def write_loopback_sdp(
+    path: Path,
+    *,
+    rtp_port: int,
+    rtcp_port: int,
+    session_name: str = "DroneLink H264 loopback",
+) -> None:
     path.write_text(
         "\n".join(
             [
                 "v=0",
                 "o=- 0 0 IN IP4 127.0.0.1",
-                "s=DroneLink H264 loopback",
+                f"s={session_name}",
                 "c=IN IP4 127.0.0.1",
                 "t=0 0",
-                f"m=video {LOCAL_RTP_PORT} RTP/AVP 96",
+                f"m=video {rtp_port} RTP/AVP 96",
                 "a=rtpmap:96 H264/90000",
                 "a=fmtp:96 packetization-mode=1",
-                f"a=rtcp:{LOCAL_RTCP_PORT} IN IP4 127.0.0.1",
+                f"a=rtcp:{rtcp_port} IN IP4 127.0.0.1",
                 "",
             ]
         ),
@@ -188,6 +198,61 @@ class AirLinkProxy:
             # Non-JSON: treat as RTCP (or other) and forward to loopback FFmpeg.
             try:
                 self._fwd.sendto(payload, ("127.0.0.1", LOCAL_RTCP_PORT))
+            except OSError:
+                pass
+        sock.close()
+
+
+class SimpleRtpProxy:
+    """Own one air UDP port; forward datagrams to a localhost RTP port (no demux)."""
+
+    def __init__(
+        self,
+        air_port: int,
+        local_rtp_port: int,
+        *,
+        air_bind: str = "0.0.0.0",
+        name: str = "rtp",
+    ) -> None:
+        self._air_bind = air_bind
+        self._air_port = air_port
+        self._local_rtp_port = local_rtp_port
+        self._name = name
+        self._stop = threading.Event()
+        self._fwd = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((self._air_bind, self._air_port))
+        sys.stderr.write(
+            f"{self._name} proxy listening on {self._air_bind}:{self._air_port} "
+            f"-> 127.0.0.1:{self._local_rtp_port}\n"
+        )
+        self._thread = threading.Thread(
+            target=self._loop, args=(sock,), name=f"{self._name}-rtp", daemon=True
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        try:
+            self._fwd.close()
+        except OSError:
+            pass
+
+    def _loop(self, sock: socket.socket) -> None:
+        sock.settimeout(0.5)
+        while not self._stop.is_set():
+            try:
+                payload, _addr = sock.recvfrom(65535)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            try:
+                self._fwd.sendto(payload, ("127.0.0.1", self._local_rtp_port))
             except OSError:
                 pass
         sock.close()
@@ -292,8 +357,113 @@ class RemuxHub:
             backoff = min(8.0, backoff * 1.5)
 
 
+class Recorder:
+    """录制:给每个 RemuxHub 挂一个订阅者,把 MPEG-TS 分片写文件 + 一份 .jsonl 遥测。
+    默认同时录**干净图传** `<name>.ts` 与 **CV 预览** `<name>_cv.ts`(带检测框),
+    外加每秒一条 `<name>.jsonl` 遥测。只是多几个订阅者,不碰视频主路 → 和任何
+    测试/任务代码解耦;按需 start/stop,现场任何时候都能开。"""
+
+    def __init__(self, hubs: dict[str, RemuxHub], record_dir: Path) -> None:
+        self._hubs = hubs                       # {文件名后缀: hub},如 {"": 干净, "_cv": CV}
+        self._dir = Path(record_dir)
+        self._lock = threading.Lock()
+        self._bytes_lock = threading.Lock()
+        self._active = False
+        self._threads: list[threading.Thread] = []
+        self._name: str | None = None
+        self._telem_path: Path | None = None
+        self._started_mono = 0.0
+        self._bytes = 0
+
+    def start(self, label: str | None = None) -> dict:
+        with self._lock:
+            if self._active:
+                return {"ok": False, "error": "already recording", **self._status_unlocked()}
+            self._dir.mkdir(parents=True, exist_ok=True)
+            stamp = time.strftime("%Y%m%d_%H%M%S")
+            self._name = f"{stamp}_{label}" if label else stamp
+            self._telem_path = self._dir / f"{self._name}.jsonl"
+            self._active = True
+            self._bytes = 0
+            self._started_mono = time.monotonic()
+            self._threads = []
+            for suffix, hub in self._hubs.items():
+                path = self._dir / f"{self._name}{suffix}.ts"
+                t = threading.Thread(target=self._run_video, args=(hub, path),
+                                     name=f"rec{suffix or '-clean'}", daemon=True)
+                t.start()
+                self._threads.append(t)
+            tt = threading.Thread(target=self._run_telem, name="rec-telem", daemon=True)
+            tt.start()
+            self._threads.append(tt)
+            sys.stderr.write(f"[rec] start -> {self._dir}/{self._name}{{.ts,_cv.ts,.jsonl}}\n")
+            return {"ok": True, **self._status_unlocked()}
+
+    def stop(self) -> dict:
+        with self._lock:
+            if not self._active:
+                return {"ok": False, "error": "not recording"}
+            st = self._status_unlocked()   # 先取快照(还 active,秒数才对)
+            self._active = False
+            threads = list(self._threads)
+        for t in threads:
+            t.join(timeout=3)
+        st["recording"] = False
+        sys.stderr.write(f"[rec] stop  ({st['name']}, {st['seconds']}s, {st['bytes']} B)\n")
+        return {"ok": True, "stopped": True, **st}
+
+    def status(self) -> dict:
+        with self._lock:
+            return self._status_unlocked()
+
+    def _status_unlocked(self) -> dict:
+        with self._bytes_lock:
+            nbytes = self._bytes
+        return {
+            "recording": self._active,
+            "name": self._name if self._active else None,
+            "streams": list(self._hubs.keys()),
+            "seconds": round(time.monotonic() - self._started_mono, 1) if self._active else 0.0,
+            "bytes": nbytes,
+            "dir": str(self._dir),
+        }
+
+    def _run_video(self, hub: RemuxHub, path: Path) -> None:
+        q = hub.subscribe()
+        try:
+            with open(path, "wb") as vf:
+                while self._active:
+                    try:
+                        chunk = q.get(timeout=0.5)
+                    except queue.Empty:
+                        continue
+                    if chunk is None:        # hub 停了
+                        break
+                    vf.write(chunk)
+                    with self._bytes_lock:
+                        self._bytes += len(chunk)
+                vf.flush()
+        finally:
+            hub.unsubscribe(q)
+
+    def _run_telem(self) -> None:
+        last = 0.0
+        with open(self._telem_path, "w", encoding="utf-8") as tf:
+            while self._active:
+                now = time.monotonic()
+                if now - last >= 1.0:        # 每秒一条,和视频同名对齐
+                    last = now
+                    tf.write(json.dumps({"t": time.time(), **_telemetry_snapshot()},
+                                        ensure_ascii=False) + "\n")
+                    tf.flush()
+                time.sleep(0.2)
+
+
 _hub: RemuxHub | None = None
+_cv_hub: RemuxHub | None = None
 _proxy: AirLinkProxy | None = None
+_cv_proxy: SimpleRtpProxy | None = None
+_recorder: Recorder | None = None
 
 
 def _telemetry_snapshot() -> dict:
@@ -355,6 +525,10 @@ class ViewerHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _send_json(self, obj: dict) -> None:
+        self._send_bytes(json.dumps(obj, ensure_ascii=False).encode("utf-8"),
+                         "application/json; charset=utf-8")
+
     def do_GET(self) -> None:  # noqa: N802
         path = self.path.split("?", 1)[0]
         if path in ("/", "/index.html"):
@@ -370,14 +544,33 @@ class ViewerHandler(BaseHTTPRequestHandler):
             self._send_bytes(body, "application/json; charset=utf-8")
             return
         if path == "/stream.ts":
-            self._stream_ts()
+            self._stream_ts(_hub, "clean remux hub")
+            return
+        if path == "/stream_cv.ts":
+            self._stream_ts(_cv_hub, "CV remux hub")
+            return
+        if path == "/record/status":
+            self._send_json(_recorder.status() if _recorder else {"recording": False})
             return
         self.send_error(404)
 
-    def _stream_ts(self) -> None:
-        global _hub
-        if _hub is None:
-            self.send_error(503, "remux hub not ready")
+    def do_POST(self) -> None:  # noqa: N802
+        path = self.path.split("?", 1)[0]
+        if _recorder is None:
+            self.send_error(503, "recorder not ready")
+            return
+        if path == "/record/start":
+            label = (parse_qs(urlparse(self.path).query).get("label") or [None])[0]
+            self._send_json(_recorder.start(label))
+            return
+        if path == "/record/stop":
+            self._send_json(_recorder.stop())
+            return
+        self.send_error(404)
+
+    def _stream_ts(self, hub: RemuxHub | None, hub_label: str) -> None:
+        if hub is None:
+            self.send_error(503, f"{hub_label} not ready")
             return
         self.send_response(200)
         self.send_header("Content-Type", "video/mp2t")
@@ -385,7 +578,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
 
-        q = _hub.subscribe()
+        q = hub.subscribe()
         try:
             while True:
                 chunk = q.get()
@@ -395,11 +588,11 @@ class ViewerHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
         finally:
-            _hub.unsubscribe(q)
+            hub.unsubscribe(q)
 
 
 def main() -> None:
-    global _hub, _proxy
+    global _hub, _cv_hub, _proxy, _cv_proxy, _recorder
 
     parser = argparse.ArgumentParser(description="DroneLink localhost video viewer")
     parser.add_argument("--host", default=DEFAULT_HOST, help="HTTP bind address")
@@ -412,6 +605,8 @@ def main() -> None:
         default=DEFAULT_SDP,
         help="unused for remux (kept for CLI compat); air ports are proxied",
     )
+    parser.add_argument("--record-dir", type=Path, default=DEFAULT_RECORD_DIR,
+                        help="录制输出目录(默认 groundstation/recordings/)")
     args = parser.parse_args()
 
     ffmpeg_bin = find_ffmpeg()
@@ -419,28 +614,56 @@ def main() -> None:
 
     _proxy = AirLinkProxy(air_bind="0.0.0.0")
     _proxy.start()
+    _cv_proxy = SimpleRtpProxy(
+        AIR_CV_RTP_PORT, LOCAL_CV_RTP_PORT, air_bind="0.0.0.0", name="CV"
+    )
+    _cv_proxy.start()
 
-    loopback_sdp = Path(tempfile.gettempdir()) / "dronelink_loopback.sdp"
-    write_loopback_sdp(loopback_sdp)
+    tmp = Path(tempfile.gettempdir())
+    loopback_sdp = tmp / "dronelink_loopback.sdp"
+    write_loopback_sdp(
+        loopback_sdp,
+        rtp_port=LOCAL_RTP_PORT,
+        rtcp_port=LOCAL_RTCP_PORT,
+        session_name="DroneLink clean H264",
+    )
+    cv_sdp = tmp / "dronelink_cv_loopback.sdp"
+    write_loopback_sdp(
+        cv_sdp,
+        rtp_port=LOCAL_CV_RTP_PORT,
+        rtcp_port=LOCAL_CV_RTCP_PORT,
+        session_name="DroneLink CV H264",
+    )
 
     _hub = RemuxHub(ffmpeg_bin, loopback_sdp)
     _hub.start()
+    _cv_hub = RemuxHub(ffmpeg_bin, cv_sdp)
+    _cv_hub.start()
+    _recorder = Recorder({"": _hub, "_cv": _cv_hub}, args.record_dir)
 
     server = ThreadingHTTPServer((args.host, args.port), ViewerHandler)
     print(f"DroneLink viewer: http://{args.host}:{args.port}/")
     print(f"FFmpeg: {ffmpeg_bin}")
-    print(f"Air RTP/shared: 0.0.0.0:{AIR_RTP_PORT}/:{AIR_SHARED_PORT} -> loopback")
+    print(f"Clean RTP/shared: 0.0.0.0:{AIR_RTP_PORT}/:{AIR_SHARED_PORT} -> /stream.ts")
+    print(f"CV RTP: 0.0.0.0:{AIR_CV_RTP_PORT} -> /stream_cv.ts")
     print(f"Telemetry UDP: {args.telemetry_bind}:{args.telemetry_port} (+ JSON on :{AIR_SHARED_PORT})")
+    print(f"Recordings: {args.record_dir}  (POST /record/start|stop, GET /record/status)")
     print("Ctrl+C to stop.")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nStopped.")
     finally:
+        if _recorder is not None and _recorder.status().get("recording"):
+            _recorder.stop()
         if _hub is not None:
             _hub.stop()
+        if _cv_hub is not None:
+            _cv_hub.stop()
         if _proxy is not None:
             _proxy.stop()
+        if _cv_proxy is not None:
+            _cv_proxy.stop()
         server.server_close()
 
 

@@ -1,7 +1,7 @@
 [Unit]
 Description=cuadc_onboard video forward (local 5603 -> ground 5600)
-# 纯中继:收本地 5603 的 H264/RTP 包,原样转寄地面 viewer。全系统唯一"发地面"处;
-# 相机服务只产本地端点,任何生产者投到 5603 都经这里上地面。
+# 纯中继:收本地 5603 的 H264/RTP 包,原样转寄地面 viewer（干净图传 :5600）。
+# 相机服务只产本地端点;CV 预览走另一条 cv-forward（5604→5606）。
 After=cuadc-onboard-camera.service
 Wants=cuadc-onboard-camera.service
 
