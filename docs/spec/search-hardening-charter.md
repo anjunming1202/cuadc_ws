@@ -1,7 +1,8 @@
 # SEARCH 加固探索 · 章程与诊断纪要
 
-> **性质**:过渡性协作文档,是并行 agent 组的**共享输入 + 工作纪律**。SEARCH
-> 设计拍板后由一份 ADR 取代,届时删除本文件。分支:`feature/search-sim-hardening`。
+> **性质**:并行 agent 组的**共享输入 + 工作纪律**。第二次投放失败的修复决策
+> 已落 [ADR-0006](adr/0006-approach-relock-gate-vs-search-error.md);本文件留作那轮
+> 并行竞争探索的历史记录(失败链诊断 + 三方案过程)。分支:`feature/search-sim-hardening`。
 
 ## 0. 背景
 
