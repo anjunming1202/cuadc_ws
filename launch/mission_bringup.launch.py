@@ -47,6 +47,19 @@ def generate_launch_description():
         'scenario', default_value='full_mission',
         description='任务场景，选 mission/scenarios/<scenario>.yaml，正式任务 full_mission',
     )
+    # 真实 CV 接线的透传参数：只转给 cv_perception，接口/决策层不认。默认 sim 友好
+    # （frame_source=ros、预览关、sim 内参），仿真脚本一个都不用传、老路不变；真机
+    # 脚本（run_mission_hardware.sh）source real_camera_intrinsics.sh 后成套传进来
+    # （见 launch/cv_perception_bringup.launch.py 里这些参数的完整说明）。
+    cv_passthrough_args = [
+        DeclareLaunchArgument('frame_source', default_value='ros', description='取帧源：sim=ros / real=shm'),
+        DeclareLaunchArgument('preview_enabled', default_value='false', description='真机标注预览推本地 preview_port'),
+        DeclareLaunchArgument('fx', default_value='205.5', description='相机水平焦距（像素），真机传标定值'),
+        DeclareLaunchArgument('fy', default_value='205.5', description='相机垂直焦距（像素）'),
+        DeclareLaunchArgument('cx', default_value='320.0', description='主点 x（像素）'),
+        DeclareLaunchArgument('cy', default_value='240.0', description='主点 y（像素）'),
+        DeclareLaunchArgument('preview_port', default_value='5604', description='真机预览本地推流端口'),
+    ]
 
     interface_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution(
@@ -57,7 +70,16 @@ def generate_launch_description():
     cv_perception_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution(
             [FindPackageShare('cuadc_perception'), 'launch', 'cv_perception_bringup.launch.py'])),
-        launch_arguments={'profile': LaunchConfiguration('profile')}.items(),
+        launch_arguments={
+            'profile': LaunchConfiguration('profile'),
+            'frame_source': LaunchConfiguration('frame_source'),
+            'preview_enabled': LaunchConfiguration('preview_enabled'),
+            'fx': LaunchConfiguration('fx'),
+            'fy': LaunchConfiguration('fy'),
+            'cx': LaunchConfiguration('cx'),
+            'cy': LaunchConfiguration('cy'),
+            'preview_port': LaunchConfiguration('preview_port'),
+        }.items(),
     )
 
     decision_launch = IncludeLaunchDescription(
@@ -70,4 +92,5 @@ def generate_launch_description():
     )
 
     return LaunchDescription([connection_arg, profile_arg, scenario_arg,
+                              *cv_passthrough_args,
                               interface_launch, cv_perception_launch, decision_launch])
