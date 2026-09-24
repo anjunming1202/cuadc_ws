@@ -263,10 +263,6 @@ class CvPerceptionNode(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    import gi
-    gi.require_version('Gst', '1.0')
-    from gi.repository import Gst
-    Gst.init(None)
     node = CvPerceptionNode()
     try:
         rclpy.spin(node)

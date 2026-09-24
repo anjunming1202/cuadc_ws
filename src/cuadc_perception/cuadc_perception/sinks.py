@@ -8,13 +8,25 @@ DetectionArray/debug-Image 出口是 ROS 原生的、留在节点里（用 self.
 from __future__ import annotations
 
 import cv2
-import gi
 import numpy as np
 
-gi.require_version("Gst", "1.0")
-from gi.repository import Gst  # noqa: E402
-
 DEFAULT_PREVIEW_PORT = 5604
+
+_GST = None
+
+
+def _ensure_gst():
+    """惰性 import + init GStreamer：只有真机真正用到 RTP 预览 / shm 取帧时才加载。
+    不在模块级 import、也不无条件 Gst.init——`Gst.init()` 若在创建 rclpy Node 之前
+    运行会与之冲突、段错误，而 sim 根本不用 gstreamer，惰性化后 sim 完全不碰它。"""
+    global _GST
+    if _GST is None:
+        import gi
+        gi.require_version("Gst", "1.0")
+        from gi.repository import Gst
+        Gst.init(None)
+        _GST = Gst
+    return _GST
 
 
 def draw_overlay(frame_bgr: np.ndarray, result, frame_idx: int, ema_ms: float) -> None:
@@ -51,13 +63,14 @@ class RtpPreviewSink:
     次。不依赖 rclpy。"""
 
     def __init__(self, port: int, width: int, height: int, fps: int, bitrate: int = 1000) -> None:
+        self._gst = _ensure_gst()
         self._port = port
         self._w, self._h, self._fps = width, height, fps
         self._bitrate_kbps = bitrate
         self._pipeline = None
         self._src = None
         self._pts = 0
-        self._frame_duration = Gst.SECOND // max(1, fps)
+        self._frame_duration = self._gst.SECOND // max(1, fps)
 
     def start(self) -> None:
         desc = (
@@ -71,15 +84,15 @@ class RtpPreviewSink:
             f"h264parse config-interval=1 ! rtph264pay config-interval=1 pt=96 ! "
             f"udpsink host=127.0.0.1 port={self._port} sync=false async=false"
         )
-        self._pipeline = Gst.parse_launch(desc)
+        self._pipeline = self._gst.parse_launch(desc)
         self._src = self._pipeline.get_by_name("src")
-        self._pipeline.set_state(Gst.State.PLAYING)
+        self._pipeline.set_state(self._gst.State.PLAYING)
 
     def push(self, frame_bgr: np.ndarray) -> None:
         if self._src is None:
             return
         data = frame_bgr.tobytes()
-        buf = Gst.Buffer.new_allocate(None, len(data), None)
+        buf = self._gst.Buffer.new_allocate(None, len(data), None)
         buf.fill(0, data)
         buf.pts = self._pts
         buf.dts = self._pts
@@ -89,4 +102,4 @@ class RtpPreviewSink:
 
     def stop(self) -> None:
         if self._pipeline is not None:
-            self._pipeline.set_state(Gst.State.NULL)
+            self._pipeline.set_state(self._gst.State.NULL)
