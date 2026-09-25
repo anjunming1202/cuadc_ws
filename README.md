@@ -131,7 +131,7 @@ colcon build
 | 脚本 | 感知 | connection 目标 | 用途 |
 |---|---|---|---|
 | `scripts/run_mission_sim.sh` | 真实 CV | SITL（写死） | **正式任务/完整仿真验证，最常用的一个** |
-| `scripts/run_mission_real.sh` | 真实 CV | 真实串口（写死） | 真机部署 |
+| `scripts/run_mission_real.sh` | 真实 CV | 底座 fanout udp（写死） | 真机部署 |
 | `scripts/run_mission_stub_sim.sh` | 桩（地面真值） | SITL（写死） | 只想快速迭代决策层逻辑，不关心真实检测时用 |
 
 ```bash

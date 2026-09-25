@@ -29,6 +29,8 @@ setup(
             'interface_maneuver_test = cuadc_interface.tests.interface_maneuver_test:main',
             'interface_precision_test = cuadc_interface.tests.interface_precision_test:main',
             'interface_velocity_test = cuadc_interface.tests.interface_velocity_test:main',
+            'interface_takeoff_land_test = cuadc_interface.tests.interface_takeoff_land_test:main',
+            'interface_flight_suite_test = cuadc_interface.tests.interface_flight_suite_test:main',
         ],
     },
 )
