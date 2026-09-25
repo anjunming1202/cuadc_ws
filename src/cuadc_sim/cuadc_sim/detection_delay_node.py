@@ -1,11 +1,6 @@
-"""sim-only：把感知的 DetectionArray 延迟 delay_ms 再转发，建模真实检测流水线
-时延（相机→CV→决策）。**只有压测台的 mission_sim_delayed.launch.py 会拉起它**
-——生产链（mission_bringup）里根本没有这个节点，真机/正式仿真的感知→决策是零
-延迟直连，扰动注入完全不进任何生产节点/生产 launch。这是把时延注入从生产节点
-移出来的关键（见 docs/spec/sim-stress-testbed.md §3.2）。
-
-订 `detections_in`、延迟后发 `detections_out`（两个话题名由 launch 里的 remap
-绑定到真实的 /perception/detections 链路上）。delay_ms=0 时直通、不建缓冲/定时器。
+"""sim-only 压测台节点：把 DetectionArray 延迟 delay_ms 再转发，建模检测流水线时延。
+生产链里没有它——只有 mission_sim_delayed.launch.py 拉起。订 detections_in、延迟后发
+detections_out（话题名由 launch remap 绑定）；delay_ms=0 直通、不建缓冲/定时器。
 """
 
 import time

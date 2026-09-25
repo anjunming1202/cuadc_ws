@@ -29,9 +29,8 @@ class CameraParams:
 
 
 def load_camera_params(profile: str) -> CameraParams:
-    """从 `<此目录>/camera.<profile>.yaml` 读相机内参 + 云台固定挂载角（profile 通常
-    'sim'/'real'）。内参对应各自的 CV 处理分辨率（sim 640×480 / real 960×540），跟着
-    profile 走、不硬编码在共享 launch 里——换相机 / 重标定只改 yaml，不动代码。"""
+    """从 camera.<profile>.yaml 读相机内参 + 挂载角。内参对应各自 CV 处理分辨率
+    （sim 640×480 / real 960×540），换相机 / 重标定只改 yaml。"""
     path = Path(__file__).parent / f'camera.{profile}.yaml'
     with open(path, encoding='utf-8') as fh:
         data = yaml.safe_load(fh) or {}

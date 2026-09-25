@@ -44,9 +44,7 @@ class CvPerceptionNode(Node):
     def __init__(self):
         super().__init__('cuadc_perception_cv')
 
-        # 相机内参 + 云台挂载角按 profile 从 camera.<profile>.yaml 读(见下方
-        # geometry.load_camera_params),不在这里/共享 launch 里硬编码——sim 与真机的
-        # 内参对应各自 CV 处理分辨率(640×480 / 960×540),换相机只改 yaml。
+        # 相机内参 + 挂载角按 profile 从 camera.<profile>.yaml 读(见 geometry.load_camera_params)。
         self.declare_parameter('cylinder_height_m', 0.3)
         self.declare_parameter('min_radius_m', 0.05)
         self.declare_parameter('max_radius_m', 0.18)

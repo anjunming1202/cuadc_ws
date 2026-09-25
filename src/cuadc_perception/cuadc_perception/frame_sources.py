@@ -21,9 +21,8 @@ _GST = None
 
 
 def _ensure_gst():
-    """惰性 import + init GStreamer：只有真机真正用到 shm 取帧时才加载。不在模块级
-    import、也不无条件 Gst.init——`Gst.init()` 若在创建 rclpy Node 之前运行会与之
-    冲突、段错误，而 sim 走 ROS 图源、根本不用 gstreamer，惰性化后 sim 完全不碰它。"""
+    """惰性 import + init GStreamer（真机 shm 取帧时才用）：sim 不用 gstreamer，且
+    Gst.init() 必须在创建 rclpy Node 之后、否则段错误（见 ADR-0009）。"""
     global _GST
     if _GST is None:
         import gi

@@ -1,14 +1,7 @@
-"""压测台专用（sim-only）：跟 launch/mission_bringup.launch.py 起同样的三个任务
-节点（接口/真实 CV 感知/决策），唯一区别是在感知↔决策之间插一个
-detection_delay_node，把检测延迟 delay_ms 再交给决策，用来在仿真里建模真实检测
-流水线时延（见 docs/spec/sim-stress-testbed.md §3.2）。
-
-时延注入完全不碰任何生产文件：靠 SetRemap 把感知的输出话题 /perception/detections
-改道到 /perception/detections_predelay——SetRemap 只作用于**本 group 内**的节点，
-也就是被包含的 cv_perception_bringup（决策不在这个 group 里，它对
-/perception/detections 的订阅不受影响）；延迟节点再把 _predelay 延迟后发回
-/perception/detections 给决策。生产链 mission_bringup 里没有这个 launch、没有延迟
-节点、没有 remap，真机/正式仿真感知→决策零延迟直连。
+"""压测台专用（sim-only）：起 mission_bringup 的同样三个节点，但在感知↔决策之间插
+一个 detection_delay_node 建模检测时延。SetRemap 把感知输出改道到 _predelay（只作用
+于本 group 内的 cv_perception_bringup，决策不受影响），延迟节点再发回 /perception/
+detections 给决策。生产链 mission_bringup 不含这套，感知→决策零延迟直连。
 """
 
 from launch import LaunchDescription

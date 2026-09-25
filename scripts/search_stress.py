@@ -147,9 +147,7 @@ def _run_trial(node, idx, args, logdir):
             gz_cmd.append(f'sim_realism_params:={args.realism_parm}')
         gz_proc, gz_f = _spawn(gz_cmd, gz_log)
 
-        # 时延档走 run_mission_sim_delayed.sh(感知↔决策间插 sim-only 延迟节点);
-        # 零延迟走生产 run_mission_sim.sh(与真机同一条链、不含延迟节点)。时延注入
-        # 只在这条 sim-only 支路里,不进任何生产节点/生产 launch。见 spec §3.2。
+        # 时延档走 run_mission_sim_delayed.sh(插 sim-only 延迟节点);零延迟走生产 run_mission_sim.sh。
         if args.detection_latency_ms:
             mission_cmd = ['bash', 'scripts/run_mission_sim_delayed.sh',
                            str(args.detection_latency_ms)]

@@ -48,31 +48,19 @@
 
 不给 `sim_realism_params`（parm 缺省）+ 零延迟档 = 干净 sim，行为与现在完全一致。
 
-> **感知时延为什么不放进生产节点（B 方案）**：时延注入不改任何生产文件
-> （`cv_perception_node`/`cv_perception_bringup`/`mission_bringup` 保持纯净）。
-> 压测台专用的 `launch/mission_sim_delayed.launch.py` 用 `SetRemap` 把感知输出
-> `/perception/detections` 改道到 `_predelay`（只作用于该 launch 里包含的
-> `cv_perception_bringup`），再由 `detection_delay_node` 延迟后发回原话题给决策。
-> 生产链 `mission_bringup` 里没有这个 launch、没有延迟节点、没有 remap，真机/正式
-> 仿真感知→决策零延迟直连——real 不受污染这一点在 `git diff` 层面可证（生产文件
-> 与重构基线逐字节一致）。压测台入口：`run_mission_sim_delayed.sh <delay_ms>`
-> （零延迟仍走 `run_mission_sim.sh`）。
+> **感知时延为什么在 sim-only 节点、不在生产节点**：`mission_sim_delayed.launch.py`
+> 用 `SetRemap` 把感知输出改道给 `detection_delay_node` 延迟后发回决策；生产
+> `mission_bringup` 不含这套，感知→决策零延迟直连（生产文件与基线逐字节一致）。
+> 入口 `run_mission_sim_delayed.sh <delay_ms>`；零延迟走 `run_mission_sim.sh`。
 
-> **相机成像噪声（放弃 SDF 路线）**：原计划改外部 `ardupilot_gazebo` 相机传感器
-> SDF 加 `<noise>`。实测本机 **gz-sim 8.14 + ogre2 相机不吃 `<noise>`**：注入
-> stddev=8 后，两帧（时间戳确不同、即不同渲染）仍逐字节几乎相同（帧间 mean-abs
-> diff=0.003，若生效应≈9）。已排除改错文件（同模型磁盘有源码/编译产物多份拷贝，
-> gz 只认 `GZ_SIM_RESOURCE_PATH` 上那份）和渲染引擎（ogre2 本支持噪声 pass）。
-> 再挖 gz 内部噪声 pass 属外部依赖深坑。成像噪声层**暂跳过**（决策：先做全扰动
-> 组合，成像留到真机阶段——真相机本就有真噪声）。若日后要在 sim 补：走仓库内
-> 注入（`cv_perception_node` 加 `image_noise_stddev`，检测前对帧加噪，与
-> `detection_latency_ms` 同套路），别再走外部 SDF。
+> **相机成像噪声——放弃 sim 注入**：gz-sim 8.14 + ogre2 相机不吃 `<noise>`（注入
+> stddev=8，两帧不同渲染却逐字节几乎相同；已排除改错文件/渲染引擎）。成像留到真机阶段
+> （真相机本有真噪声）；若日后要在 sim 补，走仓库内 `image_noise_stddev`，别改外部 SDF。
 
 ## 4. 构建顺序
 
 编排器 + 打分（零扰动先测**当前 SEARCH 成功率基线**、量化波动）→ 风 → 传感器
-噪声 → 感知时延 → 相机成像 → **然后**据此改 SEARCH（去离群/确认簇/放宽远筒
-选择门/dedup，见 `cuadc_decision/README.md` 与 `mission_logic.py` 现状）。
+噪声 → 感知时延 → **然后**据此改 SEARCH（相机成像层已放弃 sim 注入，见 §3.2）。
 
 ## 5. 感知时延阈值（标定发现）
 
