@@ -9,7 +9,7 @@
 
 ## 0. 硬约束（每一级都成立）
 
-- **L1/L2 不让飞机起飞**；L3 会自主起飞，**飞手 RC 全程待命、随时接管**。
+- **感知/投放机构单点不让飞机起飞**；接近对准单点会自主起飞，**飞手 RC 全程待命、随时接管**。
 - **绝不停/改 `dronelink-network`、`eth0`**——现场 SSH 骑在上面。
 - Pi profile 用 **`none`**（或 `ground-monitor`），**不用 `mission` 自启**；测试节点
   全靠 SSH 手动 `ros2 launch`/`run`。
@@ -36,9 +36,9 @@ ground-monitor 的 `cuadc-onboard-cv-preview` 占着 shm——测前用 `profile
 
 ## 2. 分级流程（都在 Pi 上 SSH 手动跑；连接见记忆 pi_network_access）
 
-### L1 · 感知单点（不飞）
+### 感知单点（不飞）
 ```
-./scripts/run_field_l1_perception.sh
+./scripts/run_perception_real.sh
 ```
 起接口层 + 真实 CV 感知，**不发飞行指令**。验证 shm 取帧→检测→反投影→尺寸判别：
 - `ros2 topic echo /perception/detections` 看世界坐标/半径是否合理；
@@ -46,9 +46,9 @@ ground-monitor 的 `cuadc-onboard-cv-preview` 占着 shm——测前用 `profile
 内参按 profile=real 从 `src/cuadc_perception/cuadc_perception/camera.real.yaml` 读
 （960x540，来自 `camera_calibration.npz` 换算，见 ADR-0009）。
 
-### L2 · 投放机构单点（不飞）
+### 投放机构单点（不飞）
 ```
-./scripts/run_field_l2_drop_actuator.sh
+./scripts/run_drop_actuator_real.sh
 ```
 只起接口层，手动调服务验证舵机。**`release_payload` 未解锁会拒绝**（ADR-0007：
 地面投放归遥控器/人工）。地面 bench 想用服务驱动舵机 → **必须先拆桨再解锁**：
@@ -58,9 +58,9 @@ ros2 service call /cuadc_interface/release_payload cuadc_interface_msgs/srv/Rele
 ```
 或让机械子队直接用遥控器打投放通道验证——**绝不带桨在地面解锁**。
 
-### L3 · 接近+对准单点（**会飞**，RC 待命）
+### 接近+对准单点（**会飞**，RC 待命）
 ```
-./scripts/run_field_l3_approach.sh          # = run_mission_hardware.sh scenario:=drop_zone_bench
+./scripts/run_drop_zone_real.sh          # = run_mission_real.sh scenario:=drop_zone_bench
 # 栈停在 WAIT_TASK_START 后，另一个终端触发：
 ros2 topic pub -1 /cuadc_decision/sim/task_start_trigger std_msgs/msg/Empty "{}"
 ```
@@ -74,7 +74,7 @@ home 跟解锁位置走，不像仿真固定原点）。当天按场地复测坐
 python3 -m cuadc_perception.cv_preview --port 5614 --profile real
 ```
 注意 shm 单消费者（见 §1）：测时要么先停 `cuadc-onboard-cv-preview` 让出 shm，
-要么直接用 L1 感知节点自带的预览，不要两个一起抢 shm。
+要么直接用感知单点节点自带的预览，不要两个一起抢 shm。
 
 ## 4. sim 回归（不受本次真机接线影响）
 

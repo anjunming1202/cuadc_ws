@@ -17,7 +17,7 @@ mission_bringup_stub.launch.py，两者故意不共用一个"模式开关"：之
 默认值的问题。一份文件只做一件事，用哪个由文件名直接决定，不需要记参数
 默认值是什么。connection 不受这条限制——它不改变"起的是哪个感知"，只是
 接口层连去哪，仿真/真机两边各自的启动脚本（见 scripts/run_mission_sim.sh、
-scripts/run_mission_hardware.sh）各自把它写死，调这份文件时不需要再传。
+scripts/run_mission_real.sh）各自把它写死，调这份文件时不需要再传。
 """
 
 from launch import LaunchDescription
@@ -34,7 +34,7 @@ def generate_launch_description():
         description='接口层 MAVLink 连接目标，仿真默认连本机 SITL，真机部署时改成串口',
     )
     # profile 跟 connection 同一个道理：sim/真机各自的启动脚本把它写死
-    # （run_mission_sim.sh=sim / run_mission_hardware.sh=real），选感知检测器
+    # （run_mission_sim.sh=sim / run_mission_real.sh=real），选感知检测器
     # 的 sim/real config 档，见 cuadc_perception/README.md 配置分层。
     profile_arg = DeclareLaunchArgument(
         'profile', default_value='sim',

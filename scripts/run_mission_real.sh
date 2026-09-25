@@ -12,7 +12,7 @@
 # （标注推本地 5604，由 ground-monitor 的 cv-forward 转地面）。相机内参按 profile 从
 # camera.real.yaml 读（见 ADR-0009），不再由脚本注入。
 #
-# Usage: ./scripts/run_mission_hardware.sh [extra ros2 launch args]
+# Usage: ./scripts/run_mission_real.sh [extra ros2 launch args]
 
 set -eo pipefail
 

@@ -11,7 +11,7 @@
 #   ros2 topic echo /perception/detections                # DetectionArray（世界坐标/半径）
 #   地面 CV 预览：本节点标注推本地 5604，由 ground-monitor 的 cv-forward 转 5606 到地面
 #
-# Usage: ./scripts/run_field_l1_perception.sh [extra ros2 launch args]
+# Usage: ./scripts/run_perception_real.sh [extra ros2 launch args]
 
 set -eo pipefail
 

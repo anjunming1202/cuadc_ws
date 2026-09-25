@@ -8,7 +8,7 @@ DetectionArray 里的世界坐标就是空的。接口层只连底座 MAVLink �
 
 跟 launch/mission_bringup.launch.py 平级但去掉 decision 那一层；CV 透传参数含义见
 launch/cv_perception_bringup.launch.py。相机内参按 profile 从 camera.real.yaml 读
-（见 ADR-0009）。真机由 scripts/run_field_l1_perception.sh 起（frame_source=shm + 预览）。
+（见 ADR-0009）。真机由 scripts/run_perception_real.sh 起（frame_source=shm + 预览）。
 """
 
 from launch import LaunchDescription

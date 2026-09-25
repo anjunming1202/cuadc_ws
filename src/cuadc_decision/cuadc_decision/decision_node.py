@@ -59,7 +59,7 @@ class DecisionNode(Node):
         # profile = sim/real 环境档（选各算法/配置层的 .sim/.real 文件）；scenario = 跑哪种
         # 场景（full_mission / drop_zone_bench / recon_zone_bench，含 initial_state 与跑哪些
         # 阶段）。两者由场景启动脚本写死（run_mission_sim.sh=sim / *_drop_zone_bench=该场景 /
-        # run_mission_hardware.sh=real），见 docs/spec/mission-config-layer.md。
+        # run_mission_real.sh=real），见 docs/spec/mission-config-layer.md。
         self.declare_parameter('profile', 'sim')
         self.declare_parameter('scenario', 'full_mission')
         profile = self.get_parameter('profile').value
