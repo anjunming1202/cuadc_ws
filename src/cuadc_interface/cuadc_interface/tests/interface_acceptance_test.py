@@ -22,8 +22,11 @@ from rclpy.node import Node
 from cuadc_interface_msgs.msg import EkfStatus
 from cuadc_interface_msgs.srv import Arm, GotoLocation, ReleasePayload, SetMode, Takeoff
 from sensor_msgs.msg import NavSatFix
-from std_msgs.msg import Bool, String
+from std_msgs.msg import Bool, String, Empty
 
+
+# arm+takeoff 放行闸门话题（所有会飞的测试共用），同最终任务 task_start_trigger 套路。
+START_TOPIC = '/cuadc_flight_test/start'
 
 class InterfaceAcceptanceTest(Node):
 
@@ -59,8 +62,15 @@ class InterfaceAcceptanceTest(Node):
         self.create_subscription(
             NavSatFix, '/cuadc_interface/telemetry/global_position', self._on_position, 10)
 
+        self.declare_parameter('wait_for_start', True)
+        self.declare_parameter('start_timeout_sec', 600.0)
+        self._wait_for_start_enabled = self.get_parameter('wait_for_start').value
+        self._start_timeout = self.get_parameter('start_timeout_sec').value
+        self._start_triggered = False
+        self.create_subscription(Empty, START_TOPIC, self._on_start, 10)
         self._wait_for_services()
         self._wait_for_ekf_ready()
+        self._wait_for_start()
         self._check_set_mode()
         self._check_arm()
         self._check_takeoff()
@@ -84,6 +94,20 @@ class InterfaceAcceptanceTest(Node):
 
     def _on_position(self, msg):
         self._latest_position = msg
+
+    def _on_start(self, msg):
+        self._start_triggered = True
+
+    def _wait_for_start(self):
+        # arm+takeoff 放行闸门:停在 arm 之前(桨不转),等另一 SSH 发 start 才继续。
+        if not self._wait_for_start_enabled:
+            return
+        self.get_logger().warn(
+            'READY \u2014 EKF ok, NOT armed. arm+takeoff \u5df2\u6321\u4f4f,\u4ece\u53e6\u4e00\u4e2a SSH \u53d1\u653e\u884c:\n'
+            f'    ros2 topic pub -1 {START_TOPIC} std_msgs/msg/Empty "{{}}"')
+        self._wait_for_condition(
+            lambda: self._start_triggered, 'flight start trigger', self._start_timeout)
+        self.get_logger().info('start trigger received -> arming + taking off')
 
     def _wait_for_services(self):
         for name, client in (
