@@ -13,13 +13,24 @@ import threading
 import time
 from pathlib import Path
 
-import gi
 import numpy as np
 
-gi.require_version("Gst", "1.0")
-from gi.repository import Gst  # noqa: E402
-
 DEFAULT_RAW_SHM = "/tmp/cuadc-cam-raw.shm"
+
+_GST = None
+
+
+def _ensure_gst():
+    """惰性 import + init GStreamer（真机 shm 取帧时才用）：sim 不用 gstreamer，且
+    Gst.init() 必须在创建 rclpy Node 之后、否则段错误（见 ADR-0009）。"""
+    global _GST
+    if _GST is None:
+        import gi
+        gi.require_version("Gst", "1.0")
+        from gi.repository import Gst
+        Gst.init(None)
+        _GST = Gst
+    return _GST
 
 
 def _wait_for_shm(path: str, timeout_s: float = 20.0) -> bool:
@@ -43,6 +54,7 @@ class ShmFrameSource:
         self._out_w, self._out_h = out_w, out_h
         self._pipeline = None
         self._sink = None
+        self._gst = None  # 在 start() 里惰性拿到
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._on_frame = None
@@ -57,14 +69,14 @@ class ShmFrameSource:
             f"video/x-raw,format=BGR,width={self._out_w},height={self._out_h} ! "
             f"appsink name=sink max-buffers=1 drop=true sync=false emit-signals=false"
         )
-        self._pipeline = Gst.parse_launch(desc)
+        self._pipeline = self._gst.parse_launch(desc)
         self._sink = self._pipeline.get_by_name("sink")
 
     def _to_bgr(self, sample) -> np.ndarray | None:
         buf = sample.get_buffer()
         if buf is None:
             return None
-        ok, info = buf.map(Gst.MapFlags.READ)
+        ok, info = buf.map(self._gst.MapFlags.READ)
         if not ok:
             return None
         try:
@@ -82,15 +94,16 @@ class ShmFrameSource:
             print(f"shm not ready: {self._raw_shm}", file=sys.stderr, flush=True)
             return False
         self._on_frame = on_frame
+        self._gst = _ensure_gst()
         self._build()
-        self._pipeline.set_state(Gst.State.PLAYING)
+        self._pipeline.set_state(self._gst.State.PLAYING)
         self._thread = threading.Thread(target=self._loop, name="shm-frame-source", daemon=True)
         self._thread.start()
         return True
 
     def _loop(self) -> None:
         while not self._stop.is_set():
-            sample = self._sink.emit("try-pull-sample", Gst.SECOND // 5)
+            sample = self._sink.emit("try-pull-sample", self._gst.SECOND // 5)
             if sample is None:
                 continue
             frame = self._to_bgr(sample)

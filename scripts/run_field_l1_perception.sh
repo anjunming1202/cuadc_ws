@@ -17,7 +17,7 @@ set -eo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$REPO_ROOT/scripts/activate_env.sh"
-source "$REPO_ROOT/scripts/real_camera_intrinsics.sh"   # -> REAL_CV_LAUNCH_ARGS
 
+# 内参按 profile=real 从 camera.real.yaml 读（见 ADR-0009）；frame_source/预览由 launch 默认 shm/on。
 exec ros2 launch "$REPO_ROOT/launch/field_perception_bench.launch.py" \
-    connection:=udp:127.0.0.1:14550 profile:=real "${REAL_CV_LAUNCH_ARGS[@]}" "$@"
+    connection:=udp:127.0.0.1:14550 profile:=real "$@"

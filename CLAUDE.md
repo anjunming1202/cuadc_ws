@@ -27,6 +27,11 @@ something nobody will need to find again) — just state it once, in
 whichever place a reader would naturally look, and leave it at that.
 When in doubt, prefer no pointer over one more pointer.
 
+Keep it short. Docstrings, comments, ADRs and specs state the WHY once in as few
+words as it takes — not the full derivation. Fuller rationale (how a value was
+found, alternatives weighed, an incident) goes in the ADR or commit message, not
+restated in code. Trim verbose dev-time comments back down before committing.
+
 ## Where to find things
 
 See `README.md` — it has the project overview and directory structure.

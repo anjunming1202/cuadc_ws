@@ -47,19 +47,18 @@ def generate_launch_description():
         'scenario', default_value='full_mission',
         description='任务场景，选 mission/scenarios/<scenario>.yaml，正式任务 full_mission',
     )
-    # 真实 CV 接线的透传参数：只转给 cv_perception，接口/决策层不认。默认 sim 友好
-    # （frame_source=ros、预览关、sim 内参），仿真脚本一个都不用传、老路不变；真机
-    # 脚本（run_mission_hardware.sh）source real_camera_intrinsics.sh 后成套传进来
-    # （见 launch/cv_perception_bringup.launch.py 里这些参数的完整说明）。
-    cv_passthrough_args = [
-        DeclareLaunchArgument('frame_source', default_value='ros', description='取帧源：sim=ros / real=shm'),
-        DeclareLaunchArgument('preview_enabled', default_value='false', description='真机标注预览推本地 preview_port'),
-        DeclareLaunchArgument('fx', default_value='205.5', description='相机水平焦距（像素），真机传标定值'),
-        DeclareLaunchArgument('fy', default_value='205.5', description='相机垂直焦距（像素）'),
-        DeclareLaunchArgument('cx', default_value='320.0', description='主点 x（像素）'),
-        DeclareLaunchArgument('cy', default_value='240.0', description='主点 y（像素）'),
-        DeclareLaunchArgument('preview_port', default_value='5604', description='真机预览本地推流端口'),
-    ]
+    # 感知取帧源，跟 connection 一样各启动脚本写死：sim=ros（订 Gazebo 的
+    # /camera/image_raw）、真机=shm（读 camera_service 的 NV12，图不进 ROS）。
+    frame_source_arg = DeclareLaunchArgument(
+        'frame_source', default_value='ros',
+        description='感知取帧源，仿真 ros、真机 shm',
+    )
+    # 真机把标注预览推本地 preview_port，交给 ground-monitor 的 cv-forward 转地面；仿真默认关。
+    # 相机内参不在这里传——按 profile 从 camera.<profile>.yaml 读（见 ADR-0009）。
+    preview_enabled_arg = DeclareLaunchArgument(
+        'preview_enabled', default_value='false', description='真机标注预览推本地 preview_port')
+    preview_port_arg = DeclareLaunchArgument(
+        'preview_port', default_value='5604', description='真机预览本地推流端口')
 
     interface_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution(
@@ -74,10 +73,6 @@ def generate_launch_description():
             'profile': LaunchConfiguration('profile'),
             'frame_source': LaunchConfiguration('frame_source'),
             'preview_enabled': LaunchConfiguration('preview_enabled'),
-            'fx': LaunchConfiguration('fx'),
-            'fy': LaunchConfiguration('fy'),
-            'cx': LaunchConfiguration('cx'),
-            'cy': LaunchConfiguration('cy'),
             'preview_port': LaunchConfiguration('preview_port'),
         }.items(),
     )
@@ -92,5 +87,5 @@ def generate_launch_description():
     )
 
     return LaunchDescription([connection_arg, profile_arg, scenario_arg,
-                              *cv_passthrough_args,
+                              frame_source_arg, preview_enabled_arg, preview_port_arg,
                               interface_launch, cv_perception_launch, decision_launch])

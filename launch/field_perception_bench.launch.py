@@ -7,8 +7,8 @@ DetectionArray 里的世界坐标就是空的。接口层只连底座 MAVLink �
 不起决策、不调任何会驱动飞行/投放的服务，因此不会有自主动作。
 
 跟 launch/mission_bringup.launch.py 平级但去掉 decision 那一层；CV 透传参数含义见
-launch/cv_perception_bringup.launch.py。真机由 scripts/run_field_l1_perception.sh 起
-（source real_camera_intrinsics.sh 注入真实内参 + frame_source=shm + 预览）。
+launch/cv_perception_bringup.launch.py。相机内参按 profile 从 camera.real.yaml 读
+（见 ADR-0009）。真机由 scripts/run_field_l1_perception.sh 起（frame_source=shm + 预览）。
 """
 
 from launch import LaunchDescription
@@ -27,13 +27,10 @@ def generate_launch_description():
         'profile', default_value='real',
         description='感知检测器 sim/real 档，感知单点测试默认 real',
     )
+    # 内参不在这里传——按 profile 从 camera.<profile>.yaml 读（见 ADR-0009）。
     cv_passthrough_args = [
         DeclareLaunchArgument('frame_source', default_value='shm'),
         DeclareLaunchArgument('preview_enabled', default_value='true'),
-        DeclareLaunchArgument('fx', default_value='205.5'),
-        DeclareLaunchArgument('fy', default_value='205.5'),
-        DeclareLaunchArgument('cx', default_value='320.0'),
-        DeclareLaunchArgument('cy', default_value='240.0'),
         DeclareLaunchArgument('preview_port', default_value='5604'),
         DeclareLaunchArgument('detection_log_enabled', default_value='false'),
     ]
@@ -51,10 +48,6 @@ def generate_launch_description():
             'profile': LaunchConfiguration('profile'),
             'frame_source': LaunchConfiguration('frame_source'),
             'preview_enabled': LaunchConfiguration('preview_enabled'),
-            'fx': LaunchConfiguration('fx'),
-            'fy': LaunchConfiguration('fy'),
-            'cx': LaunchConfiguration('cx'),
-            'cy': LaunchConfiguration('cy'),
             'preview_port': LaunchConfiguration('preview_port'),
             'detection_log_enabled': LaunchConfiguration('detection_log_enabled'),
         }.items(),

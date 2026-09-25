@@ -43,8 +43,8 @@ ground-monitor 的 `cuadc-onboard-cv-preview` 占着 shm——测前用 `profile
 起接口层 + 真实 CV 感知，**不发飞行指令**。验证 shm 取帧→检测→反投影→尺寸判别：
 - `ros2 topic echo /perception/detections` 看世界坐标/半径是否合理；
 - 地面看 5606 的标注框（经 cv-forward）。
-内参已按 `camera_calibration.npz` 换算到 960x540 写进
-[`scripts/real_camera_intrinsics.sh`](../../scripts/real_camera_intrinsics.sh)。
+内参按 profile=real 从 `src/cuadc_perception/cuadc_perception/camera.real.yaml` 读
+（960x540，来自 `camera_calibration.npz` 换算，见 ADR-0009）。
 
 ### L2 · 投放机构单点（不飞）
 ```
