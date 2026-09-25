@@ -1,0 +1,10 @@
+# 相机内参 + 云台固定挂载角 —— sim 档（Gazebo iris_with_gimbal 相机，640×480，fov=2.0）。
+# fx=fy=(640/2)/tan(1.0)≈205.5，主点=图像中心。挂载角须与 gazebo_bringup.launch.py 的
+# camera_fixed_*_rad 一致（那份定义 Gazebo 里相机的实际位姿）。字段 = geometry.CameraParams。
+fx: 205.5
+fy: 205.5
+cx: 320.0
+cy: 240.0
+mount_roll_rad: 0.0
+mount_pitch_rad: 1.5708     # nadir（垂直向下）
+mount_yaw_rad: 0.0

@@ -10,9 +10,11 @@ docs/spec/05-perception-decision-interface.md。
 
 import math
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Tuple
 
 import numpy as np
+import yaml
 
 
 @dataclass
@@ -24,6 +26,16 @@ class CameraParams:
     mount_roll_rad: float = 0.0
     mount_pitch_rad: float = 1.5708  # nadir 惯例，见 gazebo_bringup.launch.py 同名参数
     mount_yaw_rad: float = 0.0
+
+
+def load_camera_params(profile: str) -> CameraParams:
+    """从 `<此目录>/camera.<profile>.yaml` 读相机内参 + 云台固定挂载角（profile 通常
+    'sim'/'real'）。内参对应各自的 CV 处理分辨率（sim 640×480 / real 960×540），跟着
+    profile 走、不硬编码在共享 launch 里——换相机 / 重标定只改 yaml，不动代码。"""
+    path = Path(__file__).parent / f'camera.{profile}.yaml'
+    with open(path, encoding='utf-8') as fh:
+        data = yaml.safe_load(fh) or {}
+    return CameraParams(**data)
 
 
 @dataclass

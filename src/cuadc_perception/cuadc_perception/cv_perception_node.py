@@ -44,16 +44,9 @@ class CvPerceptionNode(Node):
     def __init__(self):
         super().__init__('cuadc_perception_cv')
 
-        # 相机内参:sim 默认值(640x480@fov2.0);真机传该机在**CV 处理分辨率**下的
-        # 标定值(注意 shm 源出的是 cv_width×cv_height,内参要对应这个分辨率,不是
-        # 全分辨率标定原值)。见 ADR-0008 "前置条件"。
-        self.declare_parameter('fx', 205.5)
-        self.declare_parameter('fy', 205.5)
-        self.declare_parameter('cx', 320.0)
-        self.declare_parameter('cy', 240.0)
-        self.declare_parameter('camera_fixed_roll_rad', 0.0)
-        self.declare_parameter('camera_fixed_pitch_rad', 1.5708)
-        self.declare_parameter('camera_fixed_yaw_rad', 0.0)
+        # 相机内参 + 云台挂载角按 profile 从 camera.<profile>.yaml 读(见下方
+        # geometry.load_camera_params),不在这里/共享 launch 里硬编码——sim 与真机的
+        # 内参对应各自 CV 处理分辨率(640×480 / 960×540),换相机只改 yaml。
         self.declare_parameter('cylinder_height_m', 0.3)
         self.declare_parameter('min_radius_m', 0.05)
         self.declare_parameter('max_radius_m', 0.18)
@@ -82,13 +75,7 @@ class CvPerceptionNode(Node):
         cfg = detector.load_config(profile)
         self.get_logger().info(f'[DETECTOR] {detector_name} (profile={profile})')
 
-        camera = geometry.CameraParams(
-            fx=self.get_parameter('fx').value, fy=self.get_parameter('fy').value,
-            cx=self.get_parameter('cx').value, cy=self.get_parameter('cy').value,
-            mount_roll_rad=self.get_parameter('camera_fixed_roll_rad').value,
-            mount_pitch_rad=self.get_parameter('camera_fixed_pitch_rad').value,
-            mount_yaw_rad=self.get_parameter('camera_fixed_yaw_rad').value,
-        )
+        camera = geometry.load_camera_params(profile)
         self._core = PerceptionCore(
             detector, cfg, camera,
             cylinder_height_m=self.get_parameter('cylinder_height_m').value,

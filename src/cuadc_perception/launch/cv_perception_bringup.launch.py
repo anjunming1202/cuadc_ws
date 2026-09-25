@@ -9,22 +9,8 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    fx_arg = DeclareLaunchArgument('fx', default_value='205.5', description='相机水平焦距（像素），默认是 sim 实测值')
-    fy_arg = DeclareLaunchArgument('fy', default_value='205.5', description='相机垂直焦距（像素）')
-    cx_arg = DeclareLaunchArgument('cx', default_value='320.0', description='主点 x（像素）')
-    cy_arg = DeclareLaunchArgument('cy', default_value='240.0', description='主点 y（像素）')
-    roll_arg = DeclareLaunchArgument(
-        'camera_fixed_roll_rad', default_value='0.0',
-        description='云台固定挂载 roll，需跟 gazebo_bringup.launch.py 同名参数一致',
-    )
-    pitch_arg = DeclareLaunchArgument(
-        'camera_fixed_pitch_rad', default_value='1.5708',
-        description='云台固定挂载 pitch，需跟 gazebo_bringup.launch.py 同名参数一致',
-    )
-    yaw_arg = DeclareLaunchArgument(
-        'camera_fixed_yaw_rad', default_value='0.0',
-        description='云台固定挂载 yaw，需跟 gazebo_bringup.launch.py 同名参数一致',
-    )
+    # 相机内参 + 挂载角不再在这里声明:按 profile 从 cuadc_perception/camera.<profile>.yaml
+    # 读(见 geometry.load_camera_params),避免把 sim 值硬编码进这份 sim/real 共享 launch。
     cylinder_height_arg = DeclareLaunchArgument(
         'cylinder_height_m', default_value='0.3', description='圆筒高度（米），反投影用')
     min_radius_arg = DeclareLaunchArgument(
@@ -66,13 +52,6 @@ def generate_launch_description():
         name='cuadc_perception_cv',
         output='screen',
         parameters=[{
-            'fx': LaunchConfiguration('fx'),
-            'fy': LaunchConfiguration('fy'),
-            'cx': LaunchConfiguration('cx'),
-            'cy': LaunchConfiguration('cy'),
-            'camera_fixed_roll_rad': LaunchConfiguration('camera_fixed_roll_rad'),
-            'camera_fixed_pitch_rad': LaunchConfiguration('camera_fixed_pitch_rad'),
-            'camera_fixed_yaw_rad': LaunchConfiguration('camera_fixed_yaw_rad'),
             'cylinder_height_m': LaunchConfiguration('cylinder_height_m'),
             'min_radius_m': LaunchConfiguration('min_radius_m'),
             'max_radius_m': LaunchConfiguration('max_radius_m'),
@@ -95,7 +74,6 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        fx_arg, fy_arg, cx_arg, cy_arg, roll_arg, pitch_arg, yaw_arg,
         cylinder_height_arg, min_radius_arg, max_radius_arg, profile_arg,
         debug_annotated_arg, debug_contours_arg, debug_mask_arg, max_concurrent_debug_arg,
         frame_source_arg, raw_shm_arg, src_width_arg, src_height_arg, src_fps_arg,
