@@ -47,6 +47,12 @@ def generate_launch_description():
         'scenario', default_value='full_mission',
         description='任务场景，选 mission/scenarios/<scenario>.yaml，正式任务 full_mission',
     )
+    # 感知取帧源，跟 connection 一样各启动脚本写死：sim=ros（订 Gazebo 的
+    # /camera/image_raw）、真机=shm（读 camera_service 的 NV12，图不进 ROS）。
+    frame_source_arg = DeclareLaunchArgument(
+        'frame_source', default_value='ros',
+        description='感知取帧源，仿真 ros、真机 shm',
+    )
 
     interface_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution(
@@ -57,7 +63,10 @@ def generate_launch_description():
     cv_perception_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution(
             [FindPackageShare('cuadc_perception'), 'launch', 'cv_perception_bringup.launch.py'])),
-        launch_arguments={'profile': LaunchConfiguration('profile')}.items(),
+        launch_arguments={
+            'profile': LaunchConfiguration('profile'),
+            'frame_source': LaunchConfiguration('frame_source'),
+        }.items(),
     )
 
     decision_launch = IncludeLaunchDescription(
@@ -69,5 +78,5 @@ def generate_launch_description():
         }.items(),
     )
 
-    return LaunchDescription([connection_arg, profile_arg, scenario_arg,
+    return LaunchDescription([connection_arg, profile_arg, scenario_arg, frame_source_arg,
                               interface_launch, cv_perception_launch, decision_launch])
