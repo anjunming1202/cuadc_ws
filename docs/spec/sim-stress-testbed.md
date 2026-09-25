@@ -38,36 +38,59 @@
 `mission_state` 记状态时间线 → 判定 → **按捕获的 PID/进程组干净拆除** → 硬
 超时兜底 → 汇总 N 轮成 CSV + 摘要。
 
-### 3.2 真实感注入（三层，默认全关 → 干净 sim 行为不变）
+### 3.2 真实感注入（默认全关 → 干净 sim 行为不变）
 
 | 层 | 注入点 | 内容 |
 |---|---|---|
 | 飞控动力学（风） | `config/sim_realism.parm` + `gazebo_bringup` 新增 `sim_realism_params:=<path>` 再叠一个 `--add-param-file` | `SIM_WIND_SPD` / `SIM_WIND_DIR` / `SIM_WIND_TURB` |
 | 传感器噪声 | 同一 parm 文件 | `SIM_GPS_*`、`SIM_ACC*_RND`、`SIM_GYR*_RND`、`SIM_BARO_RND`（ArduPilot 自带传感器模型） |
-| 感知时延 | `cv_perception_node` 新增 `detection_latency_ms` | 缓冲延迟发布 `DetectionArray`，建模相机→CV→决策实测时延（值可由 cv-field-test profiling 提供），默认 0 |
-| 相机成像 | **外部** `ardupilot_gazebo` 的 iris 相机传感器 SDF 加 `<noise>` | 让真 CV 见到带噪的真实帧 |
+| 感知时延 | **sim-only** `detection_delay_node`（`cuadc_sim`）经压测台 launch 插在感知↔决策之间 | 缓冲延迟转发 `DetectionArray`，建模相机→CV→决策实测时延（值可由 cv-field-test profiling 提供） |
 
-不给 `sim_realism_params`（parm 缺省）+ `detection_latency_ms=0` + 未打相机
-patch = 干净 sim，行为与现在完全一致。
+不给 `sim_realism_params`（parm 缺省）+ 零延迟档 = 干净 sim，行为与现在完全一致。
 
-> ⚠️ 相机成像那层改的是**仓库外**文件（`~/ardupilot_gazebo`，不受本仓库版本
-> 控制）。为可复现：把改动以 **patch/snippet 存进本仓库**（`cuadc_sim/` 下）
-> + 一个 apply 脚本。外部依赖更新/重编可能覆盖它，需重跑 apply。
+> **感知时延为什么在 sim-only 节点、不在生产节点**：`mission_sim_delayed.launch.py`
+> 用 `SetRemap` 把感知输出改道给 `detection_delay_node` 延迟后发回决策；生产
+> `mission_bringup` 不含这套，感知→决策零延迟直连（生产文件与基线逐字节一致）。
+> 入口 `run_mission_sim_delayed.sh <delay_ms>`；零延迟走 `run_mission_sim.sh`。
+
+> **相机成像噪声——放弃 sim 注入**：gz-sim 8.14 + ogre2 相机不吃 `<noise>`（注入
+> stddev=8，两帧不同渲染却逐字节几乎相同；已排除改错文件/渲染引擎）。成像留到真机阶段
+> （真相机本有真噪声）；若日后要在 sim 补，走仓库内 `image_noise_stddev`，别改外部 SDF。
 
 ## 4. 构建顺序
 
 编排器 + 打分（零扰动先测**当前 SEARCH 成功率基线**、量化波动）→ 风 → 传感器
-噪声 → 感知时延 → 相机成像 → **然后**据此改 SEARCH（去离群/确认簇/放宽远筒
-选择门/dedup，见 `cuadc_decision/README.md` 与 `mission_logic.py` 现状）。
+噪声 → 感知时延 → **然后**据此改 SEARCH（相机成像层已放弃 sim 注入，见 §3.2）。
 
-## 5. 坑 / 注意
+## 5. 感知时延阈值（标定发现）
+
+用时延层单独扫（其余扰动关、固定布局，每档 3 轮，`--detection-latency-ms`）：
+
+| 时延 | 第二次投放成功率 |
+|---|---|
+| 0 / 100 / 150ms | 100%（每轮投满 2） |
+| 200ms | 33%（拐点） |
+| 250 / 300ms | 0% |
+
+**悬崖极陡**：150ms 满分，200ms 起塌，250ms+ 归零——不是缓降。SEARCH 本身不受
+影响（簇正常形成、选出目标、进 APPROACH）；塌的是**末端 IBVS**——它是盯检测
+`offset` 的 PID 伺服，时延=闭环里的纯滞后(dead-time)，超过约 150ms 就把伺服推向
+极限环振荡，对不准到可投、守卫超时放弃。
+
+- **安全预算：感知端到端时延 ≤ 150ms。** 真机实测值由 cv-field-test 的 on-Pi
+  profiling 给（CV 计算耗时感知节点 `_publish_perf` 已在回传；相机捕获+图传两段需
+  Pi 上测）。
+- 决策：真值 ≤150ms → 末端伺服不必改；落进悬崖(150~250ms) → 需硬化末端 IBVS
+  抗时延（降增益 / 用速度外推目标做时延补偿 / Smith 预估器等）。
+
+## 6. 坑 / 注意
 
 - 拆除**只按 PID/进程组**，绝不 `pkill` 模式串（自杀教训，见 `docs/lessons.md`）。
 - WSL2 下 SITL 相关命令带 `--no-wsl2-network`（见 `docs/lessons.md`）。
 - 每轮 Gazebo 冷启约分钟级，N 取 10–20 量级，**每轮必须有硬超时**。
 - 每轮换不同扰动种子；布局固定。
 
-## 6. 与其它文档
+## 7. 与其它文档
 
 - SEARCH/聚类现状、感知↔决策契约：`cuadc_decision/README.md`、
   [`05-perception-decision-interface.md`](05-perception-decision-interface.md)。

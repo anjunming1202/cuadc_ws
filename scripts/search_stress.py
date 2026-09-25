@@ -147,9 +147,12 @@ def _run_trial(node, idx, args, logdir):
             gz_cmd.append(f'sim_realism_params:={args.realism_parm}')
         gz_proc, gz_f = _spawn(gz_cmd, gz_log)
 
-        mission_cmd = ['bash', 'scripts/run_mission_sim.sh']
+        # 时延档走 run_mission_sim_delayed.sh(插 sim-only 延迟节点);零延迟走生产 run_mission_sim.sh。
         if args.detection_latency_ms:
-            mission_cmd.append(f'detection_latency_ms:={args.detection_latency_ms}')
+            mission_cmd = ['bash', 'scripts/run_mission_sim_delayed.sh',
+                           str(args.detection_latency_ms)]
+        else:
+            mission_cmd = ['bash', 'scripts/run_mission_sim.sh']
         mission_proc, mission_f = _spawn(mission_cmd, mission_log)
 
         # 等载具就绪(决策到 WAIT_TASK_START)。Gazebo 冷启慢,给足超时。

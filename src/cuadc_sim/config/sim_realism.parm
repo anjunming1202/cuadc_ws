@@ -8,3 +8,11 @@
 SIM_WIND_SPD  4.0    # 平均风速 m/s(户外轻到中等风)
 SIM_WIND_DIR  45     # 风来向 deg
 SIM_WIND_TURB 0.3    # 湍流强度(阵风)
+
+# ---- 传感器噪声(传感器层)----
+# GPS 水平噪声是重点:它直接放大 local_position 定位误差,也就是 SEARCH 世界锁的
+# 偏差来源(ADR-0006 里关联门要匹配的那个误差),用来压门/估计的鲁棒性。
+SIM_GPS1_HNSE 0.4    # GPS 水平位置噪声 m
+SIM_BARO_RND  0.1    # 气压高度噪声 m
+SIM_ACC1_RND  0.3    # 加速度计随机噪声
+SIM_GYR1_RND  0.05   # 陀螺仪随机噪声
