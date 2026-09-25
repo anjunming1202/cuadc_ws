@@ -9,6 +9,10 @@
 docs/spec/04-interfaces.md「高度基准」。sim/real 同一节点，连接目标由
 各自的启动脚本写死（run_flight_check_sim/real.sh）。
 
+放行闸门：起来后停在 arm **之前**（桨不转）、等放行，另一 SSH 发
+`ros2 topic pub -1 /cuadc_flight_test/start std_msgs/msg/Empty "{}"` 才 arm+起飞。
+sim 快速迭代可 `-p wait_for_start:=false` 跳过。
+
 不在 launch 里，单独手动跑（同其它接口测试节点）：
   ros2 launch cuadc_interface interface_bringup.launch.py   # 另一个终端
   ros2 run cuadc_interface interface_takeoff_land_test
@@ -22,7 +26,11 @@ from rclpy.node import Node
 from cuadc_interface_msgs.msg import EkfStatus
 from cuadc_interface_msgs.srv import Arm, SetMode, Takeoff
 from geometry_msgs.msg import PoseStamped
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, Empty
+
+# arm+takeoff 前的显式放行闸门话题（两个飞行测试节点共用），同最终任务的
+# task_start_trigger 套路：节点起来先停这里、桨不转，人在另一 SSH 发信号才 arm+起飞。
+START_TOPIC = '/cuadc_flight_test/start'
 
 
 class InterfaceTakeoffLandTest(Node):
@@ -31,6 +39,9 @@ class InterfaceTakeoffLandTest(Node):
         super().__init__('interface_takeoff_land_test')
         self.declare_parameter('service_timeout_sec', 10.0)
         self.declare_parameter('ekf_ready_timeout_sec', 60.0)
+        # arm+takeoff 放行闸门：默认开(现场安全)。sim 快速迭代可 -p wait_for_start:=false 直接飞。
+        self.declare_parameter('wait_for_start', True)
+        self.declare_parameter('start_timeout_sec', 600.0)
         self.declare_parameter('takeoff_altitude_m', 5.0)
         self.declare_parameter('takeoff_timeout_sec', 30.0)
         self.declare_parameter('altitude_tolerance_m', 0.5)
@@ -38,6 +49,8 @@ class InterfaceTakeoffLandTest(Node):
         self.declare_parameter('land_timeout_sec', 60.0)
         self._service_timeout = self.get_parameter('service_timeout_sec').value
         self._ekf_ready_timeout = self.get_parameter('ekf_ready_timeout_sec').value
+        self._wait_for_start_enabled = self.get_parameter('wait_for_start').value
+        self._start_timeout = self.get_parameter('start_timeout_sec').value
         self._takeoff_altitude = self.get_parameter('takeoff_altitude_m').value
         self._takeoff_timeout = self.get_parameter('takeoff_timeout_sec').value
         self._altitude_tolerance = self.get_parameter('altitude_tolerance_m').value
@@ -51,17 +64,20 @@ class InterfaceTakeoffLandTest(Node):
         self._latest_armed = None
         self._latest_ekf = None
         self._latest_local_pose = None
+        self._start_triggered = False
         self.create_subscription(Bool, '/cuadc_interface/status/armed', self._on_armed, 10)
         self.create_subscription(
             EkfStatus, '/cuadc_interface/telemetry/ekf_status', self._on_ekf, 10)
         self.create_subscription(
             PoseStamped, '/cuadc_interface/telemetry/local_position', self._on_local_pose, 10)
+        self.create_subscription(Empty, START_TOPIC, self._on_start, 10)
 
         self._results = []
 
     def run(self):
         self._wait_for_services()
         self._wait_for_ekf_ready()
+        self._wait_for_start()
         self._check_set_mode()
         self._check_arm()
         self._check_takeoff()
@@ -82,6 +98,9 @@ class InterfaceTakeoffLandTest(Node):
 
     def _on_local_pose(self, msg):
         self._latest_local_pose = msg
+
+    def _on_start(self, msg):
+        self._start_triggered = True
 
     # -- 辅助 --
 
@@ -132,6 +151,17 @@ class InterfaceTakeoffLandTest(Node):
             lambda: self._latest_ekf is not None and self._latest_ekf.healthy,
             'EKF/GPS becoming healthy', self._ekf_ready_timeout)
         self.get_logger().info('EKF/GPS ready')
+
+    def _wait_for_start(self):
+        # 放行闸门:停在 arm 之前(桨不转),等另一 SSH 发 start。桨转前必须有人显式放行。
+        if not self._wait_for_start_enabled:
+            return
+        self.get_logger().warn(
+            'READY — EKF ok, NOT armed. arm+takeoff 已挡住,从另一个 SSH 发放行:\n'
+            f'    ros2 topic pub -1 {START_TOPIC} std_msgs/msg/Empty "{{}}"')
+        self._wait_for_condition(
+            lambda: self._start_triggered, 'flight start trigger', self._start_timeout)
+        self.get_logger().info('start trigger received -> arming + taking off')
 
     # -- 起降链路 --
 

@@ -20,6 +20,10 @@
 最后打目标/实测/误差汇总表——sim 跑一遍给基线、real 跑一遍量精度，同格式对比。
 sim/real 同一节点，连接目标由 run_flight_suite_sim/real.sh 各自写死。
 
+放行闸门：起来后停在 arm **之前**（桨不转）、等放行，另一 SSH 发
+`ros2 topic pub -1 /cuadc_flight_test/start std_msgs/msg/Empty "{}"` 才 arm+起飞。
+sim 快速迭代可 `-p wait_for_start:=false` 跳过。
+
 不在 launch 里，单独手动跑：
   ros2 launch cuadc_interface interface_bringup.launch.py   # 另一个终端
   ros2 run cuadc_interface interface_flight_suite_test
@@ -36,7 +40,11 @@ from cuadc_interface_msgs.msg import EkfStatus, PositionTarget
 from cuadc_interface_msgs.srv import Arm, SetMode, Takeoff
 from geometry_msgs.msg import PoseStamped, TwistStamped
 from sensor_msgs.msg import Imu
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, Empty
+
+# arm+takeoff 前的显式放行闸门话题（两个飞行测试节点共用），同最终任务的
+# task_start_trigger 套路：节点起来先停这里、桨不转，人在另一 SSH 发信号才 arm+起飞。
+START_TOPIC = '/cuadc_flight_test/start'
 
 
 def _yaw_from_quaternion(x, y, z, w):
@@ -60,6 +68,9 @@ class InterfaceFlightSuiteTest(Node):
         super().__init__('interface_flight_suite_test')
         self.declare_parameter('service_timeout_sec', 10.0)
         self.declare_parameter('ekf_ready_timeout_sec', 60.0)
+        # arm+takeoff 放行闸门：默认开(现场安全)。sim 快速迭代可 -p wait_for_start:=false 直接飞。
+        self.declare_parameter('wait_for_start', True)
+        self.declare_parameter('start_timeout_sec', 600.0)
         self.declare_parameter('phases', 'box,altitude,velocity')
         self.declare_parameter('takeoff_altitude_m', 5.0)
         self.declare_parameter('takeoff_timeout_sec', 30.0)
@@ -85,6 +96,8 @@ class InterfaceFlightSuiteTest(Node):
         g = self.get_parameter
         self._service_timeout = g('service_timeout_sec').value
         self._ekf_ready_timeout = g('ekf_ready_timeout_sec').value
+        self._wait_for_start_enabled = g('wait_for_start').value
+        self._start_timeout = g('start_timeout_sec').value
         self._phases = [p.strip() for p in g('phases').value.split(',') if p.strip()]
         self._takeoff_altitude = g('takeoff_altitude_m').value
         self._takeoff_timeout = g('takeoff_timeout_sec').value
@@ -117,6 +130,7 @@ class InterfaceFlightSuiteTest(Node):
         self._latest_local_pose = None
         self._latest_velocity = None
         self._latest_yaw = None
+        self._start_triggered = False
         self.create_subscription(Bool, '/cuadc_interface/status/armed', self._on_armed, 10)
         self.create_subscription(
             EkfStatus, '/cuadc_interface/telemetry/ekf_status', self._on_ekf, 10)
@@ -125,6 +139,7 @@ class InterfaceFlightSuiteTest(Node):
         self.create_subscription(
             TwistStamped, '/cuadc_interface/telemetry/velocity', self._on_velocity, 10)
         self.create_subscription(Imu, '/cuadc_interface/telemetry/attitude', self._on_attitude, 10)
+        self.create_subscription(Empty, START_TOPIC, self._on_start, 10)
 
         self._results = []
         self._home_x = 0.0
@@ -134,6 +149,7 @@ class InterfaceFlightSuiteTest(Node):
     def run(self):
         self._wait_for_services()
         self._wait_for_ekf_ready()
+        self._wait_for_start()
         self._check_set_mode()
         self._check_arm()
         self._check_takeoff()
@@ -168,6 +184,9 @@ class InterfaceFlightSuiteTest(Node):
     def _on_attitude(self, msg):
         q = msg.orientation
         self._latest_yaw = _yaw_from_quaternion(q.x, q.y, q.z, q.w)
+
+    def _on_start(self, msg):
+        self._start_triggered = True
 
     # -- 辅助 --
 
@@ -231,6 +250,17 @@ class InterfaceFlightSuiteTest(Node):
             lambda: self._latest_ekf is not None and self._latest_ekf.healthy,
             'EKF/GPS becoming healthy', self._ekf_ready_timeout)
         self.get_logger().info('EKF/GPS ready')
+
+    def _wait_for_start(self):
+        # 放行闸门:停在 arm 之前(桨不转),等另一 SSH 发 start。桨转前必须有人显式放行。
+        if not self._wait_for_start_enabled:
+            return
+        self.get_logger().warn(
+            'READY — EKF ok, NOT armed. arm+takeoff 已挡住,从另一个 SSH 发放行:\n'
+            f'    ros2 topic pub -1 {START_TOPIC} std_msgs/msg/Empty "{{}}"')
+        self._wait_for_condition(
+            lambda: self._start_triggered, 'flight start trigger', self._start_timeout)
+        self.get_logger().info('start trigger received -> arming + taking off')
 
     # -- takeoff --
 

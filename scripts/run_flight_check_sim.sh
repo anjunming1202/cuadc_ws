@@ -8,6 +8,10 @@
 # 真机等价：run_flight_check_real.sh。同一个测试节点，只连接目标不同。
 #
 # Usage: ./scripts/run_flight_check_sim.sh [extra ros2 run args, e.g. --ros-args -p takeoff_altitude_m:=3.0]
+#
+# 放行闸门:节点起来停在 arm 前(桨不转),另一 SSH 发
+#   ros2 topic pub -1 /cuadc_flight_test/start std_msgs/msg/Empty "{}"
+# 才 arm+起飞(sim 可 -p wait_for_start:=false 跳过)。
 
 # No -u: ROS2 setup.bash 引用未定义变量，nounset 会破坏 source。
 set -eo pipefail

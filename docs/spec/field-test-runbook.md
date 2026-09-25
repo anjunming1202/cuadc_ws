@@ -65,22 +65,29 @@ ros2 service call /cuadc_interface/release_payload cuadc_interface_msgs/srv/Rele
 ```
 或让机械子队直接用遥控器打投放通道验证——**绝不带桨在地面解锁**。
 
+> **arm+takeoff 放行闸门（两个飞行测试都有）**：脚本起来后节点停在 arm **之前**（桨不转），
+> 打印 `READY — NOT armed` 并等放行。**确认现场安全后**，从另一个 SSH 发一次：
+> ```
+> ros2 topic pub -1 /cuadc_flight_test/start std_msgs/msg/Empty "{}"
+> ```
+> 收到才 arm+起飞。桨转前必须有人显式放行，不会一跑脚本就飞。
+
 ### 起降 smoke（**会飞**，最简，RC 待命）
 ```
-./scripts/run_flight_check_real.sh                          # 默认起飞 5m
+./scripts/run_flight_check_real.sh                          # 起来后等放行(见上),默认起飞 5m
 ./scripts/run_flight_check_real.sh --ros-args -p takeoff_altitude_m:=3.0
 ```
-最短链路：解锁→起飞→悬停观察→降落→自动上锁，全程盯遥测。**飞行指令测试的第一步**，
-先确认树莓派能指挥飞控起降、遥测如实报回，再上动作合集。脚本自起接口层连 fanout、
-跑完自动收尾。飞机只在起飞点正上方上下动。
+最短链路：（放行后）解锁→起飞→悬停观察→降落→自动上锁，全程盯遥测。**飞行指令测试的
+第一步**，先确认树莓派能指挥飞控起降、遥测如实报回，再上动作合集。脚本自起接口层连
+fanout、跑完自动收尾。飞机只在起飞点正上方上下动。
 
 ### 飞行动作合集（**会飞**，RC 待命）
 ```
-./scripts/run_flight_suite_real.sh                          # 全阶段
+./scripts/run_flight_suite_real.sh                          # 起来后等放行(见上),全阶段
 ./scripts/run_flight_suite_real.sh --ros-args -p phases:=box # 只跑某阶段（电量/时间）
 ```
-一次连续飞行走 起飞→定 yaw 方框（全向平移、机头不转）→高度扫描（含 1m，贴近地效谨慎）
-→速度扫描（0.25–2 m/s，每档停悬 settle）→RTL 降落，量实机指令/传感器精度。
+（放行后）一次连续飞行走 起飞→定 yaw 方框（全向平移、机头不转）→高度扫描（含 1m，贴近
+地效谨慎）→速度扫描（0.25–2 m/s，每档停悬 settle）→RTL 降落，量实机指令/传感器精度。
 ⚠ **首飞前按场地核对水平余量**：方框边长 `box_leg_m`（默认 5m）、速度段单向
 `vel_leg_distance_m`（默认 3.5m）都要在场地内，必要时 `-p` 调小；起飞点四周及上方净空。
 sim 侧对应 `run_flight_check_sim.sh` / `run_flight_suite_sim.sh`（连 SITL，先在仿真验逻辑）。

@@ -8,6 +8,10 @@
 # 选段跑（电量/时间）：追加 --ros-args -p phases:=box（只方框）等，见节点 docstring。
 #
 # Usage: ./scripts/run_flight_suite_sim.sh [extra ros2 run args]
+#
+# 放行闸门:节点起来停在 arm 前(桨不转),另一 SSH 发
+#   ros2 topic pub -1 /cuadc_flight_test/start std_msgs/msg/Empty "{}"
+# 才 arm+起飞(sim 可 -p wait_for_start:=false 跳过)。
 
 set -eo pipefail
 
