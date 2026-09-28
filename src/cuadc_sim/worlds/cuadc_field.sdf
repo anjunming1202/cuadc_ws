@@ -301,7 +301,7 @@
         <gz-gui>
           <property type="string" key="state">docked_collapsed</property>
         </gz-gui>
-        <topic>/world/cuadc_field/model/iris_with_gimbal/model/gimbal/link/pitch_link/sensor/camera/image</topic>
+        <topic>/world/cuadc_field/model/cuadc_iris/model/gimbal/link/pitch_link/sensor/camera/image</topic>
       </plugin>
     </gui>
 
@@ -1228,7 +1228,7 @@
       </link>
     </model>
     <include>
-      <uri>model://iris_with_gimbal</uri>
+      <uri>model://cuadc_iris</uri>
       <pose degrees="true">0.0 0.0 0.195 0 0 0.0</pose>
     </include>
 

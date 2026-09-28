@@ -52,6 +52,7 @@ setup(
             'sitl_smoke_test = cuadc_sim.sitl_smoke_test:main',
             'flight_acceptance_test = cuadc_sim.flight_acceptance_test:main',
             'detection_delay_node = cuadc_sim.detection_delay_node:main',
+            'drop_bottle_bridge = cuadc_sim.drop_bottle_bridge:main',
         ],
     },
 )

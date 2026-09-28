@@ -22,8 +22,10 @@ scripts/run_mission_hardware.sh）各自把它写死，调这份文件时不需�
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
+from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -78,5 +80,17 @@ def generate_launch_description():
         }.items(),
     )
 
+    # 仿真专用：把决策的投放事件(DROP_PAYLOAD)翻译成 Gazebo 物理水瓶脱钩(见
+    # cuadc_sim/drop_bottle_bridge)。真机投放由 interface 的 release_payload 驱动真舵机,
+    # 不需要它,故 profile=='sim' 才起。世界 bringup(gazebo_bringup)保持不含任务逻辑,这个
+    # 桥属于任务侧、放这里(见 sim/task 解耦约定)。
+    sim_drop_bridge = Node(
+        package='cuadc_sim', executable='drop_bottle_bridge', name='drop_bottle_bridge',
+        output='screen',
+        condition=IfCondition(PythonExpression(
+            ["'", LaunchConfiguration('profile'), "' == 'sim'"])),
+    )
+
     return LaunchDescription([connection_arg, profile_arg, scenario_arg, frame_source_arg,
-                              interface_launch, cv_perception_launch, decision_launch])
+                              interface_launch, cv_perception_launch, decision_launch,
+                              sim_drop_bridge])

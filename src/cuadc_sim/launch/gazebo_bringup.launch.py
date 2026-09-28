@@ -92,7 +92,7 @@ def generate_launch_description():
         # sync by hand if the world name or vehicle model ever changes,
         # they can't share an import (that module isn't installed).
         default_value=(
-            '/world/cuadc_field/model/iris_with_gimbal/model/gimbal/link/pitch_link'
+            '/world/cuadc_field/model/cuadc_iris/model/gimbal/link/pitch_link'
             '/sensor/camera/image'
         ),
         description=(
@@ -136,11 +136,20 @@ def generate_launch_description():
     gz_env_prefix = [
         'GZ_SIM_SYSTEM_PLUGIN_PATH=',
         PathJoinSubstitution([LaunchConfiguration('ardupilot_gazebo_path'), 'build']),
+        # Our vendored models (cuadc_iris etc.) live in cuadc_sim/share/models --
+        # prepend it so model://cuadc_iris resolves; ardupilot_gazebo's dirs stay
+        # on the path too (cuadc_iris still includes iris_with_standoffs/gimbal from
+        # there). SDF_PATH must include it as well (libsdformat resolves model://
+        # via SDF_PATH first, see the note above).
         ' GZ_SIM_RESOURCE_PATH=',
+        PathJoinSubstitution([get_package_share_directory('cuadc_sim'), 'models']),
+        ':',
         PathJoinSubstitution([LaunchConfiguration('ardupilot_gazebo_path'), 'models']),
         ':',
         PathJoinSubstitution([LaunchConfiguration('ardupilot_gazebo_path'), 'worlds']),
         ' SDF_PATH=',
+        PathJoinSubstitution([get_package_share_directory('cuadc_sim'), 'models']),
+        ':',
         PathJoinSubstitution([LaunchConfiguration('ardupilot_gazebo_path'), 'worlds']),
         ':',
         PathJoinSubstitution([LaunchConfiguration('ardupilot_gazebo_path'), 'models']),

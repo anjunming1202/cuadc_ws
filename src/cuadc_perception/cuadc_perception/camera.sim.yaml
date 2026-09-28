@@ -7,3 +7,8 @@ cy: 240.0
 mount_roll_rad: 0.0
 mount_pitch_rad: 1.5708     # nadir（垂直向下）
 mount_yaw_rad: 0.0
+# 相机平移暂为 0：sim 相机仍在旧云台位置(≈机体原点)。vendored cuadc_iris 把相机
+# 硬装到真机偏置后，这里改成与 camera.real 一致(0.11/0/0.20)。见 ADR-0010 簇③。
+t_forward_m: 0.0
+t_right_m: 0.0
+t_down_m: 0.0

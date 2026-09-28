@@ -17,7 +17,7 @@ ki: 0.4
 kd: 0.3
 v_max_mps: 1.0
 i_zone_m: 0.4
-lever_arm_m: [0.0, 0.0]     # TODO: 实测真实投放机构杆臂
+lever_arm_m: [-0.11, -0.04]     # 左瓶投放口(实测,相对相机 前/右);右瓶 [-0.11, +0.04]
 max_coast_ticks: 4
 descend_rate_mps: 0.4
 descend_pause_off_m: 0.30

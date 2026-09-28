@@ -44,7 +44,7 @@ class ApproachConfig:
     kd: float = 0.3
     v_max_mps: float = 1.0
     i_zone_m: float = 0.4                 # 只在近端积分,防大接近段积分饱和回弹
-    lever_arm_m: Tuple[float, float] = (0.0, 0.0)  # 机体系(前,右)投放机构杆臂,米;sim 无物理机构=0、real empirical 测
+    lever_arm_m: Tuple[float, float] = (0.0, 0.0)  # 当前生效的投放口杆臂,机体系(前,右)米=投放口相对相机;左瓶(-0.11,-0.04)/右瓶(-0.11,+0.04),见 ADR-0010 簇②。投哪瓶由 mission 选(暂固定左)
     max_coast_ticks: int = 4              # 末段连续失配超过此帧数就悬停,不靠陈旧偏移乱冲
     # 降高
     descend_rate_mps: float = 0.4
