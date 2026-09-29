@@ -38,15 +38,13 @@ VEHICLE_YAW_DEG = 0.0
 
 WORLD_NAME = 'cuadc_field'
 
-# Gimbal camera's image topic, for the GUI's ImageDisplay panel below. The
-# path is dictated by upstream model/link/sensor names (iris_with_gimbal /
-# gimbal_small_3d), not anything defined in this project -- re-derive if
-# that upstream model ever changes. Also hardcoded (can't share an import)
-# as launch/gazebo_bringup.launch.py's camera_gz_topic default -- keep both
-# in sync by hand.
-GIMBAL_CAMERA_TOPIC = (
-    f'/world/{WORLD_NAME}/model/cuadc_iris/model/gimbal/'
-    'link/pitch_link/sensor/camera/image'
+# Onboard camera's image topic, for the GUI's ImageDisplay panel below.
+# Follows cuadc_iris's strapdown camera_link/sensor names (models/cuadc_iris).
+# Also hardcoded (can't share an import) as launch/gazebo_bringup.launch.py's
+# camera_gz_topic default -- keep both in sync by hand.
+CAMERA_TOPIC = (
+    f'/world/{WORLD_NAME}/model/cuadc_iris/'
+    'link/camera_link/sensor/camera/image'
 )
 
 # Default GUI camera: straight overhead (pitch = pi/2), high enough to fit
@@ -313,8 +311,8 @@ GUI_BLOCK_TEMPLATE = """
       </plugin>
 
       <!-- Not part of the stock default config: added so the vehicle's
-      gimbal camera feed can be viewed in-GUI without picking a topic by
-      hand every launch (GIMBAL_CAMERA_TOPIC above). -->
+      camera feed can be viewed in-GUI without picking a topic by
+      hand every launch (CAMERA_TOPIC above). -->
 
       <plugin filename="ImageDisplay" name="Image Display">
         <gz-gui>
@@ -339,7 +337,7 @@ def gui_block():
     height = max(field_x_max - field_x_min, field_y_max - field_y_min) * GUI_CAMERA_HEIGHT_FACTOR
     camera_pose = f"{cx} {cy} {height:.1f} 0 {math.pi / 2:.6f} 0"
     return GUI_BLOCK_TEMPLATE.format(camera_pose=camera_pose,
-                                      gimbal_camera_topic=GIMBAL_CAMERA_TOPIC)
+                                      gimbal_camera_topic=CAMERA_TOPIC)
 
 
 def plain_material(rgb):

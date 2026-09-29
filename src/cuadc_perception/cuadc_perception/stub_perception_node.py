@@ -57,7 +57,7 @@ def _world_xy_to_ned(world_x, world_y):
     """场地坐标（cuadc_sim/field/config.py 的 x=飞行前进方向、y=侧向）
     转成接口层 telemetry/local_position 用的 NED (north, east)——两者
     不是恒等映射，X/Y 是对调的。换算依据：仿真用的机型
-    `~/ardupilot_gazebo/models/iris_with_gimbal/model.sdf` 里
+    `cuadc_iris/model.sdf`(vendored)里
     `gazeboXYZToNED`（roll=180°, yaw=90°）这个 ArduPilotPlugin 参数，
     换算出来是 NED north = Gazebo 世界系 Y、NED east = Gazebo 世界系 X。
     2026-07-19 实机测试（SITL+Gazebo）发现飞机往侧边飞，就是这里之前

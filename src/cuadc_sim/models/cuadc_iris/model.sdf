@@ -8,7 +8,7 @@
      - 机架惯量为放大估计值,待双线摆实测替换。
      气动(lift-drag area/cp/multiplier)不按桨径缩放——它是锚定到真机悬停油门的抽象
      (sim 0.33 ≈ 真机 MOT_THST_HOVER 0.35, 实测校验), 桨径只改外观/碰撞。
-     相机仍为上游三轴云台(批次2换真机 strapdown 偏置)。-->
+     相机为硬支架固定 nadir(同真机, 无云台), 光心偏置/内参见 camera_link 注释。-->
 <sdf version="1.9">
   <model name="cuadc_iris">
     <link name="base_link">
@@ -113,27 +113,44 @@
     <joint name="imu_joint" type="revolute"><child>imu_link</child><parent>base_link</parent>
       <axis><xyz>0 0 1</xyz><limit><lower>0</lower><upper>0</upper><effort>0</effort><velocity>0</velocity></limit><dynamics><damping>1.0</damping></dynamics></axis></joint>
 
-    <include>
-      <uri>model://gimbal_small_3d</uri>
-      <name>gimbal</name>
-      <pose degrees="true">0 -0.01 -0.124923 90 0 90</pose>
-    </include>
-    <joint name="gimbal_joint" type="revolute">
+    <!-- 相机: 真机为硬支架固定 nadir(strapdown, 无云台稳定), 光心在飞控 前0.11/下0.20(实测,
+         camera.sim.yaml 的 t_* 必须与此一致, 见 ADR-0010 簇①)。base 离地0.31 -> 相机离地0.11 ✓。
+         sensor 姿态 pitch+90°: 光轴朝正下、图像上=机头前(真机实测的画面方向,飞前进画面内容向下移)。
+         960x540 + hfov 1.0090 => fx=(960/2)/tan(0.5045)=869.4 = 真机标定 fx(869.37@960x540),
+         sim/real 内参一致(仅主点: gz 居中 480/270, 真机标定 486.5/260.1, 差<7px 忽略)。-->
+    <link name="camera_link">
+      <pose>0.11 0 -0.20 0 0 0</pose>
+      <inertial><mass>0.05</mass>
+        <inertia><ixx>1e-05</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1e-05</iyy><iyz>0</iyz><izz>1e-05</izz></inertia></inertial>
+      <visual name="visual">
+        <geometry><box><size>0.03 0.03 0.03</size></box></geometry>
+        <material><ambient>0.1 0.1 0.1 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+      </visual>
+      <sensor name="camera" type="camera">
+        <gz_frame_id>camera_link</gz_frame_id>
+        <pose>0 0 0 0 1.5708 0</pose>
+        <camera>
+          <horizontal_fov>1.0090</horizontal_fov>
+          <image><width>960</width><height>540</height></image>
+          <clip><near>0.05</near><far>15000</far></clip>
+        </camera>
+        <always_on>1</always_on>
+        <update_rate>10</update_rate>
+        <visualize>1</visualize>
+      </sensor>
+    </link>
+    <joint name="camera_joint" type="fixed">
       <parent>base_link</parent>
-      <child>gimbal::base_link</child>
-      <axis>
-        <limit><lower>0</lower><upper>0</upper></limit>
-        <xyz>0 0 1</xyz>
-      </axis>
+      <child>camera_link</child>
     </joint>
 
-    <!-- 空机补重(电池+机身余量): 机架1.75+云台0.23=1.98 -> 空机 2.4kg 差 0.42kg,固连机体略下方。
+    <!-- 空机补重(电池+机身余量): 机架1.75+相机0.05=1.80 -> 空机 2.4kg 差 0.60kg,固连机体略下方。
          惯量估计,待实测替换(ADR-0010)。两瓶水见下,投放时质量真突变 3.5->2.95->2.4。-->
     <link name="payload_link">
       <pose>0 0 -0.05 0 0 0</pose>
       <inertial>
-        <mass>0.42</mass>
-        <inertia><ixx>0.0017</ixx><ixy>0</ixy><ixz>0</ixz><iyy>0.0017</iyy><iyz>0</iyz><izz>0.0028</izz></inertia>
+        <mass>0.60</mass>
+        <inertia><ixx>0.0025</ixx><ixy>0</ixy><ixz>0</ixz><iyy>0.0025</iyy><iyz>0</iyz><izz>0.004</izz></inertia>
       </inertial>
     </link>
     <joint name="payload_joint" type="fixed">
@@ -366,49 +383,6 @@
         <i_max>0</i_max><i_min>0</i_min><cmd_max>2.5</cmd_max><cmd_min>-2.5</cmd_min>
         <controlVelocitySlowdownSim>1</controlVelocitySlowdownSim>
       </control>
-      <!-- roll range is -30 to +30 deg -->
-      <control channel="8">
-        <jointName>gimbal::roll_joint</jointName>
-        <multiplier>1.047197551196</multiplier><offset>-0.5</offset>
-        <servo_min>1100</servo_min><servo_max>1900</servo_max>
-        <type>COMMAND</type><cmd_topic>/gimbal/cmd_roll</cmd_topic><p_gain>2</p_gain>
-      </control>
-      <!-- pitch range is -135 to +45 deg -->
-      <control channel="9">
-        <jointName>gimbal::pitch_joint</jointName>
-        <multiplier>-3.14159265</multiplier><offset>-0.75</offset>
-        <servo_min>1100</servo_min><servo_max>1900</servo_max>
-        <type>COMMAND</type><cmd_topic>/gimbal/cmd_pitch</cmd_topic><p_gain>2</p_gain>
-      </control>
-      <!-- yaw range is -160 to +160 deg -->
-      <control channel="10">
-        <jointName>gimbal::yaw_joint</jointName>
-        <multiplier>-5.5850536</multiplier><offset>-0.5</offset>
-        <servo_min>1100</servo_min><servo_max>1900</servo_max>
-        <type>COMMAND</type><cmd_topic>/gimbal/cmd_yaw</cmd_topic><p_gain>2</p_gain>
-      </control>
-    </plugin>
-
-    <plugin
-      filename="gz-sim-joint-position-controller-system"
-      name="gz::sim::systems::JointPositionController">
-      <joint_name>gimbal::roll_joint</joint_name>
-      <topic>/gimbal/cmd_roll</topic>
-      <p_gain>2</p_gain>
-    </plugin>
-    <plugin
-      filename="gz-sim-joint-position-controller-system"
-      name="gz::sim::systems::JointPositionController">
-      <joint_name>gimbal::pitch_joint</joint_name>
-      <topic>/gimbal/cmd_pitch</topic>
-      <p_gain>2</p_gain>
-    </plugin>
-    <plugin
-      filename="gz-sim-joint-position-controller-system"
-      name="gz::sim::systems::JointPositionController">
-      <joint_name>gimbal::yaw_joint</joint_name>
-      <topic>/gimbal/cmd_yaw</topic>
-      <p_gain>2</p_gain>
     </plugin>
 
   </model>

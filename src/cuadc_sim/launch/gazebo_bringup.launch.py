@@ -25,11 +25,9 @@ reserved for our own scripts/nodes.
 First run in a fresh sitl_run_dir needs a EEPROM wipe, e.g.:
     ros2 launch cuadc_sim gazebo_bringup.launch.py extra_sitl_args:=-w
 
-Also holds the onboard camera fixed pointing straight down once at
-startup (real hardware has no gimbal -- camera is rigidly bolted to the
-airframe, so its view tilts with vehicle attitude just like a truly
-fixed mount would; see fix_camera_pose_process below for why a one-shot
-command is enough and doesn't need ArduPilot parameter changes).
+The cuadc_iris camera is a rigid nadir strapdown mount (same as the real
+airframe, no gimbal) -- its view tilts with vehicle attitude; no startup
+gimbal-lock command needed (see ADR-0010).
 """
 import os
 
@@ -92,34 +90,14 @@ def generate_launch_description():
         # sync by hand if the world name or vehicle model ever changes,
         # they can't share an import (that module isn't installed).
         default_value=(
-            '/world/cuadc_field/model/cuadc_iris/model/gimbal/link/pitch_link'
+            '/world/cuadc_field/model/cuadc_iris/link/camera_link'
             '/sensor/camera/image'
         ),
         description=(
-            "Gazebo camera image topic to bridge into ROS2 -- specific to the "
-            "iris_with_gimbal model in cuadc_field.sdf; override (e.g. to the "
-            "iris_runway topic) if 'world' is changed"
+            "Gazebo camera image topic to bridge into ROS2 -- follows "
+            "cuadc_iris's strapdown camera_link/sensor names; override (e.g. "
+            "to the iris_runway gimbal topic) if 'world' is changed"
         ),
-    )
-    camera_fixed_pitch_rad_arg = DeclareLaunchArgument(
-        'camera_fixed_pitch_rad',
-        default_value='1.5708',
-        description=(
-            "One-shot target for gimbal::pitch_joint at startup, radians. "
-            "+pi/2 (default) is straight down (nadir) -- empirically verified "
-            "in Gazebo, NOT derived from the SDF's joint/sensor pose math (that "
-            "math is a multi-frame composition through gimbal_small_3d that's "
-            "easy to get backwards, see docs/lessons.md 2026-09-10 entry). "
-            "-pi/2 points the camera up into the vehicle's own body, not down."
-        ),
-    )
-    camera_fixed_roll_rad_arg = DeclareLaunchArgument(
-        'camera_fixed_roll_rad', default_value='0.0',
-        description='One-shot target for gimbal::roll_joint at startup, radians',
-    )
-    camera_fixed_yaw_rad_arg = DeclareLaunchArgument(
-        'camera_fixed_yaw_rad', default_value='0.0',
-        description='One-shot target for gimbal::yaw_joint at startup, radians',
     )
     # Exported inline on gz sim's own command line (rather than via
     # SetEnvironmentVariable) so this specific process always uses
@@ -241,32 +219,6 @@ def generate_launch_description():
         ],
     )
 
-    # One-shot: point the camera down and leave it there, see docstring.
-    # `gz topic pub` doesn't retry -- fired before gz sim finishes loading
-    # the world/plugins it would just vanish into the void, so this polls
-    # for /gimbal/cmd_pitch to have a subscriber (the JointPositionController
-    # plugin) before publishing. ArduPilot's own SERVO8/9/10 outputs also
-    # target this same topic (see iris_with_gimbal's ArduPilotPlugin
-    # <cmd_topic> config) but aren't assigned to anything in our default
-    # params, so they don't fight this -- verified empirically, not assumed.
-    # Bounded (timeout 60) so a failed/slow Gazebo startup doesn't hang the
-    # launch forever.
-    fix_camera_pose_process = ExecuteProcess(
-        cmd=[[
-            'timeout 60 bash -c \'',
-            'until gz topic -l 2>/dev/null | grep -q "^/gimbal/cmd_pitch$"; do sleep 1; done; ',
-            'gz topic -t /gimbal/cmd_roll -m gz.msgs.Double -p "data: ',
-            LaunchConfiguration('camera_fixed_roll_rad'), '"; ',
-            'gz topic -t /gimbal/cmd_pitch -m gz.msgs.Double -p "data: ',
-            LaunchConfiguration('camera_fixed_pitch_rad'), '"; ',
-            'gz topic -t /gimbal/cmd_yaw -m gz.msgs.Double -p "data: ',
-            LaunchConfiguration('camera_fixed_yaw_rad'), '"\'',
-        ]],
-        shell=True,
-        name='fix_camera_pose',
-        output='screen',
-    )
-
     return LaunchDescription([
         ardupilot_path_arg,
         ardupilot_gazebo_path_arg,
@@ -276,12 +228,8 @@ def generate_launch_description():
         extra_sitl_args_arg,
         sim_realism_params_arg,
         camera_gz_topic_arg,
-        camera_fixed_pitch_rad_arg,
-        camera_fixed_roll_rad_arg,
-        camera_fixed_yaw_rad_arg,
         gz_sim_gui,
         gz_sim_headless,
         sitl_process,
         camera_bridge_node,
-        fix_camera_pose_process,
     ])

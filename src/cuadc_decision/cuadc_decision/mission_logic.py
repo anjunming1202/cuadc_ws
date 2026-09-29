@@ -80,7 +80,7 @@ def _world_xy_to_ned(world_x, world_y):
     转成接口层 telemetry/local_position 用的 NED (north, east)——两者
     不是恒等映射，X/Y 是对调的，换算依据同
     cuadc_perception/stub_perception_node.py 里的同名函数（仿真机型
-    iris_with_gimbal 的 `gazeboXYZToNED` 插件参数）。2026-07-19 实机
+    cuadc_iris 的 `gazeboXYZToNED` 插件参数）。2026-07-19 实机
     测试（SITL+Gazebo）发现飞机往侧边飞，就是这里之前没做这个换算、
     直接把场地坐标当 NED 坐标用导致的。
     """
