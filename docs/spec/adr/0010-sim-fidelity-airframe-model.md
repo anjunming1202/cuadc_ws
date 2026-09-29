@@ -17,12 +17,16 @@
 | ② 投放几何 | 左瓶杆臂 [前,右] | [−0.11, −0.04] m | ✅ | `coarse_pbvs_then_terminal_ibvs.real.yaml` `lever_arm_m`(左/右两套) |
 | ② | 右瓶杆臂 [前,右] | [−0.11, +0.04] m | ✅ | 同上 |
 | ③ 动力学 | 总质量(满载) | 3.5 kg (=空机2.4+2瓶×0.55；半载2.95) | ✅ | vendored SDF：外部 iris(≈1.98)不动，加 lumped payload link 补足 |
-| ③ | 满载 CoM | ≈旋翼中心 x/y≈0、z 略下移 | 🅔 | payload link `<inertial><pose>`；载荷 x≈0(水瓶在中心上方)、y=±0.04 对称 |
+| ③ | 满载 CoM | 左右居中、前后偏后 0.5cm(可忽略)、z 略下移 | ✅实测 | payload link `<inertial><pose>`；当前 x≈0 已足够 |
 | ③ | 惯量 | iris 值 + payload link 估计 | 🅔 双线摆待测替换 | payload link `<inertia>` |
-| ③ | 单桨最大推力 | 按质量比缩放 lift-drag `area`(×3.5/1.98≈1.77) | 🅔 推力台/datasheet 待替换 | vendored SDF lift-drag `area` ×4 |
-| ③ | ArduPilot 参数 | gazebo-iris 默认 + `MOT_HOVER_LEARN=2` 自学悬停 | 🅔 真机 dump 待替换 | `mission_defaults.parm` |
-| — | FC 相对旋翼中心前后 X | 暂按 0 | ❓ | SDF 摆放 |
-| — | SITL ArduCopter 版本 | 需=真机(4.7.1?) | ❓ | 编译对齐 |
+| ③ | 悬停油门 | 真机 `MOT_THST_HOVER=0.35`；**sim 实测 0.33，已匹配** | ✅实测 | 可直接写 0.35 替代 `MOT_HOVER_LEARN` |
+| ③ | ArduPilot 参数 | 真机 `local/scratch/test915.param`(gains 近默认) | ✅实测 | 挑 ATC/PSC/MOT/WPNAV 灌 `mission_defaults.parm` |
+| — | 轴距(对角电机轴线) | **545 mm** → 旋翼 ±0.1925/±0.1925 (X) | ✅实测 | SDF 旋翼位(几何重做用) |
+| — | 螺旋桨 | **15×5.5 折叠, Ø381mm(r0.19)** | ✅实测 | SDF 桨 visual/collision |
+| — | 电机/电池 | 朗宇 4008 380KV / 6S 4000mAh；4电机总电流上限≈60A | ✅实测 | 推力上限参考(TWR) |
+| — | FC 相对旋翼中心 | 在正中心(前后偏后 0.5cm) | ✅实测 | SDF 摆放(X≈0) |
+| — | 相机 | 树莓派 IMX519, FOV≈80°, 卷帘, 自动对焦 | ✅实测 | sim 相机 fov/内参对齐(待做) |
+| — | SITL ArduCopter 版本 | 需=真机 | ❓ | 编译对齐 |
 
 ## Notes
 
@@ -39,5 +43,10 @@
   0.35–0.5)自动对上、`MOT_THST_HOVER` 用真机日志学到值。当前估计值先满足这个悬停油门区间即可。
 - **投放竖直偏置不测**：圆柱限位竖直下落，不影响水平落点。
 - **质量突变不做**：DROP 时质量/CoM 跳变按静态档略过，留后续。
-- **待要数据（转飞控/硬件组）**：① 真机完整参数文件；② 电机+桨最大推力(推力台曲线或型号+桨+电池节数)；
-  ③ 含悬停的 `.bin` 日志(有则给)；④ ArduCopter 版本号；⑤ 电池质量+位置、单臂+电机质量(给了可算惯量估计)。
+- **真机数据已到(2026-09-29)**：轴距545/桨15×5.5/电机朗宇4008-380KV/6S/CoM近中心/参数文件
+  test915.param(含 MOT_THST_HOVER=0.35)。**关键结论：sim 悬停 0.33 ≈ 真机 0.35，推力已匹配，不必重调**；
+  gains 近默认。**仍缺**：含悬停的 `.bin` 日志、各部件质量(惯量估计用)、ArduCopter 版本号。
+- **几何重做(Phase 3)用实测值**：旋翼 ±0.1925(X, 对角545)、桨 r0.19(15")、相机前0.11/下0.20、FC中心。
+  上次几何大改(估计值)出现反投影回归(near_det≈1m, 接近段不收敛)已回退、存 patch;
+  用实测值重做时须先定位该回归(疑似相机面内朝向 / 抬高出生点使 EKF 原点上移破坏反投影地平面假设),
+  与 Phase 4 落点量测工具一起做最省。
