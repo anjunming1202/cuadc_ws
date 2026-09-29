@@ -125,7 +125,15 @@ class StubPerceptionNode(Node):
 
         msg = DetectionArray()
         msg.header = Header()
+        # 桩感知没有真图像："拍照时刻"=本 tick 时刻，vehicle_pose=当前遥测位姿
+        # （同刻自洽，满足 DetectionArray 契约，下游不区分桩/真）。
         msg.header.stamp = self.get_clock().now().to_msg()
+        if self._pos_ned is not None:
+            (msg.vehicle_pose.position.x, msg.vehicle_pose.position.y,
+             msg.vehicle_pose.position.z) = self._pos_ned
+        if self._orient is not None:
+            (msg.vehicle_pose.orientation.x, msg.vehicle_pose.orientation.y,
+             msg.vehicle_pose.orientation.z, msg.vehicle_pose.orientation.w) = self._orient
         msg.detections = detections
         self._publisher.publish(msg)
 

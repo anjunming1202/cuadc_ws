@@ -188,6 +188,11 @@ class MissionContext:
     roll_rad: Optional[float] = None
     pitch_rad: Optional[float] = None
     detections: list = field(default_factory=list)  # 元素需要有 .target_type/.position.x/.position.y/.apparent_size
+    # 当前 detections 那帧图像**拍照时刻**的姿态/离地高(来自 DetectionArray.vehicle_pose)。
+    # IBVS 姿态补偿/米换算必须用它(与 bearing 同刻)；投放门等"当下状态"判断仍用实时遥测。
+    det_roll_rad: Optional[float] = None
+    det_pitch_rad: Optional[float] = None
+    det_height_m: Optional[float] = None
     task_start_triggered: bool = False
 
     drop_task: DropTaskState = field(default_factory=DropTaskState)

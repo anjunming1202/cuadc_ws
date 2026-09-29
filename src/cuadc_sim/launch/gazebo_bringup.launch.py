@@ -206,13 +206,20 @@ def generate_launch_description():
         output='screen',
     )
 
+    # Bridges the camera image AND /clock. /clock (gz sim time -> ROS) lets all
+    # ROS nodes run on use_sim_time so the image capture stamp and the pose stamps
+    # share one clock -- prerequisite for reprojecting with pose@capture-time
+    # (see ADR-0010 B / sim-stress-testbed §3.3). Without a common clock the
+    # image (gz sim time) and telemetry (wall time) can't be time-matched.
     camera_bridge_node = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
         name='camera_bridge',
         output='screen',
+        parameters=[{'use_sim_time': True}],
         arguments=[
             [LaunchConfiguration('camera_gz_topic'), '@sensor_msgs/msg/Image[gz.msgs.Image'],
+            '/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock',
         ],
         remappings=[
             (LaunchConfiguration('camera_gz_topic'), '/camera/image_raw'),

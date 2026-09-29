@@ -35,10 +35,10 @@ for _ in $(seq 1 40); do
     sleep 3
 done
 
-setsid ros2 launch cuadc_interface interface_bringup.launch.py connection:=udp:127.0.0.1:14550 \
+setsid ros2 launch cuadc_interface interface_bringup.launch.py connection:=udp:127.0.0.1:14550 use_sim_time:=true \
     > /tmp/measure_reproj_iface.log 2>&1 &
 PIDS+=($!)
-setsid ros2 launch cuadc_perception cv_perception_bringup.launch.py profile:=sim frame_source:=ros \
+setsid ros2 launch cuadc_perception cv_perception_bringup.launch.py profile:=sim frame_source:=ros use_sim_time:=true \
     > /tmp/measure_reproj_percep.log 2>&1 &
 PIDS+=($!)
 sleep 8

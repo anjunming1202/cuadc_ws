@@ -56,10 +56,17 @@ def generate_launch_description():
         description='感知取帧源，仿真 ros、真机 shm',
     )
 
+    # 仿真下 interface/perception 走 Gazebo 仿真时间(/clock 由 gazebo_bringup 桥接)，
+    # 使图像拍照时间戳与遥测时间戳同钟——拍照时刻对齐位姿需要(ADR-0010 B)。真机
+    # (profile=real)保持墙钟。值传给两个 bringup 的 use_sim_time 参数(参数归它们所有)。
+    sim_time_flag = PythonExpression(
+        ["'true' if '", LaunchConfiguration('profile'), "' == 'sim' else 'false'"])
+
     interface_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution(
             [FindPackageShare('cuadc_interface'), 'launch', 'interface_bringup.launch.py'])),
-        launch_arguments={'connection': LaunchConfiguration('connection')}.items(),
+        launch_arguments={'connection': LaunchConfiguration('connection'),
+                          'use_sim_time': sim_time_flag}.items(),
     )
 
     cv_perception_launch = IncludeLaunchDescription(
@@ -68,6 +75,7 @@ def generate_launch_description():
         launch_arguments={
             'profile': LaunchConfiguration('profile'),
             'frame_source': LaunchConfiguration('frame_source'),
+            'use_sim_time': sim_time_flag,
         }.items(),
     )
 

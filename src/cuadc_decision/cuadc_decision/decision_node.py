@@ -145,6 +145,15 @@ class DecisionNode(Node):
 
     def _on_detections(self, msg):
         self._ctx.detections = list(msg.detections)
+        # vehicle_pose = 这帧图像**拍照时刻**的位姿(契约见 DetectionArray.msg)。四元数
+        # 全零 = 上游没填(异常/旧版) -> 置 None,IBVS 退化用实时遥测(旧行为)。
+        q = msg.vehicle_pose.orientation
+        if q.w == 0.0 and q.x == 0.0 and q.y == 0.0 and q.z == 0.0:
+            self._ctx.det_roll_rad = self._ctx.det_pitch_rad = self._ctx.det_height_m = None
+        else:
+            roll, pitch, _yaw = _rpy_from_quaternion(q.x, q.y, q.z, q.w)
+            self._ctx.det_roll_rad, self._ctx.det_pitch_rad = roll, pitch
+            self._ctx.det_height_m = -msg.vehicle_pose.position.z
 
     def _on_task_start_trigger(self, msg):
         self._ctx.task_start_triggered = True
