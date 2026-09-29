@@ -67,7 +67,7 @@
         </collision>
         <visual name="visual">
           <geometry><cylinder><radius>0.032</radius><length>0.227</length></cylinder></geometry>
-          <material><ambient>0.1 0.3 0.9 1</ambient><diffuse>0.1 0.3 0.9 1</diffuse></material>
+          <material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.5 0.5 0.5 1</diffuse></material>
         </visual>
       </link>
     </model>
@@ -83,7 +83,7 @@
         </collision>
         <visual name="visual">
           <geometry><cylinder><radius>0.032</radius><length>0.227</length></cylinder></geometry>
-          <material><ambient>0.9 0.3 0.1 1</ambient><diffuse>0.9 0.3 0.1 1</diffuse></material>
+          <material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.5 0.5 0.5 1</diffuse></material>
         </visual>
       </link>
     </model>
