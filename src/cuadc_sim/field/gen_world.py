@@ -45,7 +45,7 @@ WORLD_NAME = 'cuadc_field'
 # as launch/gazebo_bringup.launch.py's camera_gz_topic default -- keep both
 # in sync by hand.
 GIMBAL_CAMERA_TOPIC = (
-    f'/world/{WORLD_NAME}/model/iris_with_gimbal/model/gimbal/'
+    f'/world/{WORLD_NAME}/model/cuadc_iris/model/gimbal/'
     'link/pitch_link/sensor/camera/image'
 )
 
@@ -628,8 +628,8 @@ WORLD_TEMPLATE = """<?xml version="1.0" ?>
 {ground}
 {fields}
     <include>
-      <uri>model://iris_with_gimbal</uri>
-      <pose degrees="true">{landing_x} {landing_y} 0.195 0 0 {vehicle_yaw}</pose>
+      <uri>model://cuadc_iris</uri>
+      <pose degrees="true">{landing_x} {landing_y} 0.31 0 0 {vehicle_yaw}</pose>
     </include>
 
   </world>

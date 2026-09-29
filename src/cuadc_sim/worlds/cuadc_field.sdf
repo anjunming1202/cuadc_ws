@@ -1229,7 +1229,7 @@
     </model>
     <include>
       <uri>model://cuadc_iris</uri>
-      <pose degrees="true">0.0 0.0 0.195 0 0 0.0</pose>
+      <pose degrees="true">0.0 0.0 0.31 0 0 0.0</pose>
     </include>
 
   </world>

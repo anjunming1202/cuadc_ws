@@ -1,62 +1,153 @@
 <?xml version='1.0'?>
-<!-- CUADC vendored 机体，见 model.config / ADR-0010。相对上游 iris_with_gimbal 的改动:
-     (1) name=cuadc_iris; (2) 加 payload_link 把总质量补到满载 3.5kg(空机2.4+2瓶×0.55);
-     (3) 8 处 lift-drag <area> 0.002->0.00354 按质量比缩放推力,保持推重比/悬停油门;
-     其余(机架/相机/云台/ArduPilotPlugin)与上游一致。-->
+<!-- CUADC vendored 机体，按真机实测几何建模(ADR-0010)。机架 inline(不再 include
+     iris_with_standoffs)——上游 iris 的旋翼位/桨径/起落架高与真机差太多,include 改不了:
+     - 轴距 545mm(对角电机轴线,实测) -> 旋翼 (±0.1925, ±0.1925), quad-X;
+     - 桨 15x5.5 折叠(实测 Ø381mm) -> 桨网格 scale 1.9、碰撞 r0.19;
+     - 双滑橇起落架(照片) -> 飞控(base_link 原点)离地 0.31m(实测);
+     - 空机+电池 2.4kg / 满载 3.5kg(实测): 机架1.5+imu0.15+桨4x0.025+云台0.23+补重0.42+2瓶x0.55;
+     - 机架惯量为放大估计值,待双线摆实测替换。
+     气动(lift-drag area/cp/multiplier)不按桨径缩放——它是锚定到真机悬停油门的抽象
+     (sim 0.33 ≈ 真机 MOT_THST_HOVER 0.35, 实测校验), 桨径只改外观/碰撞。
+     相机仍为上游三轴云台(批次2换真机 strapdown 偏置)。-->
 <sdf version="1.9">
   <model name="cuadc_iris">
-    <include>
-      <uri>model://iris_with_standoffs</uri>
-    </include>
+    <link name="base_link">
+      <velocity_decay><linear>0.0</linear><angular>0.0</angular></velocity_decay>
+      <inertial>
+        <pose>0 0 0 0 0 0</pose>
+        <mass>1.5</mass>
+        <inertia><ixx>0.021</ixx><ixy>0</ixy><ixz>0</ixz><iyy>0.021</iyy><iyz>0</iyz><izz>0.032</izz></inertia>
+      </inertial>
+      <collision name="body_collision">
+        <geometry><box><size>0.18 0.18 0.06</size></box></geometry>
+        <surface><contact><ode><max_vel>100.0</max_vel><min_depth>0.001</min_depth></ode></contact>
+          <friction><ode><mu>100000.0</mu><mu2>100000.0</mu2></ode></friction></surface>
+      </collision>
+      <!-- 双滑橇触地(碰撞只放橇轨,接触面真实) -->
+      <collision name="skid_left_collision">
+        <pose>0 0.15 -0.298 1.5708 0 1.5708</pose>
+        <geometry><cylinder><radius>0.012</radius><length>0.44</length></cylinder></geometry>
+        <surface><contact><ode><max_vel>100.0</max_vel><min_depth>0.001</min_depth></ode></contact>
+          <friction><ode><mu>100000.0</mu><mu2>100000.0</mu2></ode></friction></surface>
+      </collision>
+      <collision name="skid_right_collision">
+        <pose>0 -0.15 -0.298 1.5708 0 1.5708</pose>
+        <geometry><cylinder><radius>0.012</radius><length>0.44</length></cylinder></geometry>
+        <surface><contact><ode><max_vel>100.0</max_vel><min_depth>0.001</min_depth></ode></contact>
+          <friction><ode><mu>100000.0</mu><mu2>100000.0</mu2></ode></friction></surface>
+      </collision>
+      <!-- 视觉: 中心板 + 4 碳管臂(45°对角) + 电机座 + 双滑橇。简单几何体,比 iris 外壳更接近
+           真机碳管机架(见 ADR-0010 照片) -->
+      <visual name="plate_visual">
+        <geometry><box><size>0.16 0.16 0.05</size></box></geometry>
+        <material><ambient>0.05 0.05 0.05 1</ambient><diffuse>0.08 0.08 0.08 1</diffuse></material>
+      </visual>
+      <visual name="arm_fr_visual">
+        <pose>0.096 -0.096 0.005 0 1.5708 -0.7854</pose>
+        <geometry><cylinder><radius>0.011</radius><length>0.26</length></cylinder></geometry>
+        <material><ambient>0.05 0.05 0.05 1</ambient><diffuse>0.08 0.08 0.08 1</diffuse></material>
+      </visual>
+      <visual name="arm_fl_visual">
+        <pose>0.096 0.096 0.005 0 1.5708 0.7854</pose>
+        <geometry><cylinder><radius>0.011</radius><length>0.26</length></cylinder></geometry>
+        <material><ambient>0.05 0.05 0.05 1</ambient><diffuse>0.08 0.08 0.08 1</diffuse></material>
+      </visual>
+      <visual name="arm_rl_visual">
+        <pose>-0.096 0.096 0.005 0 1.5708 -0.7854</pose>
+        <geometry><cylinder><radius>0.011</radius><length>0.26</length></cylinder></geometry>
+        <material><ambient>0.05 0.05 0.05 1</ambient><diffuse>0.08 0.08 0.08 1</diffuse></material>
+      </visual>
+      <visual name="arm_rr_visual">
+        <pose>-0.096 -0.096 0.005 0 1.5708 0.7854</pose>
+        <geometry><cylinder><radius>0.011</radius><length>0.26</length></cylinder></geometry>
+        <material><ambient>0.05 0.05 0.05 1</ambient><diffuse>0.08 0.08 0.08 1</diffuse></material>
+      </visual>
+      <visual name="motor_0_visual">
+        <pose>0.1925 -0.1925 0.01 0 0 0</pose>
+        <geometry><cylinder><radius>0.014</radius><length>0.028</length></cylinder></geometry>
+        <material><ambient>0.1 0.1 0.1 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+      </visual>
+      <visual name="motor_1_visual">
+        <pose>-0.1925 0.1925 0.01 0 0 0</pose>
+        <geometry><cylinder><radius>0.014</radius><length>0.028</length></cylinder></geometry>
+        <material><ambient>0.1 0.1 0.1 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+      </visual>
+      <visual name="motor_2_visual">
+        <pose>0.1925 0.1925 0.01 0 0 0</pose>
+        <geometry><cylinder><radius>0.014</radius><length>0.028</length></cylinder></geometry>
+        <material><ambient>0.1 0.1 0.1 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+      </visual>
+      <visual name="motor_3_visual">
+        <pose>-0.1925 -0.1925 0.01 0 0 0</pose>
+        <geometry><cylinder><radius>0.014</radius><length>0.028</length></cylinder></geometry>
+        <material><ambient>0.1 0.1 0.1 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+      </visual>
+      <visual name="strut_left_visual">
+        <pose>0 0.15 -0.147 0 0 0</pose>
+        <geometry><cylinder><radius>0.010</radius><length>0.294</length></cylinder></geometry>
+        <material><ambient>0.05 0.05 0.05 1</ambient><diffuse>0.08 0.08 0.08 1</diffuse></material>
+      </visual>
+      <visual name="strut_right_visual">
+        <pose>0 -0.15 -0.147 0 0 0</pose>
+        <geometry><cylinder><radius>0.010</radius><length>0.294</length></cylinder></geometry>
+        <material><ambient>0.05 0.05 0.05 1</ambient><diffuse>0.08 0.08 0.08 1</diffuse></material>
+      </visual>
+      <visual name="skid_left_visual">
+        <pose>0 0.15 -0.298 1.5708 0 1.5708</pose>
+        <geometry><cylinder><radius>0.012</radius><length>0.44</length></cylinder></geometry>
+        <material><ambient>0.1 0.02 0.02 1</ambient><diffuse>0.15 0.03 0.03 1</diffuse></material>
+      </visual>
+      <visual name="skid_right_visual">
+        <pose>0 -0.15 -0.298 1.5708 0 1.5708</pose>
+        <geometry><cylinder><radius>0.012</radius><length>0.44</length></cylinder></geometry>
+        <material><ambient>0.1 0.02 0.02 1</ambient><diffuse>0.15 0.03 0.03 1</diffuse></material>
+      </visual>
+    </link>
+
+    <link name="imu_link">
+      <inertial><pose>0 0 0 0 0 0</pose><mass>0.15</mass>
+        <inertia><ixx>0.00001</ixx><ixy>0</ixy><ixz>0</ixz><iyy>0.00002</iyy><iyz>0</iyz><izz>0.00002</izz></inertia></inertial>
+      <sensor name="imu_sensor" type="imu"><gz_frame_id>imu_link</gz_frame_id>
+        <pose degrees="true">0 0 0 180 0 0</pose><always_on>1</always_on><update_rate>1000.0</update_rate></sensor>
+    </link>
+    <joint name="imu_joint" type="revolute"><child>imu_link</child><parent>base_link</parent>
+      <axis><xyz>0 0 1</xyz><limit><lower>0</lower><upper>0</upper><effort>0</effort><velocity>0</velocity></limit><dynamics><damping>1.0</damping></dynamics></axis></joint>
 
     <include>
       <uri>model://gimbal_small_3d</uri>
       <name>gimbal</name>
       <pose degrees="true">0 -0.01 -0.124923 90 0 90</pose>
     </include>
-
     <joint name="gimbal_joint" type="revolute">
-      <parent>iris_with_standoffs::base_link</parent>
+      <parent>base_link</parent>
       <child>gimbal::base_link</child>
       <axis>
-        <limit>
-          <lower>0</lower>
-          <upper>0</upper>
-        </limit>
+        <limit><lower>0</lower><upper>0</upper></limit>
         <xyz>0 0 1</xyz>
       </axis>
     </joint>
 
-    <!-- 空机补重(电池+机身余量): 外部 iris≈1.98kg -> 空机 2.4kg,差 0.42kg 集总固连机体,
-         略低于旋翼中心。质心/惯量为估计值,见 ADR-0010 簇③,有实测后改。两瓶水是下面的
-         可分离刚体(bottle_left/right),投放时质量真突变: 满载3.5 -> 2.95 -> 空机2.4。-->
+    <!-- 空机补重(电池+机身余量): 机架1.75+云台0.23=1.98 -> 空机 2.4kg 差 0.42kg,固连机体略下方。
+         惯量估计,待实测替换(ADR-0010)。两瓶水见下,投放时质量真突变 3.5->2.95->2.4。-->
     <link name="payload_link">
       <pose>0 0 -0.05 0 0 0</pose>
       <inertial>
         <mass>0.42</mass>
-        <inertia>
-          <ixx>0.0017</ixx>
-          <ixy>0</ixy>
-          <ixz>0</ixz>
-          <iyy>0.0017</iyy>
-          <iyz>0</iyz>
-          <izz>0.0028</izz>
-        </inertia>
+        <inertia><ixx>0.0017</ixx><ixy>0</ixy><ixz>0</ixz><iyy>0.0017</iyy><iyz>0</iyz><izz>0.0028</izz></inertia>
       </inertial>
     </link>
     <joint name="payload_joint" type="fixed">
-      <parent>iris_with_standoffs::base_link</parent>
+      <parent>base_link</parent>
       <child>payload_link</child>
     </joint>
 
-    <!-- 两瓶水 = 空投物(各 0.55kg)。建为嵌套刚体,DetachableJoint 焊在机体上,收到 detach
-         topic 就分离自由下落(继承机体速度 -> 含弹道)。位置=投放轴相对旋翼中心: 前0(相机前0.11、
-         瓶在相机后0.11)、左右 ∓0.04(FRD)。竖直悬挂深度未实测,取 -0.08 避免出生时触地;不影响
-         水平落点(圆柱限位竖直落)。见 ADR-0010 簇②③。-->
-    <!-- 尺寸=市售 550ml 农夫山泉(网查实测): 中部直径≈6.4cm(r=0.032)、瓶身高≈22.7cm(0.227)。
-         悬挂 -0.082 使瓶底出生时≈贴地(base 0.195)。竖直位不影响水平落点(圆柱限位竖直落)。-->
+    <!-- 两瓶水 = 空投物(市售 550ml 农夫山泉网查实测: r0.032 高0.227, 各0.55kg), DetachableJoint
+         焊接机体, detach topic 脱钩自由落(继承机体速度)。水平位=投放轴实测(前0/左右∓0.04);
+         悬挂 -0.19 使瓶底(-0.3035)略高于橇底(-0.31)——真机瓶底起飞后略低于橇底(线长可调),
+         刚体建模取"略高"避免出生触地,竖直位不影响水平落点(圆柱限位竖直落)。灰色(真瓶非蓝,
+         蓝色曾被 color_pad 误检成落点盘)。-->
     <model name="bottle_left">
-      <pose>0 0.04 -0.082 0 0 0</pose>
+      <pose>0 0.04 -0.19 0 0 0</pose>
       <link name="link">
         <inertial>
           <mass>0.55</mass>
@@ -72,7 +163,7 @@
       </link>
     </model>
     <model name="bottle_right">
-      <pose>0 -0.04 -0.082 0 0 0</pose>
+      <pose>0 -0.04 -0.19 0 0 0</pose>
       <link name="link">
         <inertial>
           <mass>0.55</mass>
@@ -100,289 +191,202 @@
       <detach_topic>/model/cuadc_iris/drop/right/detach</detach_topic>
     </plugin>
 
+    <!-- 旋翼: (±0.1925,±0.1925) 对角545mm, 桨网格 x1.9 = Ø0.38, 碰撞 r0.19。
+         号位/转向/通道沿用 iris quad-X(与 SITL -f gazebo-iris 兼容)。-->
+    <link name="rotor_0">
+      <pose>0.1925 -0.1925 0.023 0 0 0</pose>
+      <inertial><pose>0 0 0 0 0 0</pose><mass>0.025</mass>
+        <inertia><ixx>9.75e-06</ixx><ixy>0</ixy><ixz>0</ixz><iyy>0.000166704</iyy><iyz>0</iyz><izz>0.000167604</izz></inertia></inertial>
+      <collision name="collision"><pose>0 0 0 0 0 0</pose>
+        <geometry><cylinder><length>0.005</length><radius>0.19</radius></cylinder></geometry></collision>
+      <visual name="visual"><pose>0 0 0 0 0 0</pose>
+        <geometry><mesh><scale>1.9 1.9 1.9</scale><uri>model://iris_with_standoffs/meshes/iris_prop_ccw.dae</uri></mesh></geometry>
+        <material><ambient>0.05 0.05 0.05 1</ambient><diffuse>0.1 0.1 0.1 1</diffuse></material></visual>
+    </link>
+    <joint name="rotor_0_joint" type="revolute"><child>rotor_0</child><parent>base_link</parent>
+      <axis><xyz>0 0 1</xyz><limit><lower>-1e+16</lower><upper>1e+16</upper></limit><dynamics><damping>0.004</damping></dynamics></axis></joint>
+
+    <link name="rotor_1">
+      <pose>-0.1925 0.1925 0.023 0 0 0</pose>
+      <inertial><pose>0 0 0 0 0 0</pose><mass>0.025</mass>
+        <inertia><ixx>9.75e-06</ixx><ixy>0</ixy><ixz>0</ixz><iyy>0.000166704</iyy><iyz>0</iyz><izz>0.000167604</izz></inertia></inertial>
+      <collision name="collision"><pose>0 0 0 0 0 0</pose>
+        <geometry><cylinder><length>0.005</length><radius>0.19</radius></cylinder></geometry></collision>
+      <visual name="visual"><pose>0 0 0 0 0 0</pose>
+        <geometry><mesh><scale>1.9 1.9 1.9</scale><uri>model://iris_with_standoffs/meshes/iris_prop_ccw.dae</uri></mesh></geometry>
+        <material><ambient>0.05 0.05 0.05 1</ambient><diffuse>0.1 0.1 0.1 1</diffuse></material></visual>
+    </link>
+    <joint name="rotor_1_joint" type="revolute"><child>rotor_1</child><parent>base_link</parent>
+      <axis><xyz>0 0 1</xyz><limit><lower>-1e+16</lower><upper>1e+16</upper></limit><dynamics><damping>0.004</damping></dynamics></axis></joint>
+
+    <link name="rotor_2">
+      <pose>0.1925 0.1925 0.023 0 0 0</pose>
+      <inertial><pose>0 0 0 0 0 0</pose><mass>0.025</mass>
+        <inertia><ixx>9.75e-06</ixx><ixy>0</ixy><ixz>0</ixz><iyy>0.000166704</iyy><iyz>0</iyz><izz>0.000167604</izz></inertia></inertial>
+      <collision name="collision"><pose>0 0 0 0 0 0</pose>
+        <geometry><cylinder><length>0.005</length><radius>0.19</radius></cylinder></geometry></collision>
+      <visual name="visual"><pose>0 0 0 0 0 0</pose>
+        <geometry><mesh><scale>1.9 1.9 1.9</scale><uri>model://iris_with_standoffs/meshes/iris_prop_cw.dae</uri></mesh></geometry>
+        <material><ambient>0.05 0.05 0.05 1</ambient><diffuse>0.1 0.1 0.1 1</diffuse></material></visual>
+    </link>
+    <joint name="rotor_2_joint" type="revolute"><child>rotor_2</child><parent>base_link</parent>
+      <axis><xyz>0 0 1</xyz><limit><lower>-1e+16</lower><upper>1e+16</upper></limit><dynamics><damping>0.004</damping></dynamics></axis></joint>
+
+    <link name="rotor_3">
+      <pose>-0.1925 -0.1925 0.023 0 0 0</pose>
+      <inertial><pose>0 0 0 0 0 0</pose><mass>0.025</mass>
+        <inertia><ixx>9.75e-06</ixx><ixy>0</ixy><ixz>0</ixz><iyy>0.000166704</iyy><iyz>0</iyz><izz>0.000167604</izz></inertia></inertial>
+      <collision name="collision"><pose>0 0 0 0 0 0</pose>
+        <geometry><cylinder><length>0.005</length><radius>0.19</radius></cylinder></geometry></collision>
+      <visual name="visual"><pose>0 0 0 0 0 0</pose>
+        <geometry><mesh><scale>1.9 1.9 1.9</scale><uri>model://iris_with_standoffs/meshes/iris_prop_cw.dae</uri></mesh></geometry>
+        <material><ambient>0.05 0.05 0.05 1</ambient><diffuse>0.1 0.1 0.1 1</diffuse></material></visual>
+    </link>
+    <joint name="rotor_3_joint" type="revolute"><child>rotor_3</child><parent>base_link</parent>
+      <axis><xyz>0 0 1</xyz><limit><lower>-1e+16</lower><upper>1e+16</upper></limit><dynamics><damping>0.004</damping></dynamics></axis></joint>
+
     <!-- plugins -->
     <plugin filename="gz-sim-joint-state-publisher-system"
       name="gz::sim::systems::JointStatePublisher">
     </plugin>
-    <plugin filename="gz-sim-lift-drag-system"
-        name="gz::sim::systems::LiftDrag">
-      <a0>0.3</a0>
-      <alpha_stall>1.4</alpha_stall>
-      <cla>4.2500</cla>
-      <cda>0.10</cda>
-      <cma>0.0</cma>
-      <cla_stall>-0.025</cla_stall>
-      <cda_stall>0.0</cda_stall>
-      <cma_stall>0.0</cma_stall>
-      <area>0.00354</area>
-      <air_density>1.2041</air_density>
-      <cp>0.084 0 0</cp>
-      <forward>0 1 0</forward>
-      <upward>0 0 1</upward>
-      <link_name>iris_with_standoffs::rotor_0</link_name>
-    </plugin>
-    <plugin filename="gz-sim-lift-drag-system"
-        name="gz::sim::systems::LiftDrag">
-      <a0>0.3</a0>
-      <alpha_stall>1.4</alpha_stall>
-      <cla>4.2500</cla>
-      <cda>0.10</cda>
-      <cma>0.0</cma>
-      <cla_stall>-0.025</cla_stall>
-      <cda_stall>0.0</cda_stall>
-      <cma_stall>0.0</cma_stall>
-      <area>0.00354</area>
-      <air_density>1.2041</air_density>
-      <cp>-0.084 0 0</cp>
-      <forward>0 -1 0</forward>
-      <upward>0 0 1</upward>
-      <link_name>iris_with_standoffs::rotor_0</link_name>
-    </plugin>
 
-    <plugin filename="gz-sim-lift-drag-system"
-        name="gz::sim::systems::LiftDrag">
-      <a0>0.3</a0>
-      <alpha_stall>1.4</alpha_stall>
-      <cla>4.2500</cla>
-      <cda>0.10</cda>
-      <cma>0.0</cma>
-      <cla_stall>-0.025</cla_stall>
-      <cda_stall>0.0</cda_stall>
-      <cma_stall>0.0</cma_stall>
-      <area>0.00354</area>
-      <air_density>1.2041</air_density>
-      <cp>0.084 0 0</cp>
-      <forward>0 1 0</forward>
-      <upward>0 0 1</upward>
-      <link_name>iris_with_standoffs::rotor_1</link_name>
+    <!-- lift-drag x8(每旋翼2片): area/cp 为锚定真机悬停油门的抽象值(见文件头),不按桨径缩放 -->
+    <plugin filename="gz-sim-lift-drag-system" name="gz::sim::systems::LiftDrag">
+      <a0>0.3</a0><alpha_stall>1.4</alpha_stall><cla>4.2500</cla><cda>0.10</cda><cma>0.0</cma>
+      <cla_stall>-0.025</cla_stall><cda_stall>0.0</cda_stall><cma_stall>0.0</cma_stall>
+      <area>0.00354</area><air_density>1.2041</air_density>
+      <cp>0.084 0 0</cp><forward>0 1 0</forward><upward>0 0 1</upward>
+      <link_name>rotor_0</link_name>
     </plugin>
-    <plugin filename="gz-sim-lift-drag-system"
-        name="gz::sim::systems::LiftDrag">
-      <a0>0.3</a0>
-      <alpha_stall>1.4</alpha_stall>
-      <cla>4.2500</cla>
-      <cda>0.10</cda>
-      <cma>0.0</cma>
-      <cla_stall>-0.025</cla_stall>
-      <cda_stall>0.0</cda_stall>
-      <cma_stall>0.0</cma_stall>
-      <area>0.00354</area>
-      <air_density>1.2041</air_density>
-      <cp>-0.084 0 0</cp>
-      <forward>0 -1 0</forward>
-      <upward>0 0 1</upward>
-      <link_name>iris_with_standoffs::rotor_1</link_name>
+    <plugin filename="gz-sim-lift-drag-system" name="gz::sim::systems::LiftDrag">
+      <a0>0.3</a0><alpha_stall>1.4</alpha_stall><cla>4.2500</cla><cda>0.10</cda><cma>0.0</cma>
+      <cla_stall>-0.025</cla_stall><cda_stall>0.0</cda_stall><cma_stall>0.0</cma_stall>
+      <area>0.00354</area><air_density>1.2041</air_density>
+      <cp>-0.084 0 0</cp><forward>0 -1 0</forward><upward>0 0 1</upward>
+      <link_name>rotor_0</link_name>
     </plugin>
-
-    <plugin filename="gz-sim-lift-drag-system"
-        name="gz::sim::systems::LiftDrag">
-      <a0>0.3</a0>
-      <alpha_stall>1.4</alpha_stall>
-      <cla>4.2500</cla>
-      <cda>0.10</cda>
-      <cma>0.0</cma>
-      <cla_stall>-0.025</cla_stall>
-      <cda_stall>0.0</cda_stall>
-      <cma_stall>0.0</cma_stall>
-      <area>0.00354</area>
-      <air_density>1.2041</air_density>
-      <cp>0.084 0 0</cp>
-      <forward>0 -1 0</forward>
-      <upward>0 0 1</upward>
-      <link_name>iris_with_standoffs::rotor_2</link_name>
+    <plugin filename="gz-sim-lift-drag-system" name="gz::sim::systems::LiftDrag">
+      <a0>0.3</a0><alpha_stall>1.4</alpha_stall><cla>4.2500</cla><cda>0.10</cda><cma>0.0</cma>
+      <cla_stall>-0.025</cla_stall><cda_stall>0.0</cda_stall><cma_stall>0.0</cma_stall>
+      <area>0.00354</area><air_density>1.2041</air_density>
+      <cp>0.084 0 0</cp><forward>0 1 0</forward><upward>0 0 1</upward>
+      <link_name>rotor_1</link_name>
     </plugin>
-    <plugin filename="gz-sim-lift-drag-system"
-        name="gz::sim::systems::LiftDrag">
-      <a0>0.3</a0>
-      <alpha_stall>1.4</alpha_stall>
-      <cla>4.2500</cla>
-      <cda>0.10</cda>
-      <cma>0.0</cma>
-      <cla_stall>-0.025</cla_stall>
-      <cda_stall>0.0</cda_stall>
-      <cma_stall>0.0</cma_stall>
-      <area>0.00354</area>
-      <air_density>1.2041</air_density>
-      <cp>-0.084 0 0</cp>
-      <forward>0 1 0</forward>
-      <upward>0 0 1</upward>
-      <link_name>iris_with_standoffs::rotor_2</link_name>
+    <plugin filename="gz-sim-lift-drag-system" name="gz::sim::systems::LiftDrag">
+      <a0>0.3</a0><alpha_stall>1.4</alpha_stall><cla>4.2500</cla><cda>0.10</cda><cma>0.0</cma>
+      <cla_stall>-0.025</cla_stall><cda_stall>0.0</cda_stall><cma_stall>0.0</cma_stall>
+      <area>0.00354</area><air_density>1.2041</air_density>
+      <cp>-0.084 0 0</cp><forward>0 -1 0</forward><upward>0 0 1</upward>
+      <link_name>rotor_1</link_name>
     </plugin>
-
-    <plugin filename="gz-sim-lift-drag-system"
-        name="gz::sim::systems::LiftDrag">
-      <a0>0.3</a0>
-      <alpha_stall>1.4</alpha_stall>
-      <cla>4.2500</cla>
-      <cda>0.10</cda>
-      <cma>0.0</cma>
-      <cla_stall>-0.025</cla_stall>
-      <cda_stall>0.0</cda_stall>
-      <cma_stall>0.0</cma_stall>
-      <area>0.00354</area>
-      <air_density>1.2041</air_density>
-      <cp>0.084 0 0</cp>
-      <forward>0 -1 0</forward>
-      <upward>0 0 1</upward>
-      <link_name>iris_with_standoffs::rotor_3</link_name>
+    <plugin filename="gz-sim-lift-drag-system" name="gz::sim::systems::LiftDrag">
+      <a0>0.3</a0><alpha_stall>1.4</alpha_stall><cla>4.2500</cla><cda>0.10</cda><cma>0.0</cma>
+      <cla_stall>-0.025</cla_stall><cda_stall>0.0</cda_stall><cma_stall>0.0</cma_stall>
+      <area>0.00354</area><air_density>1.2041</air_density>
+      <cp>0.084 0 0</cp><forward>0 -1 0</forward><upward>0 0 1</upward>
+      <link_name>rotor_2</link_name>
     </plugin>
-    <plugin filename="gz-sim-lift-drag-system"
-        name="gz::sim::systems::LiftDrag">
-      <a0>0.3</a0>
-      <alpha_stall>1.4</alpha_stall>
-      <cla>4.2500</cla>
-      <cda>0.10</cda>
-      <cma>0.0</cma>
-      <cla_stall>-0.025</cla_stall>
-      <cda_stall>0.0</cda_stall>
-      <cma_stall>0.0</cma_stall>
-      <area>0.00354</area>
-      <air_density>1.2041</air_density>
-      <cp>-0.084 0 0</cp>
-      <forward>0 1 0</forward>
-      <upward>0 0 1</upward>
-      <link_name>iris_with_standoffs::rotor_3</link_name>
+    <plugin filename="gz-sim-lift-drag-system" name="gz::sim::systems::LiftDrag">
+      <a0>0.3</a0><alpha_stall>1.4</alpha_stall><cla>4.2500</cla><cda>0.10</cda><cma>0.0</cma>
+      <cla_stall>-0.025</cla_stall><cda_stall>0.0</cda_stall><cma_stall>0.0</cma_stall>
+      <area>0.00354</area><air_density>1.2041</air_density>
+      <cp>-0.084 0 0</cp><forward>0 1 0</forward><upward>0 0 1</upward>
+      <link_name>rotor_2</link_name>
+    </plugin>
+    <plugin filename="gz-sim-lift-drag-system" name="gz::sim::systems::LiftDrag">
+      <a0>0.3</a0><alpha_stall>1.4</alpha_stall><cla>4.2500</cla><cda>0.10</cda><cma>0.0</cma>
+      <cla_stall>-0.025</cla_stall><cda_stall>0.0</cda_stall><cma_stall>0.0</cma_stall>
+      <area>0.00354</area><air_density>1.2041</air_density>
+      <cp>0.084 0 0</cp><forward>0 -1 0</forward><upward>0 0 1</upward>
+      <link_name>rotor_3</link_name>
+    </plugin>
+    <plugin filename="gz-sim-lift-drag-system" name="gz::sim::systems::LiftDrag">
+      <a0>0.3</a0><alpha_stall>1.4</alpha_stall><cla>4.2500</cla><cda>0.10</cda><cma>0.0</cma>
+      <cla_stall>-0.025</cla_stall><cda_stall>0.0</cda_stall><cma_stall>0.0</cma_stall>
+      <area>0.00354</area><air_density>1.2041</air_density>
+      <cp>-0.084 0 0</cp><forward>0 1 0</forward><upward>0 0 1</upward>
+      <link_name>rotor_3</link_name>
     </plugin>
 
     <plugin filename="gz-sim-apply-joint-force-system"
       name="gz::sim::systems::ApplyJointForce">
-      <joint_name>iris_with_standoffs::rotor_0_joint</joint_name>
+      <joint_name>rotor_0_joint</joint_name>
     </plugin>
     <plugin filename="gz-sim-apply-joint-force-system"
       name="gz::sim::systems::ApplyJointForce">
-      <joint_name>iris_with_standoffs::rotor_1_joint</joint_name>
+      <joint_name>rotor_1_joint</joint_name>
     </plugin>
     <plugin filename="gz-sim-apply-joint-force-system"
       name="gz::sim::systems::ApplyJointForce">
-      <joint_name>iris_with_standoffs::rotor_2_joint</joint_name>
+      <joint_name>rotor_2_joint</joint_name>
     </plugin>
     <plugin filename="gz-sim-apply-joint-force-system"
       name="gz::sim::systems::ApplyJointForce">
-      <joint_name>iris_with_standoffs::rotor_3_joint</joint_name>
+      <joint_name>rotor_3_joint</joint_name>
     </plugin>
 
-    <plugin name="ArduPilotPlugin"
-      filename="ArduPilotPlugin">
-      <!-- Port settings -->
+    <plugin name="ArduPilotPlugin" filename="ArduPilotPlugin">
       <fdm_addr>127.0.0.1</fdm_addr>
       <fdm_port_in>9002</fdm_port_in>
       <connectionTimeoutMaxCount>5</connectionTimeoutMaxCount>
       <lock_step>1</lock_step>
       <no_time_sync>1</no_time_sync>
-
       <modelXYZToAirplaneXForwardZDown degrees="true">0 0 0 180 0 0</modelXYZToAirplaneXForwardZDown>
       <gazeboXYZToNED degrees="true">0 0 0 180 0 90</gazeboXYZToNED>
-
-      <imuName>iris_with_standoffs::imu_link::imu_sensor</imuName>
-
+      <imuName>imu_link::imu_sensor</imuName>
       <control channel="0">
-        <jointName>iris_with_standoffs::rotor_0_joint</jointName>
-        <useForce>1</useForce>
-        <multiplier>838</multiplier>
-        <offset>0</offset>
-        <servo_min>1100</servo_min>
-        <servo_max>1900</servo_max>
-        <type>VELOCITY</type>
-        <p_gain>0.20</p_gain>
-        <i_gain>0</i_gain>
-        <d_gain>0</d_gain>
-        <i_max>0</i_max>
-        <i_min>0</i_min>
-        <cmd_max>2.5</cmd_max>
-        <cmd_min>-2.5</cmd_min>
+        <jointName>rotor_0_joint</jointName>
+        <useForce>1</useForce><multiplier>838</multiplier><offset>0</offset>
+        <servo_min>1100</servo_min><servo_max>1900</servo_max>
+        <type>VELOCITY</type><p_gain>0.20</p_gain><i_gain>0</i_gain><d_gain>0</d_gain>
+        <i_max>0</i_max><i_min>0</i_min><cmd_max>2.5</cmd_max><cmd_min>-2.5</cmd_min>
         <controlVelocitySlowdownSim>1</controlVelocitySlowdownSim>
       </control>
-
       <control channel="1">
-        <jointName>iris_with_standoffs::rotor_1_joint</jointName>
-        <useForce>1</useForce>
-        <multiplier>838</multiplier>
-        <offset>0</offset>
-        <servo_min>1100</servo_min>
-        <servo_max>1900</servo_max>
-        <type>VELOCITY</type>
-        <p_gain>0.20</p_gain>
-        <i_gain>0</i_gain>
-        <d_gain>0</d_gain>
-        <i_max>0</i_max>
-        <i_min>0</i_min>
-        <cmd_max>2.5</cmd_max>
-        <cmd_min>-2.5</cmd_min>
+        <jointName>rotor_1_joint</jointName>
+        <useForce>1</useForce><multiplier>838</multiplier><offset>0</offset>
+        <servo_min>1100</servo_min><servo_max>1900</servo_max>
+        <type>VELOCITY</type><p_gain>0.20</p_gain><i_gain>0</i_gain><d_gain>0</d_gain>
+        <i_max>0</i_max><i_min>0</i_min><cmd_max>2.5</cmd_max><cmd_min>-2.5</cmd_min>
         <controlVelocitySlowdownSim>1</controlVelocitySlowdownSim>
       </control>
-
       <control channel="2">
-        <jointName>iris_with_standoffs::rotor_2_joint</jointName>
-        <useForce>1</useForce>
-        <multiplier>-838</multiplier>
-        <offset>0</offset>
-        <servo_min>1100</servo_min>
-        <servo_max>1900</servo_max>
-        <type>VELOCITY</type>
-        <p_gain>0.20</p_gain>
-        <i_gain>0</i_gain>
-        <d_gain>0</d_gain>
-        <i_max>0</i_max>
-        <i_min>0</i_min>
-        <cmd_max>2.5</cmd_max>
-        <cmd_min>-2.5</cmd_min>
+        <jointName>rotor_2_joint</jointName>
+        <useForce>1</useForce><multiplier>-838</multiplier><offset>0</offset>
+        <servo_min>1100</servo_min><servo_max>1900</servo_max>
+        <type>VELOCITY</type><p_gain>0.20</p_gain><i_gain>0</i_gain><d_gain>0</d_gain>
+        <i_max>0</i_max><i_min>0</i_min><cmd_max>2.5</cmd_max><cmd_min>-2.5</cmd_min>
         <controlVelocitySlowdownSim>1</controlVelocitySlowdownSim>
       </control>
-
       <control channel="3">
-        <jointName>iris_with_standoffs::rotor_3_joint</jointName>
-        <useForce>1</useForce>
-        <multiplier>-838</multiplier>
-        <offset>0</offset>
-        <servo_min>1100</servo_min>
-        <servo_max>1900</servo_max>
-        <type>VELOCITY</type>
-        <p_gain>0.20</p_gain>
-        <i_gain>0</i_gain>
-        <d_gain>0</d_gain>
-        <i_max>0</i_max>
-        <i_min>0</i_min>
-        <cmd_max>2.5</cmd_max>
-        <cmd_min>-2.5</cmd_min>
+        <jointName>rotor_3_joint</jointName>
+        <useForce>1</useForce><multiplier>-838</multiplier><offset>0</offset>
+        <servo_min>1100</servo_min><servo_max>1900</servo_max>
+        <type>VELOCITY</type><p_gain>0.20</p_gain><i_gain>0</i_gain><d_gain>0</d_gain>
+        <i_max>0</i_max><i_min>0</i_min><cmd_max>2.5</cmd_max><cmd_min>-2.5</cmd_min>
         <controlVelocitySlowdownSim>1</controlVelocitySlowdownSim>
       </control>
-
       <!-- roll range is -30 to +30 deg -->
       <control channel="8">
         <jointName>gimbal::roll_joint</jointName>
-        <multiplier>1.047197551196</multiplier>
-        <offset>-0.5</offset>
-        <servo_min>1100</servo_min>
-        <servo_max>1900</servo_max>
-        <type>COMMAND</type>
-        <cmd_topic>/gimbal/cmd_roll</cmd_topic>
-        <p_gain>2</p_gain>
+        <multiplier>1.047197551196</multiplier><offset>-0.5</offset>
+        <servo_min>1100</servo_min><servo_max>1900</servo_max>
+        <type>COMMAND</type><cmd_topic>/gimbal/cmd_roll</cmd_topic><p_gain>2</p_gain>
       </control>
-
       <!-- pitch range is -135 to +45 deg -->
       <control channel="9">
         <jointName>gimbal::pitch_joint</jointName>
-        <multiplier>-3.14159265</multiplier>
-        <offset>-0.75</offset>
-        <servo_min>1100</servo_min>
-        <servo_max>1900</servo_max>
-        <type>COMMAND</type>
-        <cmd_topic>/gimbal/cmd_pitch</cmd_topic>
-        <p_gain>2</p_gain>
+        <multiplier>-3.14159265</multiplier><offset>-0.75</offset>
+        <servo_min>1100</servo_min><servo_max>1900</servo_max>
+        <type>COMMAND</type><cmd_topic>/gimbal/cmd_pitch</cmd_topic><p_gain>2</p_gain>
       </control>
-
       <!-- yaw range is -160 to +160 deg -->
       <control channel="10">
         <jointName>gimbal::yaw_joint</jointName>
-        <multiplier>-5.5850536</multiplier>
-        <offset>-0.5</offset>
-        <servo_min>1100</servo_min>
-        <servo_max>1900</servo_max>
-        <type>COMMAND</type>
-        <cmd_topic>/gimbal/cmd_yaw</cmd_topic>
-        <p_gain>2</p_gain>
+        <multiplier>-5.5850536</multiplier><offset>-0.5</offset>
+        <servo_min>1100</servo_min><servo_max>1900</servo_max>
+        <type>COMMAND</type><cmd_topic>/gimbal/cmd_yaw</cmd_topic><p_gain>2</p_gain>
       </control>
-
     </plugin>
 
     <plugin
