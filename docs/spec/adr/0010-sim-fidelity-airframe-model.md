@@ -59,12 +59,15 @@
   ✅机架实测(±0.1925/15″桨/滑橇起落架 FC离地0.31, 悬停复验33%)；✅相机 strapdown 0.11/0/0.20 +
   960×540 + hfov1.0090(=真机标定 fx869@960×540) + `camera.sim.yaml` 平移/内参匹配 + 检测器 960
   ——sim/real 相机同参数, 画面中无水瓶/起落架(与真机一致)。水瓶灰色(蓝色曾被误检成落点盘)。
-- **B 反投影正确性 — 配置自洽完成, 时间同步暂缓**：✅配置自洽/平面高度: 真值量测 nadir bias 2–13mm
-  (见 D)——之前 near_det≈1m 根因是蓝瓶误检, 非几何/时序。⏸**位姿↔图像捕获时刻同步**(共享修复, 按
-  `header.stamp` 插值): 已实现存 patch(`local/scratch/patches/`), 与 C 一起作为"真机散点保真"单独一步。
-- **C 扰动(sim-only, opt-in, 遵守 sim-stress-testbed §1.1 红线) — 暂缓**：已有 风/传感器噪声/结果延迟;
-  待做"相机→CV延迟+图像捕获时间戳"(量真实值)复现散点并验证 B 时间同步。姿态噪声用传感器噪声层
-  (经真实 EKF), 卷帘/振动不做(建不真)。
+- **B 反投影正确性 — 完成**：✅配置自洽/平面高度(真值量测 nadir 2–13mm；near_det≈1m 根因是蓝瓶
+  误检, 非几何/时序)；✅**测量时刻对齐**(sim/real 同一份, 对齐集中在感知)：位姿缓冲+按拍照时刻插值
+  反投影, `DetectionArray.header.stamp`=拍照时刻+附 `vehicle_pose`(契约见 05), 决策 IBVS 姿态补偿
+  用它；时钟域失配守卫(告警+退化)。sim 时钟: /clock 桥+use_sim_time(bringup 参数, real 默认 false)。
+  真机侧留口: camera_service 拍照打戳过 shm(现用读取时刻近似, 差的只是 ms 级传输段)。
+- **C 扰动 — 完成(证据链闭合)**：`image_delay_node`(sim-only, 保留拍照戳)+量测工具动态飞越模式。
+  证据(bias_e@1m/s): 干净 −0.10(本底=遥测到达滞后~0.1s, 精化路径 time_boot_ms 映射, 待做)；
+  400ms+latest **+0.30 FAIL**；400ms+capture **−0.03 PASS**——注入延迟被拍照戳对齐完全补偿。
+  数值细节见 sim-stress-testbed §3.3。姿态噪声用传感器噪声层(经真实 EKF), 卷帘/振动不做(建不真)。
 - **D 验证 — 完成**：✅`scripts/run_measure_reprojection.sh`(sim-only 尺子, 可当回归门): 悬停已知筒
   上方比对反投影 vs field/config 真值。干净 sim: nadir bias 2–13mm/std 13–14mm 全 PASS。
   斜视(0.55m 侧偏)有 +2.6~3.5cm 恒向观察者的偏移——空心白筒近侧外壁可见使色块质心偏移, 真机同样

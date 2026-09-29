@@ -105,6 +105,11 @@ class CvPerceptionNode(Node):
 
         # 取帧源:sim=ros(订阅 image_raw)、real=shm(读原始帧,图不进 ROS)。
         self.declare_parameter('frame_source', 'ros')
+        # ros 源的图像话题(默认生产值)。sim 量测/压测工具插延迟节点时改指延迟后话题。
+        self.declare_parameter('image_topic', _IMAGE_TOPIC)
+        # 位姿取法: capture=按拍照时刻插值(生产默认,ADR-0010 B) / latest=处理时刻最新
+        # (旧行为,**仅供保真证据链 A/B 对照**,启用即告警,不得用于任务/真机)。
+        self.declare_parameter('pose_at', 'capture')
         self.declare_parameter('raw_shm', DEFAULT_RAW_SHM)
         self.declare_parameter('src_width', 1920)
         self.declare_parameter('src_height', 1080)
@@ -138,6 +143,9 @@ class CvPerceptionNode(Node):
         self._pos_buf = deque(maxlen=300)  # (t_sec, (x,y,z))
         self._att_buf = deque(maxlen=300)  # (t_sec, (x,y,z,w))
         self._clock_mismatch_warned = False
+        self._pose_at_latest = self.get_parameter('pose_at').value == 'latest'
+        if self._pose_at_latest:
+            self.get_logger().warn('pose_at=latest: TEST ONLY -- capture-time alignment disabled')
         self._latest_position_ned = None
         self._latest_orientation_xyzw = None
         self._recon_zone_active = False
@@ -182,7 +190,8 @@ class CvPerceptionNode(Node):
             if not self._shm_source.start(self._on_shm_frame):
                 self.get_logger().error('shm 取帧源启动失败(相机服务在跑吗?)')
         else:
-            self.create_subscription(Image, _IMAGE_TOPIC, self._on_ros_image, 10)
+            self.create_subscription(
+                Image, self.get_parameter('image_topic').value, self._on_ros_image, 10)
 
     # ---- 取帧回调 ----
     def _on_ros_image(self, msg):
@@ -213,6 +222,11 @@ class CvPerceptionNode(Node):
         范围 -> 钳到最近端(位姿比图像晚到时用最新、比图像早时用最旧)。
         时钟域失配守卫: 拍照戳与最新遥测戳差 >5s = 图像/遥测不在同一时钟(sim 忘开
         use_sim_time 之类) -> 告警一次并退化用最新位姿,绝不静默钳到远古位姿。"""
+        if self._pose_at_latest:  # 证据链 A/B 对照旋钮,见参数声明
+            if self._latest_position_ned is None or self._latest_orientation_xyzw is None:
+                return None
+            return geometry.VehiclePose(position_ned=self._latest_position_ned,
+                                        orientation_xyzw=self._latest_orientation_xyzw)
         if self._att_buf and abs(t_capture - self._att_buf[-1][0]) > 5.0:
             if not self._clock_mismatch_warned:
                 self._clock_mismatch_warned = True

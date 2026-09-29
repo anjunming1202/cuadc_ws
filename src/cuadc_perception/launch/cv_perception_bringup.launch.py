@@ -46,6 +46,9 @@ def generate_launch_description():
     preview_bitrate_arg = DeclareLaunchArgument('preview_bitrate', default_value='1000')
     # 仿真工具直接起本文件(不经 mission_bringup)时传 true(见 interface_bringup 同名参数)。
     use_sim_time_arg = DeclareLaunchArgument('use_sim_time', default_value='false')
+    # 量测/压测工具插图像延迟节点时改指延迟后话题; pose_at=latest 仅证据链 A/B 用。
+    image_topic_arg = DeclareLaunchArgument('image_topic', default_value='/camera/image_raw')
+    pose_at_arg = DeclareLaunchArgument('pose_at', default_value='capture')
 
     cv_perception_node = Node(
         package='cuadc_perception',
@@ -72,6 +75,8 @@ def generate_launch_description():
             'preview_port': LaunchConfiguration('preview_port'),
             'preview_bitrate': LaunchConfiguration('preview_bitrate'),
             'use_sim_time': LaunchConfiguration('use_sim_time'),
+            'image_topic': LaunchConfiguration('image_topic'),
+            'pose_at': LaunchConfiguration('pose_at'),
         }],
     )
 
@@ -80,6 +85,6 @@ def generate_launch_description():
         debug_annotated_arg, debug_contours_arg, debug_mask_arg, max_concurrent_debug_arg,
         frame_source_arg, raw_shm_arg, src_width_arg, src_height_arg, src_fps_arg,
         cv_width_arg, cv_height_arg, preview_enabled_arg, preview_port_arg, preview_bitrate_arg,
-        use_sim_time_arg,
+        use_sim_time_arg, image_topic_arg, pose_at_arg,
         cv_perception_node,
     ])

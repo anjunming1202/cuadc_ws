@@ -60,6 +60,7 @@
 | 飞控动力学（风） | `config/sim_realism.parm` + `gazebo_bringup` 新增 `sim_realism_params:=<path>` 再叠一个 `--add-param-file` | `SIM_WIND_SPD` / `SIM_WIND_DIR` / `SIM_WIND_TURB` |
 | 传感器噪声 | 同一 parm 文件 | `SIM_GPS_*`、`SIM_ACC*_RND`、`SIM_GYR*_RND`、`SIM_BARO_RND`（ArduPilot 自带传感器模型） |
 | 感知时延 | **sim-only** `detection_delay_node`（`cuadc_sim`）经压测台 launch 插在感知↔决策之间 | 缓冲延迟转发 `DetectionArray`，建模相机→CV→决策实测时延（值可由 cv-field-test profiling 提供） |
+| 相机→CV 图像时延 | **sim-only** `image_delay_node`（`cuadc_sim`）插在相机↔感知之间（量测工具 `run_measure_reprojection.sh [latency_ms]` 已接） | 延迟转发 `Image`、**保留拍照戳**——复现真机"旧帧+真拍照戳"，触发位姿-图像时刻不一致（§3.3 第 2 类） |
 
 不给 `sim_realism_params`（parm 缺省）+ 零延迟档 = 干净 sim，行为与现在完全一致。
 
@@ -72,11 +73,16 @@
 2. **反投影用错位姿**（新，正确性修复，非扰动）：反投影须用**图像拍摄时刻**的位姿；若用"处理时刻
    的最新位姿"，运动/转动时世界坐标本身就偏，偏量 ∝ 速度×链路延迟、角速率×延迟×高度 →
    **散点**。这极可能是真机数据集反投影发散的根因（散而非偏 = 输入不同步，非公式错）。
-   - **修复（共享 `geometry.py`/`cv_perception_node`，sim/real 同改）**：缓冲位姿流，按图像
-     `header.stamp` 插值取位姿再反投影。干净/低延迟时行为不变；有延迟时才补偿。
-   - **sim 复现/验证它**：给 sim 图像打**真实捕获时间戳** + 注入**相机→CV 端到端延迟**
-     (sim-only、opt-in、量值取 profiling 实测)。未修时 sim 应出散点，修后散点消失 → 验证闭环。
-     此为对 §3.2 表的新增扰动层。
+   - **修复（已实现，sim/real 同一份）**：感知缓冲位姿流，按图像 `header.stamp`（=拍照时刻）
+     插值取位姿再反投影；`DetectionArray` 附带 `vehicle_pose`（拍照时刻位姿），决策 IBVS 的
+     姿态补偿用它（契约见 05 文档）。干净/低延迟时行为不变；有延迟时才补偿。
+   - **验证闭环（2026-09-30，`run_measure_reprojection.sh` 动态飞越 1m/s，bias_e）**：
+     干净+capture −0.10（本底，见下）；注入 150ms+latest +0.06（=+0.15−0.10，算术吻合）；
+     400ms+latest **+0.30**（随注入线性放大，FAIL）；400ms+capture **−0.03（PASS，注入被
+     完全补偿）**。旋钮：`pose_at:=latest` 仅证据链 A/B 用，启用即告警。
+   - **已知残差——遥测到达滞后 ~0.1s**：位姿消息内容旧、到达 interface 才盖戳（SITL 经
+     MAVProxy 转发；真机是串口+解析，应更小）。静态不可见、运动时=v×0.1 的本底偏差。
+     精化路径：用 MAVLink `time_boot_ms` 映射盖"测量时刻"戳（真机同理），待做。
 
 > **姿态噪声不单列**：见 §1.1 第 3 条，由传感器噪声层经真实 EKF 自然产生，感知直接用该 EKF 位姿。
 

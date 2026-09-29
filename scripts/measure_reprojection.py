@@ -87,6 +87,28 @@ def _sample_at(node, mav, north, east):
     return list(node.samples)
 
 
+def _sample_moving(node, mav, tn, te):
+    """动态飞越采样：以受控 1m/s 向东匀速穿过筒上方，途中采样。运动中"位姿时刻≠
+    拍照时刻"的误差 = v×时刻差(沿运动向,东),静态悬停显不出来——验证延迟注入/时间
+    同步(ADR-0010 B/C)的关键视点。速度已知,bias_e 直接换算成等效时刻差。
+    注意干净 sim 也有 ~0.1-0.2s 的遥测到达滞后(SITL->MAVProxy 转发,内容旧、到达
+    才盖戳),它是本行的本底;证据链看的是"注入延迟后相对本底的增量"。"""
+    _goto(mav, tn, te - 1.5, _SETTLE_S + 2.0)
+    node.samples = []
+    node.enabled = True
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < 3.2:
+        # 速度模式: vx=0, vy(东)=1.0, vz=0, yaw=0 锁北 (mask: pos/acc/yawrate 忽略)
+        mav.mav.set_position_target_local_ned_send(
+            0, mav.target_system, mav.target_component,
+            mavutil.mavlink.MAV_FRAME_LOCAL_NED, 0b0000100111000111,
+            0, 0, 0, 0.0, 1.0, 0.0, 0, 0, 0, 0.0, 0)
+        rclpy.spin_once(node, timeout_sec=0.05)
+        time.sleep(0.05)
+    node.enabled = False
+    return list(node.samples)
+
+
 def _stats(samples, tn, te):
     """关联到该筒的样本 -> (n, bias_n, bias_e, std)。"""
     xs = [(n, e) for n, e, _ in samples if math.hypot(n - tn, e - te) < _ASSOC_GATE_M]
@@ -126,8 +148,13 @@ def main():
 
     rows, ok = [], True
     for label, tn, te, radius in _tubes_ned():
-        for view, (n, e) in (('nadir', (tn, te)), ('offset', (tn, te + _OFFSET_E_M))):
-            samples = _sample_at(node, mav, n, e)
+        for view in ('nadir', 'offset', 'moving'):
+            if view == 'nadir':
+                samples = _sample_at(node, mav, tn, te)
+            elif view == 'offset':
+                samples = _sample_at(node, mav, tn, te + _OFFSET_E_M)
+            else:
+                samples = _sample_moving(node, mav, tn, te)
             cnt, bn, be, std = _stats(samples, tn, te)
             bias = math.hypot(bn, be) if cnt else float('nan')
             gated = view == 'nadir'  # 判定门只加 nadir，offset 是信息输出(见文件头)
