@@ -2,7 +2,7 @@
 <!-- CUADC vendored 机体，按真机实测几何建模(ADR-0010)。机架 inline(不再 include
      iris_with_standoffs)——上游 iris 的旋翼位/桨径/起落架高与真机差太多,include 改不了:
      - 轴距 545mm(对角电机轴线,实测) -> 旋翼 (±0.1925, ±0.1925), quad-X;
-     - 桨 15x5.5 折叠(实测 Ø381mm) -> 桨网格 scale 1.9、碰撞 r0.19;
+     - 桨 15x5.5 折叠(实测 Ø381mm) -> 桨网格 scale 1.429(网格原生 r0.1333)、碰撞 r0.19;
      - 双滑橇起落架(照片) -> 飞控(base_link 原点)离地 0.31m(实测);
      - 空机+电池 2.4kg / 满载 3.5kg(实测): 机架1.5+imu0.15+桨4x0.025+云台0.23+补重0.42+2瓶x0.55;
      - 机架惯量为放大估计值,待双线摆实测替换。
@@ -208,7 +208,7 @@
       <detach_topic>/model/cuadc_iris/drop/right/detach</detach_topic>
     </plugin>
 
-    <!-- 旋翼: (±0.1925,±0.1925) 对角545mm, 桨网格 x1.9 = Ø0.38, 碰撞 r0.19。
+    <!-- 旋翼: (±0.1925,±0.1925) 对角545mm, 桨网格 x1.429 = Ø0.381, 碰撞 r0.19。
          号位/转向/通道沿用 iris quad-X(与 SITL -f gazebo-iris 兼容)。-->
     <link name="rotor_0">
       <pose>0.1925 -0.1925 0.023 0 0 0</pose>
@@ -217,7 +217,7 @@
       <collision name="collision"><pose>0 0 0 0 0 0</pose>
         <geometry><cylinder><length>0.005</length><radius>0.19</radius></cylinder></geometry></collision>
       <visual name="visual"><pose>0 0 0 0 0 0</pose>
-        <geometry><mesh><scale>1.9 1.9 1.9</scale><uri>model://iris_with_standoffs/meshes/iris_prop_ccw.dae</uri></mesh></geometry>
+        <geometry><mesh><scale>1.429 1.429 1.429</scale><uri>model://iris_with_standoffs/meshes/iris_prop_ccw.dae</uri></mesh></geometry>
         <material><ambient>0.05 0.05 0.05 1</ambient><diffuse>0.1 0.1 0.1 1</diffuse></material></visual>
     </link>
     <joint name="rotor_0_joint" type="revolute"><child>rotor_0</child><parent>base_link</parent>
@@ -230,7 +230,7 @@
       <collision name="collision"><pose>0 0 0 0 0 0</pose>
         <geometry><cylinder><length>0.005</length><radius>0.19</radius></cylinder></geometry></collision>
       <visual name="visual"><pose>0 0 0 0 0 0</pose>
-        <geometry><mesh><scale>1.9 1.9 1.9</scale><uri>model://iris_with_standoffs/meshes/iris_prop_ccw.dae</uri></mesh></geometry>
+        <geometry><mesh><scale>1.429 1.429 1.429</scale><uri>model://iris_with_standoffs/meshes/iris_prop_ccw.dae</uri></mesh></geometry>
         <material><ambient>0.05 0.05 0.05 1</ambient><diffuse>0.1 0.1 0.1 1</diffuse></material></visual>
     </link>
     <joint name="rotor_1_joint" type="revolute"><child>rotor_1</child><parent>base_link</parent>
@@ -243,7 +243,7 @@
       <collision name="collision"><pose>0 0 0 0 0 0</pose>
         <geometry><cylinder><length>0.005</length><radius>0.19</radius></cylinder></geometry></collision>
       <visual name="visual"><pose>0 0 0 0 0 0</pose>
-        <geometry><mesh><scale>1.9 1.9 1.9</scale><uri>model://iris_with_standoffs/meshes/iris_prop_cw.dae</uri></mesh></geometry>
+        <geometry><mesh><scale>1.429 1.429 1.429</scale><uri>model://iris_with_standoffs/meshes/iris_prop_cw.dae</uri></mesh></geometry>
         <material><ambient>0.05 0.05 0.05 1</ambient><diffuse>0.1 0.1 0.1 1</diffuse></material></visual>
     </link>
     <joint name="rotor_2_joint" type="revolute"><child>rotor_2</child><parent>base_link</parent>
@@ -256,7 +256,7 @@
       <collision name="collision"><pose>0 0 0 0 0 0</pose>
         <geometry><cylinder><length>0.005</length><radius>0.19</radius></cylinder></geometry></collision>
       <visual name="visual"><pose>0 0 0 0 0 0</pose>
-        <geometry><mesh><scale>1.9 1.9 1.9</scale><uri>model://iris_with_standoffs/meshes/iris_prop_cw.dae</uri></mesh></geometry>
+        <geometry><mesh><scale>1.429 1.429 1.429</scale><uri>model://iris_with_standoffs/meshes/iris_prop_cw.dae</uri></mesh></geometry>
         <material><ambient>0.05 0.05 0.05 1</ambient><diffuse>0.1 0.1 0.1 1</diffuse></material></visual>
     </link>
     <joint name="rotor_3_joint" type="revolute"><child>rotor_3</child><parent>base_link</parent>
