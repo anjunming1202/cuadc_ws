@@ -65,12 +65,27 @@ ros2 service call /cuadc_interface/release_payload cuadc_interface_msgs/srv/Rele
 ```
 或让机械子队直接用遥控器打投放通道验证——**绝不带桨在地面解锁**。
 
-> **arm+takeoff 放行闸门（两个飞行测试都有）**：脚本起来后节点停在 arm **之前**（桨不转），
-> 打印 `READY — NOT armed` 并等放行。**确认现场安全后**，从另一个 SSH 发一次：
+> **arm 放行闸门（所有会 arm/起飞的测试都有：arm 检查 / 起降 / 合集）**：脚本起来后节点停在
+> arm **之前**（桨不转），打印 `READY — NOT armed` 并等放行。**确认现场安全后**，从另一个 SSH 发一次：
 > ```
 > ros2 topic pub -1 /cuadc_flight_test/start std_msgs/msg/Empty "{}"
 > ```
-> 收到才 arm+起飞。桨转前必须有人显式放行，不会一跑脚本就飞。
+> 收到才 arm。桨转前必须有人显式放行，不会一跑脚本就动。
+
+### ARM + RC 接管检查（**每次飞行测试前必做**；比赛前给裁判演示 RC 夺控的必要环节）
+```
+./scripts/run_arm_check_real.sh          # 起来后等放行(见上)
+# 放行后 Pi arm → 进入 15s 观察窗口(每 1s 打倒计时)：安全飞手此时用 RC 杀锁 disarm 或切模式夺控
+```
+验证 ① 树莓派能否 arm（最小控制打通）② **RC 能否 disarm/接管**（桨转前必须证明人能随时停下）。
+节点**只如实观察+汇报、不判 PASS/FAIL**，按时间线打事件：
+- 窗口内 `armed→false` → 「检测到 armed→false @T+Xs」：你拨了 RC 杀锁即 **RC disarm 有效**；
+- `mode` 被切走（仍 armed）→ 「RC 成功接管 mode X→Y」；
+- 窗口结束仍 armed → 等飞控自带 `DISARM_DELAY` 自动 disarm；宽限内没自动 disarm → Pi 兜底 disarm 并 WARN。
+
+⚠ arm 会让电机转（有桨则桨转）：**按队内 SOP 决定是否拆桨**——只验 RC 信号链路拆桨最安全，要给裁判
+看电机真停再按其要求带桨并约束好。飞手 RC 全程在手。无 GPS 室内 bench 可 `-p mode:=STABILIZE`。
+**这一步没看到 RC 能 disarm/夺控，就不要往下做任何会飞的测试。**
 
 ### 起降 smoke（**会飞**，最简，RC 待命）
 ```
