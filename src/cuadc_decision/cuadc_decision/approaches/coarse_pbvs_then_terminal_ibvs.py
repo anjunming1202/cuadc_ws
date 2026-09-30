@@ -11,7 +11,7 @@ MissionContext(遥测 + 检测),吐 ApproachOutput,不碰 ROS 类型。可调参
 
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -21,6 +21,8 @@ from cuadc_decision.approaches.base import ApproachOutput
 from cuadc_decision.drop_strategy import Candidate
 
 NAME = 'coarse_pbvs_then_terminal_ibvs'
+
+_OFF_WINDOW = 3  # 冻结偏移取近几帧实测均值(0.3s@10Hz):单帧噪声不毒化 coast/收口判据,又不拖伺服(伺服用的是本帧新测)
 
 
 @dataclass
@@ -62,6 +64,10 @@ class ApproachConfig:
     # 约束,按冻结偏移把盲降走完并照常查投放门(live 速度/水平)。盲段有界(≤此带+稳住时长,
     # 指令趋零速),与"陈旧偏移乱冲"的跑飞场景不同;未收敛就丢仍悬停等重锁。0=关闭。
     endgame_alt_band_m: float = 0.0
+    # 末端持续丢失(超过此 tick 数)后退回粗段重走漏斗(爬回巡航高、位置回锁定点上方,
+    # 全部复用粗段机制)——低空丢定死锁(筒在窄 FOV 外、悬停永远等不到重锁)的唯一出路。
+    # 0=关(纯单测兜底)。
+    reacquire_after_ticks: int = 0
     # 降高
     descend_rate_mps: float = 0.4
     descend_pause_off_m: float = 0.30     # 水平误差大于此暂停降高、先追回来
@@ -86,13 +92,14 @@ def create(config: Optional[ApproachConfig] = None) -> 'CoarsePbvsThenTerminalIb
 
 @dataclass
 class ApproachState:
-    phase: str = 'coarse'                 # coarse -> terminal
+    phase: str = 'coarse'                 # coarse -> terminal (持续丢失会退回 coarse 重来)
     locked: Optional[Candidate] = None    # 锁定目标(世界坐标),粗/末段硬锁都用它关联
     lever: Tuple[float, float] = (0.0, 0.0)  # 本次投放口杆臂,enter 时按投放次序从 lever_arms_m 选定
     miss: int = 0                         # 末段连续失配帧数(丢检测),超阈值悬停
     integ: Tuple[float, float] = (0.0, 0.0)
     prev_off: Optional[Tuple[float, float]] = None       # 上一帧偏移,PID 的 D 项(on measurement)用
-    prev_off_meas: Optional[Tuple[float, float]] = None  # 上一次有检测时的偏移,短暂丢失时 coast 用
+    prev_off_meas: Optional[Tuple[float, float]] = None  # 近几帧实测偏移均值(见 _OFF_WINDOW),coast/收口用
+    off_window: list = field(default_factory=list)       # 实测偏移滑窗,冻结值抗单帧噪声(模式 A 毒帧)
     stable_since: Optional[float] = None
 
 
@@ -159,7 +166,7 @@ class CoarsePbvsThenTerminalIbvs:
             settled = ctx.horizontal_speed is not None and ctx.horizontal_speed <= cfg.handoff_speed_mps
             if math.hypot(*e) <= cfg.handoff_off_m and settled:
                 st.phase = 'terminal'
-                st.miss, st.prev_off_meas = 0, off
+                st.miss, st.prev_off_meas, st.off_window = 0, off, [off]
                 st.integ, st.prev_off, st.stable_since = (0.0, 0.0), None, None
         return ApproachOutput(position_target=aim)
 
@@ -179,7 +186,9 @@ class CoarsePbvsThenTerminalIbvs:
             st.locked = Candidate(best.position.x, best.position.y, best.apparent_size)
             st.miss = 0
             off = self._bearing_to_off((best.bearing_x, best.bearing_y), ctx, h)
-            st.prev_off_meas = off
+            st.off_window = (st.off_window + [off])[-_OFF_WINDOW:]
+            st.prev_off_meas = (sum(o[0] for o in st.off_window) / len(st.off_window),
+                                sum(o[1] for o in st.off_window) / len(st.off_window))
         else:
             st.miss += 1
             # 投放窗收口锁(见 endgame_alt_band_m 注释):已收敛+已贴近才允许按冻结
@@ -192,6 +201,11 @@ class CoarsePbvsThenTerminalIbvs:
                 # 彻底丢目标:悬停(零机体速度),绝不靠陈旧偏移继续冲(那正是之前
                 # 跑飞的原因),清 PID 状态,等重新关联。
                 st.integ, st.prev_off, st.stable_since = (0.0, 0.0), None, None
+                if st.miss >= cfg.reacquire_after_ticks > 0:
+                    # 低空重锁等不到(筒在窄 FOV 外):退回粗段重走漏斗。
+                    st.phase, st.miss = 'coarse', 0
+                    st.prev_off_meas, st.off_window = None, []
+                    return self._coarse(ctx, dets, h)
                 return ApproachOutput(velocity_target=(0.0, 0.0, 0.0))
             off = st.prev_off_meas  # 短暂丢失/收口:保持上次偏移
 

@@ -22,6 +22,7 @@ v_max_mps: 1.0
 i_zone_m: 0.4
 lever_arms_m: [[-0.11, -0.04], [-0.11, 0.04]]  # 按投放次序:筒1左口/筒2右口(实测,相对相机 前/右),与脱钩次序一致
 max_coast_ticks: 4
+reacquire_after_ticks: 20     # 持续丢失 2s(@10Hz)退回粗段重走漏斗(低空丢定死锁的出路)
 endgame_alt_band_m: 0.25        # 收口锁带宽:真机同几何(末端贴近必丢筒),数值待真机丢失高度实测后校
 descend_rate_mps: 0.4
 descend_pause_off_m: 0.30
