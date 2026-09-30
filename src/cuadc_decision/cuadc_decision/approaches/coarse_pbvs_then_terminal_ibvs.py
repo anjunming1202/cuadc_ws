@@ -36,7 +36,11 @@ class ApproachConfig:
     fc_rest_clearance_m: float = 0.0      # 飞控静止离地高(ADR-0010 簇①: 0.31)
     camera_below_fc_m: float = 0.0        # 相机在飞控下方(ADR-0010 簇①: 0.20)
     dt_s: float = 0.1                     # tick 周期(对应 decision tick_rate_hz=10),积分/微分用
-    min_conf: float = 0.5                 # 只对置信度够的检测伺服
+    min_conf: float = 0.5                 # 粗段/锁定:只对置信度够的检测伺服
+    # 末端置信度门单独放低:近距圆盘贴画面边缘残缺,检测器置信度塌落(实测 h<1.1 时
+    # near_det=0.01 仍被 0.5 门滤掉->丢筒)。末端有世界坐标硬锁关联门(refine_gate)
+    # 保护,低置信度的"对的筒"照常伺服;垃圾检测靠关联门挡。
+    min_conf_terminal: float = 0.5
     # 粗接近(PBVS) -> 交接
     coarse_radius_m: float = 1.0          # 水平进到这么近(且看得见)才考虑切末端
     refine_gate_m: float = 0.4            # 硬锁世界坐标关联门:粗/末段都只认离锁定目标这么近的检测(筒间距~1.5m,足够区分)
@@ -53,6 +57,11 @@ class ApproachConfig:
     # ctx.drop_task.drop_count 选定本次杆臂,超出表长用最后一项。
     lever_arms_m: Tuple[Tuple[float, float], ...] = ((0.0, 0.0),)
     max_coast_ticks: int = 4              # 末段连续失配超过此帧数就悬停,不靠陈旧偏移乱冲
+    # 投放窗收口锁:末端贴近时筒必然滑出窄 FOV(杆臂瞄点在画面下缘,真机同几何)。丢检测
+    # 时若已收敛(最后实测误差<drop_tol)且 h 离 drop_alt 不超过此带,则不受 coast 上限
+    # 约束,按冻结偏移把盲降走完并照常查投放门(live 速度/水平)。盲段有界(≤此带+稳住时长,
+    # 指令趋零速),与"陈旧偏移乱冲"的跑飞场景不同;未收敛就丢仍悬停等重锁。0=关闭。
+    endgame_alt_band_m: float = 0.0
     # 降高
     descend_rate_mps: float = 0.4
     descend_pause_off_m: float = 0.30     # 水平误差大于此暂停降高、先追回来
@@ -121,8 +130,9 @@ class CoarsePbvsThenTerminalIbvs:
     def loop(self, ctx, now: Optional[float] = None) -> ApproachOutput:
         now = now if now is not None else time.monotonic()
         h = -ctx.local_position_z if ctx.local_position_z is not None else self.cfg.cruise_alt_m
+        conf_gate = self.cfg.min_conf if self.state.phase == 'coarse' else self.cfg.min_conf_terminal
         dets = [d for d in ctx.detections
-                if getattr(d, 'target_type', 'cylinder') == 'cylinder' and d.confidence >= self.cfg.min_conf]
+                if getattr(d, 'target_type', 'cylinder') == 'cylinder' and d.confidence >= conf_gate]
         if self.state.phase == 'coarse':
             return self._coarse(ctx, dets, h)
         return self._terminal(ctx, dets, h, now)
@@ -164,6 +174,7 @@ class CoarsePbvsThenTerminalIbvs:
         # ——关联用世界、控制用 bearing,各取所长。
         target = st.locked
         best = _nearest_within(dets, target.x, target.y, cfg.refine_gate_m) if target is not None else None
+        endgame = False
         if best is not None:
             st.locked = Candidate(best.position.x, best.position.y, best.apparent_size)
             st.miss = 0
@@ -171,12 +182,18 @@ class CoarsePbvsThenTerminalIbvs:
             st.prev_off_meas = off
         else:
             st.miss += 1
-            if st.prev_off_meas is None or st.miss > cfg.max_coast_ticks:
+            # 投放窗收口锁(见 endgame_alt_band_m 注释):已收敛+已贴近才允许按冻结
+            # 偏移盲收口,否则维持"悬停等重锁"。
+            endgame = (st.prev_off_meas is not None
+                       and math.hypot(st.prev_off_meas[0] - st.lever[0],
+                                      st.prev_off_meas[1] - st.lever[1]) < cfg.drop_tol_m
+                       and h <= cfg.drop_alt_m + cfg.endgame_alt_band_m)
+            if st.prev_off_meas is None or (st.miss > cfg.max_coast_ticks and not endgame):
                 # 彻底丢目标:悬停(零机体速度),绝不靠陈旧偏移继续冲(那正是之前
                 # 跑飞的原因),清 PID 状态,等重新关联。
                 st.integ, st.prev_off, st.stable_since = (0.0, 0.0), None, None
                 return ApproachOutput(velocity_target=(0.0, 0.0, 0.0))
-            off = st.prev_off_meas  # 短暂丢失:保持上次偏移 coast 几帧
+            off = st.prev_off_meas  # 短暂丢失/收口:保持上次偏移
 
         e = (off[0] - st.lever[0], off[1] - st.lever[1])
         doff = (0.0, 0.0) if st.prev_off is None else (
@@ -196,7 +213,14 @@ class CoarsePbvsThenTerminalIbvs:
 
         herr = math.hypot(*e)
         if h > cfg.drop_alt_m + 1e-3:  # 还在降高:够居中才降,飘了先追回来
-            vz = cfg.descend_rate_mps if herr < cfg.descend_pause_off_m else 0.0
+            # 降高只许在有新测量或收口锁内进行:普通 coast 盲降会把丢失点的高度
+            # 亏空扩大(实测 4 帧 coast 从 1.05 带到 0.9 以下),丢了就先停降。
+            # 收口带内降高门收紧到 drop_tol:低于带顶随时可能永久丢筒(FOV 几何),
+            # 必须保证"丢的那一刻已收敛",收口锁才接得住;带外维持宽门快速下来。
+            in_band = h <= cfg.drop_alt_m + cfg.endgame_alt_band_m
+            gate = cfg.drop_tol_m if in_band else cfg.descend_pause_off_m
+            vz = (cfg.descend_rate_mps
+                  if herr < gate and (st.miss == 0 or endgame) else 0.0)
             return ApproachOutput(velocity_target=(v[0], v[1], vz))
 
         # 到投放高度:停降,检查投放门(用对地遥测速度,顶风自然满足)

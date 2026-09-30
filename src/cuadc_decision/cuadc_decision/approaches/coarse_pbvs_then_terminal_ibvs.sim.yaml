@@ -8,6 +8,7 @@ fc_rest_clearance_m: 0.31       # 飞控静止离地(ADR-0010 簇①);h 是解�
 camera_below_fc_m: 0.20         # 相机在飞控下方(ADR-0010 簇①)
 dt_s: 0.1
 min_conf: 0.5
+min_conf_terminal: 0.25       # 末端放低:近距圆盘残缺置信度塌落;硬锁关联门挡垃圾(见 ApproachConfig 注释)
 coarse_radius_m: 1.0
 refine_gate_m: 0.65
 handoff_off_m: 0.6
@@ -19,6 +20,7 @@ v_max_mps: 1.0
 i_zone_m: 0.4
 lever_arms_m: [[-0.11, -0.04], [-0.11, 0.04]]  # 按投放次序:筒1左口/筒2右口(实测,ADR-0010 簇②),与脱钩次序一致
 max_coast_ticks: 4
+endgame_alt_band_m: 0.25        # 收口锁带宽:丢检测时已收敛且 h≤drop_alt+此值 → 盲收口投放(实测丢失点 1.05-1.13)
 descend_rate_mps: 0.4
 descend_pause_off_m: 0.30
 drop_tol_m: 0.04
