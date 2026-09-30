@@ -59,8 +59,8 @@
 |---|---|---|
 | 飞控动力学（风） | `config/sim_realism.parm` + `gazebo_bringup` 新增 `sim_realism_params:=<path>` 再叠一个 `--add-param-file` | `SIM_WIND_SPD` / `SIM_WIND_DIR` / `SIM_WIND_TURB` |
 | 传感器噪声 | 同一 parm 文件 | `SIM_GPS_*`、`SIM_ACC*_RND`、`SIM_GYR*_RND`、`SIM_BARO_RND`（ArduPilot 自带传感器模型） |
-| 感知时延 | **sim-only** `detection_delay_node`（`cuadc_sim`）经压测台 launch 插在感知↔决策之间 | 缓冲延迟转发 `DetectionArray`，建模相机→CV→决策实测时延（值可由 cv-field-test profiling 提供） |
-| 相机→CV 图像时延 | **sim-only** `image_delay_node`（`cuadc_sim`）插在相机↔感知之间（量测工具 `run_measure_reprojection.sh [latency_ms]` 已接） | 延迟转发 `Image`、**保留拍照戳**——复现真机"旧帧+真拍照戳"，触发位姿-图像时刻不一致（§3.3 第 2 类） |
+| 感知时延(**被下行取代,待退役**) | **sim-only** `detection_delay_node`（`cuadc_sim`）经压测台 launch 插在感知↔决策之间 | 缓冲延迟转发 `DetectionArray`。B(时刻对齐)之前的务实替身——真机这段(感知发布→决策收到)近乎零,真延迟在图像侧。暂留=§5 悬崖数据可复现+压测台还接着它;算法阶段重扫悬崖时改接 `image_delay_node` 即删 |
+| 相机→CV 图像时延(**新实验一律用这个**) | **sim-only** `image_delay_node`（`cuadc_sim`）插在相机↔感知之间（量测工具 `run_measure_reprojection.sh [latency_ms]` 已接） | 延迟转发 `Image`、**保留拍照戳**——注入点与真机物理一致(拍照→CV),是结果延迟的严格超集,且触发位姿-图像时刻不一致（§3.3 第 2 类） |
 
 不给 `sim_realism_params`（parm 缺省）+ 零延迟档 = 干净 sim，行为与现在完全一致。
 

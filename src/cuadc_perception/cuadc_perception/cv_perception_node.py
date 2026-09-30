@@ -105,10 +105,9 @@ class CvPerceptionNode(Node):
 
         # 取帧源:sim=ros(订阅 image_raw)、real=shm(读原始帧,图不进 ROS)。
         self.declare_parameter('frame_source', 'ros')
-        # ros 源的图像话题(默认生产值)。sim 量测/压测工具插延迟节点时改指延迟后话题。
-        self.declare_parameter('image_topic', _IMAGE_TOPIC)
         # 位姿取法: capture=按拍照时刻插值(生产默认,ADR-0010 B) / latest=处理时刻最新
-        # (旧行为,**仅供保真证据链 A/B 对照**,启用即告警,不得用于任务/真机)。
+        # (旧行为)。latest 仅两用: 保真证据链 A/B 对照; 真机拍照戳链路异常时的现场兜底。
+        # 启用即告警。sim 工具改图像话题用 launch remapping(见 cv_perception_bringup),不进节点。
         self.declare_parameter('pose_at', 'capture')
         self.declare_parameter('raw_shm', DEFAULT_RAW_SHM)
         self.declare_parameter('src_width', 1920)
@@ -190,8 +189,7 @@ class CvPerceptionNode(Node):
             if not self._shm_source.start(self._on_shm_frame):
                 self.get_logger().error('shm 取帧源启动失败(相机服务在跑吗?)')
         else:
-            self.create_subscription(
-                Image, self.get_parameter('image_topic').value, self._on_ros_image, 10)
+            self.create_subscription(Image, _IMAGE_TOPIC, self._on_ros_image, 10)
 
     # ---- 取帧回调 ----
     def _on_ros_image(self, msg):
