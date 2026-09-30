@@ -63,6 +63,10 @@ class ApproachConfig:
     # (与 drop_bottle_bridge/真机机构的脱钩次序同一约定,见 ADR-0010 簇②)。enter 时按
     # ctx.drop_task.drop_count 选定本次杆臂,超出表长用最后一项。
     lever_arms_m: Tuple[Tuple[float, float], ...] = ((0.0, 0.0),)
+    # 经验瞄准修正,机体系(前,右)米,按投放次序与 lever_arms_m 并行(超表长用最后一项)。
+    # 吸收解析链吸收不掉的系统误差(安装角/内参/杆臂测量/深度残差):标定流程=实测落点
+    # 偏差取均值反填(落点偏北 5cm 且机头朝北 -> 前向 trim -0.05)。生效值 lever+trim。
+    aim_trims_m: Tuple[Tuple[float, float], ...] = ((0.0, 0.0),)
     max_coast_ticks: int = 4              # 末段连续失配超过此帧数就悬停,不靠陈旧偏移乱冲
     # 投放窗收口锁:末端贴近时筒必然滑出窄 FOV(杆臂瞄点在画面下缘,真机同几何)。丢检测
     # 时若已收敛(最后实测误差<drop_tol)且 h 离 drop_alt 不超过此带,则不受 coast 上限
@@ -109,6 +113,7 @@ class ApproachState:
     prev_off: Optional[Tuple[float, float]] = None       # 上一帧偏移,PID 的 D 项(on measurement)用
     prev_off_meas: Optional[Tuple[float, float]] = None  # 近几帧实测偏移均值(见 _OFF_WINDOW),coast/收口用
     off_window: list = field(default_factory=list)       # 实测偏移滑窗,冻结值抗单帧噪声(模式 A 毒帧)
+    last_bearing: Optional[Tuple[float, float]] = None   # 最后实测 bearing,投放瞬间日志用(经验瞄点的可复现性诊断)
     stable_since: Optional[float] = None
 
 
@@ -138,10 +143,14 @@ class SteppedDescentIbvs:
         self.state = ApproachState()
 
     def enter(self, ctx):
-        """进入 APPROACH 时调:以 SEARCH 选定的目标为锁定种子,按投放次序选投放口杆臂,清内部状态。"""
-        arms = self.cfg.lever_arms_m
-        lever = tuple(arms[min(ctx.drop_task.drop_count, len(arms) - 1)])
-        self.state = ApproachState(locked=ctx.drop_task.selected_target, lever=lever)
+        """进入 APPROACH 时调:以 SEARCH 选定的目标为锁定种子,按投放次序选投放口杆臂
+        (+经验修正),清内部状态。"""
+        i = ctx.drop_task.drop_count
+        arms, trims = self.cfg.lever_arms_m, self.cfg.aim_trims_m
+        arm = arms[min(i, len(arms) - 1)]
+        trim = trims[min(i, len(trims) - 1)]
+        self.state = ApproachState(locked=ctx.drop_task.selected_target,
+                                   lever=(arm[0] + trim[0], arm[1] + trim[1]))
 
     def loop(self, ctx, now: Optional[float] = None) -> ApproachOutput:
         now = now if now is not None else time.monotonic()
@@ -194,7 +203,8 @@ class SteppedDescentIbvs:
         if best is not None:
             st.locked = Candidate(best.position.x, best.position.y, best.apparent_size)
             st.miss = 0
-            off = self._bearing_to_off((best.bearing_x, best.bearing_y), ctx, h)
+            st.last_bearing = (best.bearing_x, best.bearing_y)
+            off = self._bearing_to_off(st.last_bearing, ctx, h)
             st.off_window = (st.off_window + [off])[-_OFF_WINDOW:]
             st.prev_off_meas = (sum(o[0] for o in st.off_window) / len(st.off_window),
                                 sum(o[1] for o in st.off_window) / len(st.off_window))

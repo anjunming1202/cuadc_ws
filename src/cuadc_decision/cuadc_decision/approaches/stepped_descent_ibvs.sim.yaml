@@ -20,6 +20,8 @@ v_max_mps: 1.0
 brake_decel_mps2: 0.8           # 抛物线刹车:v≤√(2·a·herr),0.4m 误差→0.8m/s、4cm→0.25m/s
 i_zone_m: 0.4
 lever_arms_m: [[-0.11, -0.04], [-0.11, 0.04]]  # 按投放次序:筒1左口/筒2右口(实测,ADR-0010 簇②),与脱钩次序一致
+aim_trims_m: [[0.0, 0.0], [0.0, 0.0]]           # 经验瞄准修正(前,右)米/每口:实测落点偏差均值反填;[DROP_AIM] 日志是标定输入
+
 max_coast_ticks: 4
 reacquire_after_ticks: 20     # 持续丢失 2s(@10Hz)退回粗段重走漏斗(低空丢定死锁的出路)
 endgame_alt_band_m: 0.25        # 收口锁带宽:丢检测时已收敛且 h≤drop_alt+此值 → 盲收口投放(实测丢失点 1.05-1.13)

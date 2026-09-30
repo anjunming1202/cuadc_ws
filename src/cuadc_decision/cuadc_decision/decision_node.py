@@ -209,6 +209,16 @@ class DecisionNode(Node):
                 throttle_duration_sec=1.0)
 
         if result.next_state is not None and result.next_state != self._ctx.current_state:
+            if result.next_state == mission_logic.State.DROP_PAYLOAD:
+                # 投放瞬间的瞄准快照:跨轮对比 bearing/冻结偏移的可复现性,是
+                # aim_trims_m 经验标定的输入(见 approach yaml)。
+                ast = mission_logic._ACTIVE_APPROACH.state
+                b, om = ast.last_bearing, ast.prev_off_meas
+                bstr = f'({b[0]:.4f},{b[1]:.4f})' if b else 'None'
+                ostr = f'({om[0]:.3f},{om[1]:.3f})' if om else 'None'
+                self.get_logger().info(
+                    f'[DROP_AIM] drop={self._ctx.drop_task.drop_count} bearing={bstr} '
+                    f'off_frozen={ostr} lever_eff=({ast.lever[0]:.3f},{ast.lever[1]:.3f})')
             self.get_logger().info(f'[STATE] {self._ctx.current_state} -> {result.next_state}')
             self._ctx.current_state = result.next_state
             self._ctx.command_dispatched = False
