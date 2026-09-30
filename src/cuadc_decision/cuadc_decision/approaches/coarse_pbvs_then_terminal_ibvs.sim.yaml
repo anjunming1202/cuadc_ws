@@ -1,8 +1,11 @@
-# coarse_pbvs_then_terminal_ibvs —— sim 档。Gazebo+SITL 验证值(两次投放成功+RTL)。
-# 字段 = ApproachConfig 字段。
+# coarse_pbvs_then_terminal_ibvs —— sim 档。字段 = ApproachConfig 字段。
+# 注意:"两次投放成功"的旧验证状态是宽视场云台相机时代的;真机化窄相机(57.8°)
+# 后末端降高会丢筒(FOV 几何,算法阶段修复中),当前 bench 尚不能全通。
 cruise_alt_m: 2.0
 drop_alt_m: 1.0
 cylinder_height_m: 0.3
+fc_rest_clearance_m: 0.31       # 飞控静止离地(ADR-0010 簇①);h 是解锁点参照,加它才是离地高
+camera_below_fc_m: 0.20         # 相机在飞控下方(ADR-0010 簇①)
 dt_s: 0.1
 min_conf: 0.5
 coarse_radius_m: 1.0
@@ -14,7 +17,7 @@ ki: 0.4
 kd: 0.3
 v_max_mps: 1.0
 i_zone_m: 0.4
-lever_arm_m: [-0.11, -0.04]     # 左瓶投放口(实测,建模真机机构做对准调优);右瓶 [-0.11, +0.04]
+lever_arms_m: [[-0.11, -0.04], [-0.11, 0.04]]  # 按投放次序:筒1左口/筒2右口(实测,ADR-0010 簇②),与脱钩次序一致
 max_coast_ticks: 4
 descend_rate_mps: 0.4
 descend_pause_off_m: 0.30

@@ -268,7 +268,8 @@ class DecisionNode(Node):
             ndstr = f'{ndist:.2f}' if ndist is not None else 'None'
             hstr = f'{-self._ctx.local_position_z:.2f}' if self._ctx.local_position_z is not None else 'None'
             self.get_logger().info(
-                f'[APPROACH] phase={ast.phase} yaw={self._yaw_rad:.3f} v={vstr} '
+                f'[APPROACH] phase={ast.phase} lever=({ast.lever[0]:.2f},{ast.lever[1]:.2f}) '
+                f'yaw={self._yaw_rad:.3f} v={vstr} '
                 f'off={offstr} miss={ast.miss} dist2lock={diststr} near_det={ndstr} h={hstr} '
                 f'hspeed={self._ctx.horizontal_speed}',
                 throttle_duration_sec=0.3)

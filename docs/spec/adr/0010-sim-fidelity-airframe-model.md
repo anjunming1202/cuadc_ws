@@ -4,7 +4,7 @@
 
 现有 sim 机体（外部 `~/ardupilot_gazebo` 的 `iris_with_gimbal`，≈1.98kg，相机挂三轴云台）
 与真机三处不符，影响投放对准/末端 IBVS 可信度：相机相对飞控有平移偏置(sim 当 0)、投放口
-相对相机有杆臂(`lever_arm_m` 当 0)、质量/推力差一截。据真机实测把 sim 拉近。本表是这些数值的
+相对相机有杆臂(旧配置当 0)、质量/推力差一截。据真机实测把 sim 拉近。本表是这些数值的
 **单一出处**。坐标系：机体 FRD（前 X / 右 Y / 下 Z），参考点=四旋翼交叉中心。状态：✅已知
 · 🅔估计(现用,待实测替换) · ❓待确认。缺的动力学数据先用估计值跑，后续有真机数据随时调。
 
@@ -14,7 +14,7 @@
 | ① | 挂载 roll/pitch/yaw | 0 / 1.5708 / 0 (strapdown) | ✅ | `camera.real.yaml` + SDF(去云台) |
 | ① | 内参 real (960×540) | fx869.37 fy871.03 cx486.48 cy260.11 | ✅ | `camera.real.yaml`(不变) |
 | ① | 内参 sim (640×480) | fx/fy205.5 cx320 cy240 | ✅ | `camera.sim.yaml`(不变) |
-| ② 投放几何 | 左瓶杆臂 [前,右] | [−0.11, −0.04] m | ✅ | `coarse_pbvs_then_terminal_ibvs.real.yaml` `lever_arm_m`(左/右两套) |
+| ② 投放几何 | 左瓶杆臂 [前,右] | [−0.11, −0.04] m | ✅ | `coarse_pbvs_then_terminal_ibvs.{sim,real}.yaml` `lever_arms_m`(按投放次序:筒1左口/筒2右口,enter 按 drop_count 选) |
 | ② | 右瓶杆臂 [前,右] | [−0.11, +0.04] m | ✅ | 同上 |
 | ③ 动力学 | 总质量(满载) | 3.5 kg (=空机2.4+2瓶×0.55；半载2.95) | ✅ | vendored SDF：外部 iris(≈1.98)不动，加 lumped payload link 补足 |
 | ③ | 满载 CoM | 左右居中、前后偏后 0.5cm(可忽略)、z 略下移 | ✅实测 | payload link `<inertial><pose>`；当前 x≈0 已足够 |

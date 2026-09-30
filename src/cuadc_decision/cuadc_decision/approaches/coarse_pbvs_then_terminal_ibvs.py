@@ -29,8 +29,12 @@ class ApproachConfig:
     正常从 <NAME>.<profile>.yaml 读:sim 是 Gazebo 验证值,real 上真机按真实
     延迟/动力学重调。"""
     cruise_alt_m: float = 2.0
-    drop_alt_m: float = 1.0
-    cylinder_height_m: float = 0.3        # 圆筒高;末端反算深度=离地高-筒高(相机到筒顶平面),见 _bearing_to_off
+    drop_alt_m: float = 1.0               # 停降高度,h(EKF 解锁点参照)计;飞控离地=此值+fc_rest_clearance_m
+    cylinder_height_m: float = 0.3        # 圆筒高;相机到筒顶深度见 _bearing_to_off
+    # h 是飞控相对解锁点(EKF 原点)的高度,不是离地高:解锁时飞控已离地 fc_rest_clearance_m。
+    # 相机又在飞控下方 camera_below_fc_m。二者都为 0 时退化为"h=相机离地"(纯单测兜底)。
+    fc_rest_clearance_m: float = 0.0      # 飞控静止离地高(ADR-0010 簇①: 0.31)
+    camera_below_fc_m: float = 0.0        # 相机在飞控下方(ADR-0010 簇①: 0.20)
     dt_s: float = 0.1                     # tick 周期(对应 decision tick_rate_hz=10),积分/微分用
     min_conf: float = 0.5                 # 只对置信度够的检测伺服
     # 粗接近(PBVS) -> 交接
@@ -44,7 +48,10 @@ class ApproachConfig:
     kd: float = 0.3
     v_max_mps: float = 1.0
     i_zone_m: float = 0.4                 # 只在近端积分,防大接近段积分饱和回弹
-    lever_arm_m: Tuple[float, float] = (0.0, 0.0)  # 当前生效的投放口杆臂,机体系(前,右)米=投放口相对相机;左瓶(-0.11,-0.04)/右瓶(-0.11,+0.04),见 ADR-0010 簇②。投哪瓶由 mission 选(暂固定左)
+    # 投放口杆臂表,机体系(前,右)米=投放口相对相机,按投放次序排:第 N 次投放用第 N 项
+    # (与 drop_bottle_bridge/真机机构的脱钩次序同一约定,见 ADR-0010 簇②)。enter 时按
+    # ctx.drop_task.drop_count 选定本次杆臂,超出表长用最后一项。
+    lever_arms_m: Tuple[Tuple[float, float], ...] = ((0.0, 0.0),)
     max_coast_ticks: int = 4              # 末段连续失配超过此帧数就悬停,不靠陈旧偏移乱冲
     # 降高
     descend_rate_mps: float = 0.4
@@ -72,6 +79,7 @@ def create(config: Optional[ApproachConfig] = None) -> 'CoarsePbvsThenTerminalIb
 class ApproachState:
     phase: str = 'coarse'                 # coarse -> terminal
     locked: Optional[Candidate] = None    # 锁定目标(世界坐标),粗/末段硬锁都用它关联
+    lever: Tuple[float, float] = (0.0, 0.0)  # 本次投放口杆臂,enter 时按投放次序从 lever_arms_m 选定
     miss: int = 0                         # 末段连续失配帧数(丢检测),超阈值悬停
     integ: Tuple[float, float] = (0.0, 0.0)
     prev_off: Optional[Tuple[float, float]] = None       # 上一帧偏移,PID 的 D 项(on measurement)用
@@ -105,8 +113,10 @@ class CoarsePbvsThenTerminalIbvs:
         self.state = ApproachState()
 
     def enter(self, ctx):
-        """进入 APPROACH 时调:以 SEARCH 选定的目标为锁定种子,清内部状态。"""
-        self.state = ApproachState(locked=ctx.drop_task.selected_target)
+        """进入 APPROACH 时调:以 SEARCH 选定的目标为锁定种子,按投放次序选投放口杆臂,清内部状态。"""
+        arms = self.cfg.lever_arms_m
+        lever = tuple(arms[min(ctx.drop_task.drop_count, len(arms) - 1)])
+        self.state = ApproachState(locked=ctx.drop_task.selected_target, lever=lever)
 
     def loop(self, ctx, now: Optional[float] = None) -> ApproachOutput:
         now = now if now is not None else time.monotonic()
@@ -135,7 +145,7 @@ class CoarsePbvsThenTerminalIbvs:
         if arrived and best is not None:
             bearing = (best.bearing_x, best.bearing_y)
             off = self._bearing_to_off(bearing, ctx, h)
-            e = (off[0] - cfg.lever_arm_m[0], off[1] - cfg.lever_arm_m[1])
+            e = (off[0] - st.lever[0], off[1] - st.lever[1])
             settled = ctx.horizontal_speed is not None and ctx.horizontal_speed <= cfg.handoff_speed_mps
             if math.hypot(*e) <= cfg.handoff_off_m and settled:
                 st.phase = 'terminal'
@@ -168,7 +178,7 @@ class CoarsePbvsThenTerminalIbvs:
                 return ApproachOutput(velocity_target=(0.0, 0.0, 0.0))
             off = st.prev_off_meas  # 短暂丢失:保持上次偏移 coast 几帧
 
-        e = (off[0] - cfg.lever_arm_m[0], off[1] - cfg.lever_arm_m[1])
+        e = (off[0] - st.lever[0], off[1] - st.lever[1])
         doff = (0.0, 0.0) if st.prev_off is None else (
             (off[0] - st.prev_off[0]) / cfg.dt_s, (off[1] - st.prev_off[1]) / cfg.dt_s)
         st.prev_off = off
@@ -221,7 +231,10 @@ class CoarsePbvsThenTerminalIbvs:
         cp, sp = math.cos(pitch), math.sin(pitch)
         r1 = (r[0], cr * r[1] - sr * r[2], sr * r[1] + cr * r[2])          # R_x(roll) @ r
         lvl = (cp * r1[0] + sp * r1[2], r1[1], -sp * r1[0] + cp * r1[2])   # R_y(pitch) @ r1
-        depth = h - self.cfg.cylinder_height_m  # 相机到筒顶平面的竖直距离(不是离地高),否则偏心杆臂会系统性偏
+        # 相机到筒顶平面的竖直距离:h 是 EKF 解锁点参照的飞控高度,先换成相机离地
+        # (+静置离地 −相机下沉)再减筒高。基准错任何一层,偏心杆臂就系统性偏。
+        cam_agl = h + self.cfg.fc_rest_clearance_m - self.cfg.camera_below_fc_m
+        depth = cam_agl - self.cfg.cylinder_height_m
         if lvl[2] <= 1e-6 or depth <= 0.0:
             return (0.0, 0.0)  # 射线接近水平 / 高度异常,解不出合理交点
         t = depth / lvl[2]
