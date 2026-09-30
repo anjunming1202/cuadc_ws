@@ -10,6 +10,7 @@ docs/spec/adr/0005-terminal-align-visual-servoing.md。
 """
 
 from cuadc_decision.approaches.base import ApproachOutput
+from cuadc_decision.approaches import cone_descent_ibvs
 from cuadc_decision.approaches import stepped_descent_ibvs
 # 常用类型 re-export,方便脱离节点单测直接构造。
 from cuadc_decision.approaches.stepped_descent_ibvs import (
@@ -17,8 +18,9 @@ from cuadc_decision.approaches.stepped_descent_ibvs import (
 
 APPROACHES = {
     stepped_descent_ibvs.NAME: stepped_descent_ibvs,
+    cone_descent_ibvs.NAME: cone_descent_ibvs,
 }
-ACTIVE = stepped_descent_ibvs.NAME  # 改这行切换/实验(以后有新形态再加)
+ACTIVE = cone_descent_ibvs.NAME  # 改这行切换/实验(stepped=阶梯基线 10/10, cone=锥面连续降高)
 
 
 def create_active(profile=None, config=None):

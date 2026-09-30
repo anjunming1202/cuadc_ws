@@ -18,7 +18,8 @@ from typing import Optional, Tuple
 
 import yaml
 
-from cuadc_decision.approaches.base import ApproachOutput
+from cuadc_decision.approaches.base import (
+    ApproachOutput, bearing_to_ground_offset, clip as _clip, nearest_within as _nearest_within)
 from cuadc_decision.drop_strategy import Candidate
 
 NAME = 'stepped_descent_ibvs'
@@ -115,19 +116,6 @@ class ApproachState:
     off_window: list = field(default_factory=list)       # 实测偏移滑窗,冻结值抗单帧噪声(模式 A 毒帧)
     last_bearing: Optional[Tuple[float, float]] = None   # 最后实测 bearing,投放瞬间日志用(经验瞄点的可复现性诊断)
     stable_since: Optional[float] = None
-
-
-def _clip(v, lim):
-    return max(-lim, min(lim, v))
-
-
-def _nearest_within(dets, x, y, gate):
-    best, best_dist = None, gate
-    for d in dets:
-        dist = math.hypot(d.position.x - x, d.position.y - y)
-        if dist < best_dist:
-            best_dist, best = dist, d
-    return best
 
 
 class SteppedDescentIbvs:
@@ -284,27 +272,13 @@ class SteppedDescentIbvs:
         return ApproachOutput(velocity_target=(v[0], v[1], vz_hold))
 
     def _bearing_to_off(self, bearing, ctx, h):
-        """归一化 bearing -> 目标相对「正下方」的水平偏移(米,机体前/右),含姿态
-        补偿。下视固定挂载:相机系射线 (bx,by,1) 在机体系是 (-by,bx,1)(见
-        cuadc_perception/geometry.py 挂载约定 pitch=+pi/2);再用 roll/pitch 转到
-        水平面 R_y(pitch)R_x(roll) 求与地面交点。yaw 不需要——机体系速度指令本身
-        就是相对当前航向的。姿态/高度优先取拍照时刻那套(ctx.det_*,与 bearing 同刻,
-        ADR-0010 B);缺失退化用实时遥测。"""
-        bx, by = bearing
+        """bearing -> 相对正下方的水平偏移(几何在 base.bearing_to_ground_offset)。
+        姿态/高度优先取拍照时刻那套(ctx.det_*,与 bearing 同刻,ADR-0010 B);缺失退化
+        用实时遥测。深度=相机离地(h+静置离地−相机下沉)−筒高:h 是 EKF 解锁点参照,
+        基准错任何一层,偏心杆臂就系统性偏。"""
         roll = (ctx.det_roll_rad if ctx.det_roll_rad is not None else ctx.roll_rad) or 0.0
         pitch = (ctx.det_pitch_rad if ctx.det_pitch_rad is not None else ctx.pitch_rad) or 0.0
         if ctx.det_height_m is not None:
             h = ctx.det_height_m
-        r = (-by, bx, 1.0)  # 机体系射线(前,右,下)
-        cr, sr = math.cos(roll), math.sin(roll)
-        cp, sp = math.cos(pitch), math.sin(pitch)
-        r1 = (r[0], cr * r[1] - sr * r[2], sr * r[1] + cr * r[2])          # R_x(roll) @ r
-        lvl = (cp * r1[0] + sp * r1[2], r1[1], -sp * r1[0] + cp * r1[2])   # R_y(pitch) @ r1
-        # 相机到筒顶平面的竖直距离:h 是 EKF 解锁点参照的飞控高度,先换成相机离地
-        # (+静置离地 −相机下沉)再减筒高。基准错任何一层,偏心杆臂就系统性偏。
         cam_agl = h + self.cfg.fc_rest_clearance_m - self.cfg.camera_below_fc_m
-        depth = cam_agl - self.cfg.cylinder_height_m
-        if lvl[2] <= 1e-6 or depth <= 0.0:
-            return (0.0, 0.0)  # 射线接近水平 / 高度异常,解不出合理交点
-        t = depth / lvl[2]
-        return (t * lvl[0], t * lvl[1])  # (前, 右)
+        return bearing_to_ground_offset(bearing, roll, pitch, cam_agl - self.cfg.cylinder_height_m)
