@@ -36,6 +36,8 @@ from cuadc_decision.mission import config as mission_config
 
 _INTERFACE_NS = '/cuadc_interface'
 
+_DETECTIONS_STALE_S = 0.5  # 感知流超过这个时长没来新帧就视为断流(正常 ~10Hz,=丢 5 帧)
+
 _SERVICE_SPECS = {
     'set_mode': (SetMode, f'{_INTERFACE_NS}/set_mode'),
     'arm': (Arm, f'{_INTERFACE_NS}/arm'),
@@ -55,6 +57,7 @@ class DecisionNode(Node):
 
     def __init__(self):
         super().__init__('cuadc_decision')
+        self._last_detections_monotonic = 0.0
 
         # profile = sim/real 环境档（选各算法/配置层的 .sim/.real 文件）；scenario = 跑哪种
         # 场景（full_mission / drop_zone_bench / recon_zone_bench，含 initial_state 与跑哪些
@@ -145,6 +148,7 @@ class DecisionNode(Node):
 
     def _on_detections(self, msg):
         self._ctx.detections = list(msg.detections)
+        self._last_detections_monotonic = time.monotonic()
         # vehicle_pose = 这帧图像**拍照时刻**的位姿(契约见 DetectionArray.msg)。四元数
         # 全零 = 上游没填(异常/旧版) -> 置 None,IBVS 退化用实时遥测(旧行为)。
         q = msg.vehicle_pose.orientation
@@ -180,6 +184,17 @@ class DecisionNode(Node):
     # ---- 主循环 ----
 
     def _on_timer(self):
+        # 检测新鲜度守卫:感知流断掉(CV 挂死/桥哑死)时,绝不能拿最后一帧当现实继续
+        # 伺服——那是自我追逐跑飞(冻结的 off 恒差 -> 积分饱和 -> 定速漂走)。过期即
+        # 清空,approach 自然走丢失路径(悬停/重捕获/守卫)。
+        if (self._ctx.detections
+                and time.monotonic() - self._last_detections_monotonic > _DETECTIONS_STALE_S):
+            self._ctx.detections = []
+            self._ctx.det_roll_rad = self._ctx.det_pitch_rad = self._ctx.det_height_m = None
+            self.get_logger().warn(
+                f'[STALE] detections older than {_DETECTIONS_STALE_S}s -> cleared '
+                '(perception stream down?)', throttle_duration_sec=5.0)
+
         self._ctx.last_service_result = self._poll_pending_service_result()
 
         tick_started = time.monotonic()
