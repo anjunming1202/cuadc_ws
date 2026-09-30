@@ -209,9 +209,8 @@ class CoarsePbvsThenTerminalIbvs:
         补偿。下视固定挂载:相机系射线 (bx,by,1) 在机体系是 (-by,bx,1)(见
         cuadc_perception/geometry.py 挂载约定 pitch=+pi/2);再用 roll/pitch 转到
         水平面 R_y(pitch)R_x(roll) 求与地面交点。yaw 不需要——机体系速度指令本身
-        就是相对当前航向的。姿态/高度优先取**拍照时刻**那套(ctx.det_*,随检测帧
-        附带):bearing 是拍照时刻的测量,用 tick 时刻的最新姿态补偿会把补偿本身
-        做错(机体在转时尤甚),见 ADR-0010 B。det_* 缺失退化用实时遥测(旧行为)。"""
+        就是相对当前航向的。姿态/高度优先取拍照时刻那套(ctx.det_*,与 bearing 同刻,
+        ADR-0010 B);缺失退化用实时遥测。"""
         bx, by = bearing
         roll = (ctx.det_roll_rad if ctx.det_roll_rad is not None else ctx.roll_rad) or 0.0
         pitch = (ctx.det_pitch_rad if ctx.det_pitch_rad is not None else ctx.pitch_rad) or 0.0

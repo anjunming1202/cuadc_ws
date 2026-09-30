@@ -1,15 +1,8 @@
 #!/usr/bin/env python3
-"""sim-only 反投影真值量测（ADR-0010 簇 D 的"尺子"）。
-
-把飞机 GUIDED 依次悬停到三个已知筒的正上方（+ 每筒一个侧偏视点，压出斜视射线），
-采样 /perception/detections 的反投影世界坐标，与 field/config.py 的筒真值比对，
-输出每筒每视点的 bias（系统偏差,配置错则大）与 scatter（散度,输入噪声/时序错则大）。
-
-干净 sim 判定门限：|bias| < 0.05m 且 std < 0.03m —— 超了说明相机偏置/内参/挂载/
-平面高度不自洽（保真 bug），或注入了扰动（那正是要观察的量）。退出码 0/1，可当回归门。
-
-前置：gazebo_bringup（bench world）+ SITL + interface + perception 已在跑
-（一键入口见 run_measure_reprojection.sh）。纯量测，不投放、不跑任务状态机。
+"""sim-only 反投影真值量测（ADR-0010 D 的"尺子"，一键入口 run_measure_reprojection.sh）。
+逐筒悬停 nadir/侧偏 + 1m/s 动态飞越，采样 /perception/detections 与 field/config.py
+真值比对，报 bias(配置错则大)/std(噪声/时序错则大)。判定门只加 nadir(|bias|<0.05,
+std<0.03)，退出码 0/1 可当回归门；各视点角色与实测数见 sim-stress-testbed §3.3。
 """
 import math
 import sys
@@ -88,11 +81,8 @@ def _sample_at(node, mav, north, east):
 
 
 def _sample_moving(node, mav, tn, te):
-    """动态飞越采样：以受控 1m/s 向东匀速穿过筒上方，途中采样。运动中"位姿时刻≠
-    拍照时刻"的误差 = v×时刻差(沿运动向,东),静态悬停显不出来——验证延迟注入/时间
-    同步(ADR-0010 B/C)的关键视点。速度已知,bias_e 直接换算成等效时刻差。
-    注意干净 sim 也有 ~0.1-0.2s 的遥测到达滞后(SITL->MAVProxy 转发,内容旧、到达
-    才盖戳),它是本行的本底;证据链看的是"注入延迟后相对本底的增量"。"""
+    """受控 1m/s 向东飞越筒上方采样：位姿-图像时刻差的误差 ∝ v×时刻差(沿东)，静态
+    显不出来；bias_e 可直接换算等效时刻差。本底/证据链数值见 sim-stress-testbed §3.3。"""
     _goto(mav, tn, te - 1.5, _SETTLE_S + 2.0)
     node.samples = []
     node.enabled = True

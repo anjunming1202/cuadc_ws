@@ -1,13 +1,7 @@
-"""Sim-only 桥: 决策进 DROP_PAYLOAD 时, 让 Gazebo 里的物理水瓶脱钩下落。
-
-真机上投放由 cuadc_interface 的 release_payload(RC override 驱动舵机)完成; sim 里没有
-真舵机, 这个桥把同一个"投放发生了"的事件翻译成 Gazebo DetachableJoint 的 detach 指令
-(见 cuadc_iris/model.sdf)。按投放次序 left->right 依次脱钩, 与 lever_arm 左/右两套对应。
-
-**只在仿真任务里跑**(mission_bringup profile:=sim), 不属于世界 bringup —— 世界 sim 必须
-能脱离决策独立起(见项目 sim/task 解耦约定)。触发源是决策的 mission_state 话题(任务事件),
-放世界 bringup 会把世界耦合到决策, 故放这里。
-"""
+"""sim-only 桥：决策进 DROP_PAYLOAD 时给 Gazebo 物理水瓶发 DetachableJoint 脱钩
+（真机同事件由 interface release_payload 驱动真舵机）。按投放次序 left->right，与
+lever_arm 左/右对应。只随 mission_bringup(profile=sim) 起——触发源是任务事件，放
+世界 bringup 会把世界耦合到决策（sim/task 解耦约定）。"""
 import os
 import subprocess
 

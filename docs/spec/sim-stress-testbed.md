@@ -59,17 +59,16 @@
 |---|---|---|
 | 飞控动力学（风） | `config/sim_realism.parm` + `gazebo_bringup` 新增 `sim_realism_params:=<path>` 再叠一个 `--add-param-file` | `SIM_WIND_SPD` / `SIM_WIND_DIR` / `SIM_WIND_TURB` |
 | 传感器噪声 | 同一 parm 文件 | `SIM_GPS_*`、`SIM_ACC*_RND`、`SIM_GYR*_RND`、`SIM_BARO_RND`（ArduPilot 自带传感器模型） |
-| 感知时延(**被下行取代,待退役**) | **sim-only** `detection_delay_node`（`cuadc_sim`）经压测台 launch 插在感知↔决策之间 | 缓冲延迟转发 `DetectionArray`。B(时刻对齐)之前的务实替身——真机这段(感知发布→决策收到)近乎零,真延迟在图像侧。暂留=§5 悬崖数据可复现+压测台还接着它;算法阶段重扫悬崖时改接 `image_delay_node` 即删 |
-| 相机→CV 图像时延(**新实验一律用这个**) | **sim-only** `image_delay_node`（`cuadc_sim`）插在相机↔感知之间（量测工具 `run_measure_reprojection.sh [latency_ms]` 已接） | 延迟转发 `Image`、**保留拍照戳**——注入点与真机物理一致(拍照→CV),是结果延迟的严格超集,且触发位姿-图像时刻不一致（§3.3 第 2 类） |
+| 相机→CV 图像时延 | **sim-only** `image_delay_node`（`cuadc_sim`）插在相机↔感知之间；入口 `run_mission_sim_delayed.sh <ms>`（任务）/ `run_measure_reprojection.sh [ms]`（量测） | 延迟转发 `Image`、**保留拍照戳**——注入点与真机物理一致(拍照→CV),结果自然也随之延迟,并触发位姿-图像时刻不一致（§3.3） |
 
 不给 `sim_realism_params`（parm 缺省）+ 零延迟档 = 干净 sim，行为与现在完全一致。
 
 ### 3.3 反投影的两个延迟效应（区分清楚）
 
-真机延迟对反投影有**两个不同**的影响，`detection_delay_node` 只覆盖第一个：
+真机延迟对反投影有**两个不同**的影响，图像侧注入一并覆盖：
 
-1. **结果晚到决策**（`detection_delay_node` 建模）：检测结果延迟送达决策。对**静止**筒影响小
-   （筒不动，晚到的坐标不算过时），主要拖末端 IBVS（见 §5 的 150ms 悬崖）。
+1. **结果晚到决策**：检测结果延迟送达。对**静止**筒影响小（筒不动，晚到的坐标不算过时），
+   主要拖末端 IBVS（见 §5 的 150ms 悬崖）。
 2. **反投影用错位姿**（新，正确性修复，非扰动）：反投影须用**图像拍摄时刻**的位姿；若用"处理时刻
    的最新位姿"，运动/转动时世界坐标本身就偏，偏量 ∝ 速度×链路延迟、角速率×延迟×高度 →
    **散点**。这极可能是真机数据集反投影发散的根因（散而非偏 = 输入不同步，非公式错）。
@@ -86,9 +85,9 @@
 
 > **姿态噪声不单列**：见 §1.1 第 3 条，由传感器噪声层经真实 EKF 自然产生，感知直接用该 EKF 位姿。
 
-> **感知时延为什么在 sim-only 节点、不在生产节点**：`mission_sim_delayed.launch.py`
-> 用 `SetRemap` 把感知输出改道给 `detection_delay_node` 延迟后发回决策；生产
-> `mission_bringup` 不含这套，感知→决策零延迟直连（生产文件与基线逐字节一致）。
+> **时延为什么在 sim-only 节点、不在生产节点**：`mission_sim_delayed.launch.py`
+> 用 `SetRemap` 把感知的图像订阅改道到 `image_delay_node` 的延迟输出；生产
+> `mission_bringup` 不含这套（生产文件与基线逐字节一致）。
 > 入口 `run_mission_sim_delayed.sh <delay_ms>`；零延迟走 `run_mission_sim.sh`。
 
 > **相机成像噪声——放弃 sim 注入**：gz-sim 8.14 + ogre2 相机不吃 `<noise>`（注入
@@ -102,7 +101,11 @@
 
 ## 5. 感知时延阈值（标定发现）
 
-用时延层单独扫（其余扰动关、固定布局，每档 3 轮，`--detection-latency-ms`）：
+> **历史值**：下表 2026-09 用**结果延迟法**(detection_delay_node,已删)在旧系统(旧相机/
+> 无时刻对齐)上测得。B(测量时刻对齐)后须用 `--latency-ms`(图像延迟法)**重扫**——测量一致性
+> 修复后剩下的塌点才是纯控制滞后；重扫前下表只作量级参考。
+
+用时延层单独扫（其余扰动关、固定布局，每档 3 轮）：
 
 | 时延 | 第二次投放成功率 |
 |---|---|

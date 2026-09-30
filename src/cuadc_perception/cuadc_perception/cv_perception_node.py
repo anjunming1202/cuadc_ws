@@ -105,9 +105,8 @@ class CvPerceptionNode(Node):
 
         # 取帧源:sim=ros(订阅 image_raw)、real=shm(读原始帧,图不进 ROS)。
         self.declare_parameter('frame_source', 'ros')
-        # 位姿取法: capture=按拍照时刻插值(生产默认,ADR-0010 B) / latest=处理时刻最新
-        # (旧行为)。latest 仅两用: 保真证据链 A/B 对照; 真机拍照戳链路异常时的现场兜底。
-        # 启用即告警。sim 工具改图像话题用 launch remapping(见 cv_perception_bringup),不进节点。
+        # capture=按拍照时刻插值(生产默认) / latest=处理时刻最新——仅 A/B 对照与
+        # 真机拍照戳异常兜底,启用即告警。
         self.declare_parameter('pose_at', 'capture')
         self.declare_parameter('raw_shm', DEFAULT_RAW_SHM)
         self.declare_parameter('src_width', 1920)
@@ -135,11 +134,9 @@ class CvPerceptionNode(Node):
         )
 
         self._bridge = CvBridge()
-        # 位姿时间缓冲：反投影按图像**捕获时刻**(header.stamp)插值取位姿，而非处理时刻的
-        # 最新位姿——否则运动/延迟时反投影偏(散点)，见 ADR-0010 B。需 sim/real 图像与遥测
-        # 同一时钟(sim: use_sim_time+/clock；real: Pi 墙钟, camera_service 捕获打戳)。
-        # ~50-100Hz 下 300 样本 = 3-6s 历史，足够覆盖链路延迟。
-        self._pos_buf = deque(maxlen=300)  # (t_sec, (x,y,z))
+        # 位姿时间缓冲：反投影按图像拍照时刻插值取位姿(否则运动/延迟时出散点,
+        # ADR-0010 B)。前提图像与遥测同时钟(sim=/clock, real=Pi 时钟)。
+        self._pos_buf = deque(maxlen=300)  # (t_sec, (x,y,z)); 300样本≈3-6s,覆盖链路延迟
         self._att_buf = deque(maxlen=300)  # (t_sec, (x,y,z,w))
         self._clock_mismatch_warned = False
         self._pose_at_latest = self.get_parameter('pose_at').value == 'latest'
