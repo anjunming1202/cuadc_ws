@@ -1,5 +1,6 @@
-"""投放接近的第一份「阶段策略」:粗接近世界坐标 PBVS(把筒弄进视野)-> 末端
-像素 IBVS 精对准(对定位误差免疫)。决策见
+"""阶梯式降高 IBVS:粗接近世界坐标 PBVS(把筒弄进视野)-> 末端像素 IBVS 精对准
+(对定位误差免疫);降高节奏是"收敛才降、超差停降"的阶梯——名字即此特征(对照:
+锥面约束连续降高的 cone_descent_ibvs)。决策见
 docs/spec/adr/0005-terminal-align-visual-servoing.md;组织/迁移约定见
 cuadc_decision/README.md(一个 approach 一个模块 + 同名 sim/real yaml 跟着放)。
 
@@ -20,9 +21,10 @@ import yaml
 from cuadc_decision.approaches.base import ApproachOutput
 from cuadc_decision.drop_strategy import Candidate
 
-NAME = 'coarse_pbvs_then_terminal_ibvs'
+NAME = 'stepped_descent_ibvs'
 
-_OFF_WINDOW = 3  # 冻结偏移取近几帧实测均值(0.3s@10Hz):单帧噪声不毒化 coast/收口判据,又不拖伺服(伺服用的是本帧新测)
+_OFF_WINDOW = 3  # 冻结偏移取近几帧实测均值(0.3s@10Hz):单帧噪声不毒化 coast/收口判据
+_SERVO_LP = 2    # 伺服误差取近 2 帧均值:压检测噪声进 PID 的抖动;等效滞后 ~0.05s,远小于回路死区,不伤带宽
 
 
 @dataclass
@@ -53,6 +55,9 @@ class ApproachConfig:
     ki: float = 0.4
     kd: float = 0.3
     v_max_mps: float = 1.0
+    # 抛物线刹车:速度模长再限 √(2·a·herr)——大误差时也只给"以 a 减速刚好能停在目标"
+    # 的速度,天然无过冲(位置伺服标准做法);0=关(退化为纯 v_max 限幅)。
+    brake_decel_mps2: float = 0.0
     i_zone_m: float = 0.4                 # 只在近端积分,防大接近段积分饱和回弹
     # 投放口杆臂表,机体系(前,右)米=投放口相对相机,按投放次序排:第 N 次投放用第 N 项
     # (与 drop_bottle_bridge/真机机构的脱钩次序同一约定,见 ADR-0010 簇②)。enter 时按
@@ -71,6 +76,10 @@ class ApproachConfig:
     # 降高
     descend_rate_mps: float = 0.4
     descend_pause_off_m: float = 0.30     # 水平误差大于此暂停降高、先追回来
+    # 末端高度按比例收敛/保持:降高段 vz=min(rate, p·(h-drop_alt)) 平滑进入不超冲
+    # (0.4m/s 阶跃停降实测冲过 0.2m 到 0.8,圆盘残缺质心偏移把投放门骗过->26cm 脱靶);
+    # 投放段 h 低于 drop_alt 会按同增益爬回。0=关(退化为老的阶跃停降,纯单测兜底)。
+    alt_hold_p: float = 0.0
     # 投放门(±3-5cm 目标)
     drop_tol_m: float = 0.04
     speed_tol_mps: float = 0.15
@@ -86,8 +95,8 @@ def load_config(profile: str) -> ApproachConfig:
     return ApproachConfig(**data)
 
 
-def create(config: Optional[ApproachConfig] = None) -> 'CoarsePbvsThenTerminalIbvs':
-    return CoarsePbvsThenTerminalIbvs(config)
+def create(config: Optional[ApproachConfig] = None) -> 'SteppedDescentIbvs':
+    return SteppedDescentIbvs(config)
 
 
 @dataclass
@@ -116,7 +125,7 @@ def _nearest_within(dets, x, y, gate):
     return best
 
 
-class CoarsePbvsThenTerminalIbvs:
+class SteppedDescentIbvs:
     """粗接近用世界坐标 PBVS 把飞机带到目标附近(把筒弄进视野),末端切像素
     IBVS 精对准——对定位误差免疫(见 ADR-0005)。全程硬锁选定目标:粗/末段
     都按世界坐标最近门关联(姿态无关、能区分相邻筒),别的筒进视野不跳;末段
@@ -189,6 +198,8 @@ class CoarsePbvsThenTerminalIbvs:
             st.off_window = (st.off_window + [off])[-_OFF_WINDOW:]
             st.prev_off_meas = (sum(o[0] for o in st.off_window) / len(st.off_window),
                                 sum(o[1] for o in st.off_window) / len(st.off_window))
+            lp = st.off_window[-_SERVO_LP:]
+            off = (sum(o[0] for o in lp) / len(lp), sum(o[1] for o in lp) / len(lp))
         else:
             st.miss += 1
             # 投放窗收口锁(见 endgame_alt_band_m 注释):已收敛+已贴近才允许按冻结
@@ -218,14 +229,18 @@ class CoarsePbvsThenTerminalIbvs:
         # 才是真阻尼;写成 -kd*doff 反而助推过冲(高动量交接时尤其明显)。
         raw = (cfg.kp * e[0] + cfg.ki * st.integ[0] + cfg.kd * doff[0],
                cfg.kp * e[1] + cfg.ki * st.integ[1] + cfg.kd * doff[1])
-        v = (_clip(raw[0], cfg.v_max_mps), _clip(raw[1], cfg.v_max_mps))
+        herr = math.hypot(*e)
+        v_lim = cfg.v_max_mps
+        if cfg.brake_decel_mps2 > 0.0:  # 抛物线刹车(见 brake_decel_mps2 注释)
+            v_lim = min(v_lim, math.sqrt(2.0 * cfg.brake_decel_mps2 * herr))
+        mag = math.hypot(*raw)
+        scale = min(1.0, v_lim / mag) if mag > 1e-9 else 0.0  # 模长限幅,保方向
+        v = (raw[0] * scale, raw[1] * scale)
         integ = list(st.integ)
         for i in (0, 1):  # 条件积分:近端且未饱和才积分
-            if abs(raw[i]) < cfg.v_max_mps and abs(e[i]) < cfg.i_zone_m:
+            if abs(raw[i]) < v_lim and abs(e[i]) < cfg.i_zone_m:
                 integ[i] += e[i] * cfg.dt_s
         st.integ = (integ[0], integ[1])
-
-        herr = math.hypot(*e)
         if h > cfg.drop_alt_m + 1e-3:  # 还在降高:够居中才降,飘了先追回来
             # 降高只许在有新测量或收口锁内进行:普通 coast 盲降会把丢失点的高度
             # 亏空扩大(实测 4 帧 coast 从 1.05 带到 0.9 以下),丢了就先停降。
@@ -233,11 +248,17 @@ class CoarsePbvsThenTerminalIbvs:
             # 必须保证"丢的那一刻已收敛",收口锁才接得住;带外维持宽门快速下来。
             in_band = h <= cfg.drop_alt_m + cfg.endgame_alt_band_m
             gate = cfg.drop_tol_m if in_band else cfg.descend_pause_off_m
-            vz = (cfg.descend_rate_mps
-                  if herr < gate and (st.miss == 0 or endgame) else 0.0)
+            rate = cfg.descend_rate_mps
+            if cfg.alt_hold_p > 0.0:  # 比例减速进入 drop_alt,不超冲(见 alt_hold_p 注释)
+                rate = min(rate, cfg.alt_hold_p * (h - cfg.drop_alt_m))
+            vz = rate if herr < gate and (st.miss == 0 or endgame) else 0.0
             return ApproachOutput(velocity_target=(v[0], v[1], vz))
 
-        # 到投放高度:停降,检查投放门(用对地遥测速度,顶风自然满足)
+        # 到投放高度:高度 P 保持(超冲/下沉会爬回 drop_alt——过低时圆盘残缺、
+        # 质心量测有偏,必须回到量测可信的高度),检查投放门(用对地遥测速度)
+        vz_hold = 0.0
+        if cfg.alt_hold_p > 0.0:
+            vz_hold = _clip(cfg.alt_hold_p * (h - cfg.drop_alt_m), cfg.descend_rate_mps)
         stable = (herr < cfg.drop_tol_m
                   and ctx.horizontal_speed is not None and ctx.horizontal_speed < cfg.speed_tol_mps
                   and ctx.vertical_speed is not None and abs(ctx.vertical_speed) < cfg.speed_tol_mps
@@ -247,10 +268,10 @@ class CoarsePbvsThenTerminalIbvs:
             if st.stable_since is None:
                 st.stable_since = now
             elif now - st.stable_since >= cfg.stable_hold_s:
-                return ApproachOutput(velocity_target=(v[0], v[1], 0.0), drop_ready=True)
+                return ApproachOutput(velocity_target=(v[0], v[1], vz_hold), drop_ready=True)
         else:
             st.stable_since = None
-        return ApproachOutput(velocity_target=(v[0], v[1], 0.0))
+        return ApproachOutput(velocity_target=(v[0], v[1], vz_hold))
 
     def _bearing_to_off(self, bearing, ctx, h):
         """归一化 bearing -> 目标相对「正下方」的水平偏移(米,机体前/右),含姿态

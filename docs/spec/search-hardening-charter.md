@@ -66,7 +66,7 @@
 
 - SEARCH/关联现状:`src/cuadc_decision/cuadc_decision/mission_logic.py`
   (`_update_clusters` / `_cluster_mean` / `_tick_search_drop_targets` / `_check_guards`)。
-- approach/handoff:`src/cuadc_decision/cuadc_decision/approaches/coarse_pbvs_then_terminal_ibvs.py`
+- approach/handoff:`src/cuadc_decision/cuadc_decision/approaches/stepped_descent_ibvs.py`
   (`_coarse` 里的 handoff 条件;`ApproachConfig` 的 `handoff_off_m`/`handoff_speed_mps`/`coarse_radius_m`)。
 - 感知↔决策契约:[`05-perception-decision-interface.md`](05-perception-decision-interface.md);
   检测器:`src/cuadc_perception/cuadc_perception/detectors/color_pad.py`。

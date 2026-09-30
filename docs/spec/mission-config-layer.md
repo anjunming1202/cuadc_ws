@@ -28,7 +28,7 @@
 | **B′. 顶层任务 FSM 自身通用参数** | 到点容差、阶段超时、电量/GPS 守卫阈值——不属于任何可替换算法，是唯一那个顶层 FSM 本体的机制 | **跟 `mission_logic.py` 放一起**：单一 `mission_logic.{sim,real}.yaml`（见 Q5/Q7） |
 
 **关键原则（Q5）**：**算法相关参数与算法代码放在一起**、且**用算法自己的名字命名参数表**
-（换算法时整套参数跟着走、一目了然，如 `coarse_pbvs_then_terminal_ibvs.*.yaml`）。算法是
+（换算法时整套参数跟着走、一目了然，如 `stepped_descent_ibvs.*.yaml`）。算法是
 重点调试对象，参数抽离**不能**把可调项搬远、影响调试/修改。所以 B 类**紧贴各自算法源码、
 按算法名命名**。B′ 是顶层 FSM 本体（**只有一个、不可替换**）的机制参数，不套算法名，用
 FSM 自己的名字（`mission_logic`）单一一份。只有 A（本就不是算法参数）独立成 `mission/` 层。
@@ -219,7 +219,7 @@ decision_node.__init__:
 - **Q4 `min_candidates_before_select`**：归 **B′**；`stop_after_drop` 语义由场景 `phases` 取代。
 - **Q5 算法参数就近放置 + 按算法名命名**：算法是重点调试对象，参数抽离不能影响调试/修改——
   **可替换算法的参数（B）与其源码放在一起、用算法自己的名字命名参数表**（换算法整套跟着走，
-  如 `coarse_pbvs_then_terminal_ibvs.*.yaml`）。只有 A（非算法参数）独立成 `mission/` 层。
+  如 `stepped_descent_ibvs.*.yaml`）。只有 A（非算法参数）独立成 `mission/` 层。
 - **Q6 SEARCH 参数**：把内联在 `mission_logic` 里的 SEARCH 聚类/选目标**抽成轻量命名模块**
   `search_strategy.py`（仿 `drop_strategy.py`）+ 算法名参数表 `search_strategy.{sim,real}.yaml`。
 - **Q7「FSM 内部」= 哪个 FSM**：只有一个——`mission_logic.py` 的**顶层扁平任务状态机**（无子 FSM）。

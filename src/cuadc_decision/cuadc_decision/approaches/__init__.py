@@ -10,15 +10,15 @@ docs/spec/adr/0005-terminal-align-visual-servoing.md。
 """
 
 from cuadc_decision.approaches.base import ApproachOutput
-from cuadc_decision.approaches import coarse_pbvs_then_terminal_ibvs
+from cuadc_decision.approaches import stepped_descent_ibvs
 # 常用类型 re-export,方便脱离节点单测直接构造。
-from cuadc_decision.approaches.coarse_pbvs_then_terminal_ibvs import (
-    ApproachConfig, CoarsePbvsThenTerminalIbvs)
+from cuadc_decision.approaches.stepped_descent_ibvs import (
+    ApproachConfig, SteppedDescentIbvs)
 
 APPROACHES = {
-    coarse_pbvs_then_terminal_ibvs.NAME: coarse_pbvs_then_terminal_ibvs,
+    stepped_descent_ibvs.NAME: stepped_descent_ibvs,
 }
-ACTIVE = coarse_pbvs_then_terminal_ibvs.NAME  # 改这行切换/实验(以后有新形态再加)
+ACTIVE = stepped_descent_ibvs.NAME  # 改这行切换/实验(以后有新形态再加)
 
 
 def create_active(profile=None, config=None):
