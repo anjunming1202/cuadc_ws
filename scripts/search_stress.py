@@ -147,10 +147,10 @@ def _run_trial(node, idx, args, logdir):
             gz_cmd.append(f'sim_realism_params:={args.realism_parm}')
         gz_proc, gz_f = _spawn(gz_cmd, gz_log)
 
-        # 时延档走 run_mission_sim_delayed.sh(插 sim-only 延迟节点);零延迟走生产 run_mission_sim.sh。
-        if args.detection_latency_ms:
+        # 时延档走 run_mission_sim_delayed.sh(相机→CV 图像延迟,保留拍照戳);零延迟走生产 run_mission_sim.sh。
+        if args.latency_ms:
             mission_cmd = ['bash', 'scripts/run_mission_sim_delayed.sh',
-                           str(args.detection_latency_ms)]
+                           str(args.latency_ms)]
         else:
             mission_cmd = ['bash', 'scripts/run_mission_sim.sh']
         mission_proc, mission_f = _spawn(mission_cmd, mission_log)
@@ -206,8 +206,8 @@ def main():
     ap.add_argument('--trial-timeout-sec', type=float, default=300.0)
     ap.add_argument('--realism-parm', default='',
                     help='SITL 风/传感器噪声 parm 文件(叠加);空=干净 sim')
-    ap.add_argument('--detection-latency-ms', type=float, default=0.0,
-                    help='感知发布延迟(建模真实检测流水线时延);0=无')
+    ap.add_argument('--latency-ms', type=float, default=0.0,
+                    help='相机→CV 图像延迟(保留拍照戳,建模真实链路时延);0=无')
     ap.add_argument('--out', default='',
                     help='结果 CSV 路径;空=只打印摘要')
     ap.add_argument('--logdir', default='/tmp/search_stress_logs')

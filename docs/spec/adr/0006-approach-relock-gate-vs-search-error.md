@@ -6,7 +6,7 @@
 
 [ADR-0005](0005-terminal-align-visual-servoing.md) 定的混合接近里,粗段 PBVS
 把飞机带到 SEARCH 估计出的**世界锁定坐标**上方,然后交接给末端 IBVS。交接的
-前提在 `approaches/coarse_pbvs_then_terminal_ibvs.py` 的 `_coarse`:必须先用
+前提在 `approaches/stepped_descent_ibvs.py` 的 `_coarse`:必须先用
 `_nearest_within(dets, lock, refine_gate_m)` 拿到一个**离锁定点 `refine_gate_m`
 以内的实时检测**(硬锁关联,`best`),`best` 非空才可能切末端(末端 IBVS 也靠
 这个检测的 bearing 才有测量)。

@@ -71,7 +71,7 @@ PBVS 按实测量级建模了随高度变化 + 残留偏置的定位误差）。
 - **实现落点不在本 ADR、也不在 spec**：stage-strategy 的组织、hybrid 的切换
   条件、姿态补偿 / alpha-beta 跟踪（门 + 重锁）/ 条件积分等控制细节，都属
   `cuadc_decision` 包内部组织，见 [`cuadc_decision/README.md`](../../../src/cuadc_decision/README.md)。
-  第一份实现命名 `coarse_pbvs_then_terminal_ibvs`。
+  第一份实现命名 `stepped_descent_ibvs`。
 - **增益/门限是离线 sim 的起点，不是最终值**：上 Gazebo（真检测闭环）和真机
   时按真实延迟/动力学重调。
 - **sim/real 同一份代码**（同 [`00-index.md`](../00-index.md) 的原则）：IBVS

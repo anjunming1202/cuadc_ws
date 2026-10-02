@@ -12,7 +12,9 @@ docs/spec/05-perception-decision-interface.md。
   同时把标注预览编码推到本地 `preview_port`（cv-forward 转地面）。
 """
 
+import math
 import threading
+from collections import deque
 
 import cv2
 import rclpy
@@ -39,6 +41,53 @@ _RECON_ZONE_STATE = 'SURVEY_RECON_ZONE'
 _DEBUG_VIEWS = ('annotated', 'contours', 'mask')
 
 
+def _stamp_sec(stamp):
+    return stamp.sec + stamp.nanosec * 1e-9
+
+
+def _interp_vec(buf, t):
+    """在按时间升序的 (t, vec) 缓冲里线性插值 vec@t；空->None；t 超界->钳到最近端。"""
+    if not buf:
+        return None
+    if t <= buf[0][0]:
+        return buf[0][1]
+    if t >= buf[-1][0]:
+        return buf[-1][1]
+    prev = buf[0]
+    for cur in buf:
+        if cur[0] >= t:
+            t0, v0 = prev
+            t1, v1 = cur
+            a = 0.0 if t1 == t0 else (t - t0) / (t1 - t0)
+            return tuple(v0[k] + a * (v1[k] - v0[k]) for k in range(len(v0)))
+        prev = cur
+    return buf[-1][1]
+
+
+def _interp_quat(buf, t):
+    """四元数按时间 nlerp@t（符号对齐 + 归一化，小角近似 slerp，够用）。"""
+    if not buf:
+        return None
+    if t <= buf[0][0]:
+        return buf[0][1]
+    if t >= buf[-1][0]:
+        return buf[-1][1]
+    prev = buf[0]
+    for cur in buf:
+        if cur[0] >= t:
+            t0, q0 = prev
+            t1, q1 = cur
+            a = 0.0 if t1 == t0 else (t - t0) / (t1 - t0)
+            d = sum(q0[i] * q1[i] for i in range(4))
+            if d < 0.0:
+                q1 = tuple(-c for c in q1)
+            q = tuple(q0[i] + a * (q1[i] - q0[i]) for i in range(4))
+            n = math.sqrt(sum(c * c for c in q)) or 1.0
+            return tuple(c / n for c in q)
+        prev = cur
+    return buf[-1][1]
+
+
 class CvPerceptionNode(Node):
 
     def __init__(self):
@@ -56,6 +105,9 @@ class CvPerceptionNode(Node):
 
         # 取帧源:sim=ros(订阅 image_raw)、real=shm(读原始帧,图不进 ROS)。
         self.declare_parameter('frame_source', 'ros')
+        # capture=按拍照时刻插值(生产默认) / latest=处理时刻最新——仅 A/B 对照与
+        # 真机拍照戳异常兜底,启用即告警。
+        self.declare_parameter('pose_at', 'capture')
         self.declare_parameter('raw_shm', DEFAULT_RAW_SHM)
         self.declare_parameter('src_width', 1920)
         self.declare_parameter('src_height', 1080)
@@ -82,6 +134,14 @@ class CvPerceptionNode(Node):
         )
 
         self._bridge = CvBridge()
+        # 位姿时间缓冲：反投影按图像拍照时刻插值取位姿(否则运动/延迟时出散点,
+        # ADR-0010 B)。前提图像与遥测同时钟(sim=/clock, real=Pi 时钟)。
+        self._pos_buf = deque(maxlen=300)  # (t_sec, (x,y,z)); 300样本≈3-6s,覆盖链路延迟
+        self._att_buf = deque(maxlen=300)  # (t_sec, (x,y,z,w))
+        self._clock_mismatch_warned = False
+        self._pose_at_latest = self.get_parameter('pose_at').value == 'latest'
+        if self._pose_at_latest:
+            self.get_logger().warn('pose_at=latest: TEST ONLY -- capture-time alignment disabled')
         self._latest_position_ned = None
         self._latest_orientation_xyzw = None
         self._recon_zone_active = False
@@ -143,28 +203,65 @@ class CvPerceptionNode(Node):
         self._recon_zone_active = (msg.data == _RECON_ZONE_STATE)
 
     def _on_local_position(self, msg):
-        self._latest_position_ned = (msg.pose.position.x, msg.pose.position.y, msg.pose.position.z)
+        p = msg.pose.position
+        self._latest_position_ned = (p.x, p.y, p.z)
+        self._pos_buf.append((_stamp_sec(msg.header.stamp), (p.x, p.y, p.z)))
 
     def _on_attitude(self, msg):
         q = msg.orientation
         self._latest_orientation_xyzw = (q.x, q.y, q.z, q.w)
+        self._att_buf.append((_stamp_sec(msg.header.stamp), (q.x, q.y, q.z, q.w)))
+
+    def _pose_at(self, t_capture):
+        """按图像捕获时刻在位姿缓冲里插值。缓冲空 -> 用最新(退化=旧行为)；t 超出缓冲
+        范围 -> 钳到最近端(位姿比图像晚到时用最新、比图像早时用最旧)。
+        时钟域失配守卫: 拍照戳与最新遥测戳差 >5s = 图像/遥测不在同一时钟(sim 忘开
+        use_sim_time 之类) -> 告警一次并退化用最新位姿,绝不静默钳到远古位姿。"""
+        if self._pose_at_latest:  # 证据链 A/B 对照旋钮,见参数声明
+            if self._latest_position_ned is None or self._latest_orientation_xyzw is None:
+                return None
+            return geometry.VehiclePose(position_ned=self._latest_position_ned,
+                                        orientation_xyzw=self._latest_orientation_xyzw)
+        if self._att_buf and abs(t_capture - self._att_buf[-1][0]) > 5.0:
+            if not self._clock_mismatch_warned:
+                self._clock_mismatch_warned = True
+                self.get_logger().warn(
+                    f'image stamp {t_capture:.1f} vs telemetry {self._att_buf[-1][0]:.1f}: '
+                    'clock domains differ (sim without use_sim_time?) -- falling back to '
+                    'latest pose, capture-time alignment DISABLED')
+            if self._latest_position_ned is None or self._latest_orientation_xyzw is None:
+                return None
+            return geometry.VehiclePose(position_ned=self._latest_position_ned,
+                                        orientation_xyzw=self._latest_orientation_xyzw)
+        pos = _interp_vec(self._pos_buf, t_capture)
+        quat = _interp_quat(self._att_buf, t_capture)
+        if pos is None or quat is None:
+            if self._latest_position_ned is None or self._latest_orientation_xyzw is None:
+                return None
+            return geometry.VehiclePose(position_ned=self._latest_position_ned,
+                                        orientation_xyzw=self._latest_orientation_xyzw)
+        return geometry.VehiclePose(position_ned=pos, orientation_xyzw=quat)
 
     # ---- 主处理:检测一次,结果扇出 ----
     def _process_frame(self, frame_bgr, header, ros_image_msg=None):
-        position = self._latest_position_ned
-        orientation = self._latest_orientation_xyzw
-        if position is None or orientation is None:
+        # 用图像捕获时刻(header.stamp)插值取位姿——不是处理时刻的最新位姿(见 ADR-0010 B)。
+        pose = self._pose_at(_stamp_sec(header.stamp))
+        if pose is None:
             return  # 没位姿不知道飞机在哪,没法反投影
-
-        pose = geometry.VehiclePose(position_ned=position, orientation_xyzw=orientation)
         active_views = self._active_debug_views()
         want_debug = bool(active_views) or self._preview is not None
         result = self._core.process(frame_bgr, pose, want_debug=want_debug)
 
-        # sink 1: DetectionArray(ROS,给决策)
+        # sink 1: DetectionArray(ROS,给决策)。stamp=拍照时刻、vehicle_pose=拍照时刻位姿
+        # (与 bearing 同刻,契约见 DetectionArray.msg / 05 文档)。
         out = DetectionArray()
         out.header = Header()
-        out.header.stamp = self.get_clock().now().to_msg()
+        out.header.stamp = header.stamp
+        out.vehicle_pose.position.x = pose.position_ned[0]
+        out.vehicle_pose.position.y = pose.position_ned[1]
+        out.vehicle_pose.position.z = pose.position_ned[2]
+        (out.vehicle_pose.orientation.x, out.vehicle_pose.orientation.y,
+         out.vehicle_pose.orientation.z, out.vehicle_pose.orientation.w) = pose.orientation_xyzw
         out.detections = [self._to_msg(d) for d in result.detections]
         self._publisher.publish(out)
         self._publish_perf(result.perf)

@@ -4,7 +4,7 @@ blue_lo: [95, 40, 110]
 blue_hi: [115, 255, 255]
 white_lo: [0, 0, 165]
 white_hi: [180, 60, 255]
-proc_w: 640              # sim 原生 640,不降采样
+proc_w: 960              # sim 相机原生 960(=真机 CV 处理分辨率),不降采样
 morph_k: 5
 min_mat_area_frac: 0.01
 hole_area_lo: 0.004

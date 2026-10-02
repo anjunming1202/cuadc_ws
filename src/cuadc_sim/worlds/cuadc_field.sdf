@@ -294,14 +294,14 @@
       </plugin>
 
       <!-- Not part of the stock default config: added so the vehicle's
-      gimbal camera feed can be viewed in-GUI without picking a topic by
+      camera feed can be viewed in-GUI without picking a topic by
       hand every launch (GIMBAL_CAMERA_TOPIC above). -->
 
       <plugin filename="ImageDisplay" name="Image Display">
         <gz-gui>
           <property type="string" key="state">docked_collapsed</property>
         </gz-gui>
-        <topic>/world/cuadc_field/model/iris_with_gimbal/model/gimbal/link/pitch_link/sensor/camera/image</topic>
+        <topic>/world/cuadc_field/model/cuadc_iris/link/camera_link/sensor/camera/image</topic>
       </plugin>
     </gui>
 
@@ -1228,8 +1228,8 @@
       </link>
     </model>
     <include>
-      <uri>model://iris_with_gimbal</uri>
-      <pose degrees="true">0.0 0.0 0.195 0 0 0.0</pose>
+      <uri>model://cuadc_iris</uri>
+      <pose degrees="true">0.0 0.0 0.31 0 0 0.0</pose>
     </include>
 
   </world>

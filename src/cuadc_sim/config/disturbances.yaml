@@ -1,0 +1,6 @@
+# ROS 链路层扰动表（sim-only）——与飞控层 sim_realism.parm 并列，三层扰动的
+# 总索引见 docs/spec/sim-stress-testbed.md §3.2，红线见 §1.1。
+# 只有 opt-in 工具加载本表（mission_sim_delayed / 压测 / 量测尺的显式传参可
+# 覆盖表值）；生产 mission_bringup 不读它。只许填实测值，不填猜测值。
+
+image_latency_ms: 0.0  # 相机→CV 图像延迟(保留拍照戳);0=直通。待 Pi 实测后填测量值即常驻化

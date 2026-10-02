@@ -20,6 +20,9 @@ def generate_launch_description():
     drop_forward_us_arg = DeclareLaunchArgument('drop_forward_us', default_value='1100')
     drop_neutral_us_arg = DeclareLaunchArgument('drop_neutral_us', default_value='1500')
     drop_run_s_arg = DeclareLaunchArgument('drop_run_s', default_value='2.0')
+    # 仿真工具直接起本文件(不经 mission_bringup)时传 true，使遥测时间戳与 Gazebo 图像
+    # 同在仿真时钟(拍照时刻对齐位姿需要,见 ADR-0010 B)。真机/默认 false 不受影响。
+    use_sim_time_arg = DeclareLaunchArgument('use_sim_time', default_value='false')
 
     interface_node = Node(
         package='cuadc_interface',
@@ -32,9 +35,10 @@ def generate_launch_description():
             'drop_forward_us': LaunchConfiguration('drop_forward_us'),
             'drop_neutral_us': LaunchConfiguration('drop_neutral_us'),
             'drop_run_s': LaunchConfiguration('drop_run_s'),
+            'use_sim_time': LaunchConfiguration('use_sim_time'),
         }],
     )
 
     return LaunchDescription([
         connection_arg, drop_rc_channel_arg, drop_forward_us_arg,
-        drop_neutral_us_arg, drop_run_s_arg, interface_node])
+        drop_neutral_us_arg, drop_run_s_arg, use_sim_time_arg, interface_node])

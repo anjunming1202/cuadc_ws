@@ -8,3 +8,7 @@
 # 会有一段明显的额外爬升。跟 mission_logic.py 的 _CRUISE_ALTITUDE_M 保持
 # 一致，返航不用再爬升，直接从当前高度返回。
 RTL_ALT_M	5
+
+# 机体质量提到满载 3.5kg 后(见 ADR-0010 簇③)悬停油门变高:让飞控在线学习悬停油门,
+# 高度环前馈才准。有真机 MOT_THST_HOVER 后可改为直接写死该值。
+MOT_HOVER_LEARN	2
