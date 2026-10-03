@@ -86,10 +86,12 @@ class InterfaceNode(Node):
         self.declare_parameter('drop_forward_us', 1100)    # 投放（放料）方向 PWM
         self.declare_parameter('drop_neutral_us', 1500)    # 连续舵机停止/中立 PWM
         self.declare_parameter('drop_run_s', 2.0)          # 投放方向持续时长（真机按验证值设）
+        self.declare_parameter('allow_disarmed_drop', False)  # 仅台架：未解锁也允许软件投放，默认关
         self._drop_rc_channel = int(self.get_parameter('drop_rc_channel').value)
         self._drop_forward_us = int(self.get_parameter('drop_forward_us').value)
         self._drop_neutral_us = int(self.get_parameter('drop_neutral_us').value)
         self._drop_run_s = float(self.get_parameter('drop_run_s').value)
+        self._allow_disarmed_drop = bool(self.get_parameter('allow_disarmed_drop').value)
 
         # io 线程独占读写的连接 + 派生状态；服务/订阅回调只读 _mode_ids /
         # _mode_names（连接建立后不再变）和 _state（配合 _state_lock）。
@@ -425,10 +427,12 @@ class InterfaceNode(Node):
         # armed 守卫：地面（未解锁）不由软件驱动投放，交给遥控器/人工。
         with self._state_lock:
             armed = self._state['armed']
-        if not armed:
+        if not armed and not self._allow_disarmed_drop:
             response.success = False
             response.message = 'refused: not armed (disarmed drop is manual/RC per ADR-0007)'
             return response
+        if not armed and self._allow_disarmed_drop:
+            self.get_logger().warn('allow_disarmed_drop: driving drop while disarmed (bench only)')
         if self._master is None:
             response.success = False
             response.message = 'no MAVLink link'

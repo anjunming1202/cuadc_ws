@@ -22,6 +22,8 @@ install -d "$OPT" "$ETC"
 install -m 0755 "$SRC_DIR/scripts/mav_fanout.py"     "$OPT/mav_fanout.py"
 install -m 0755 "$SRC_DIR/scripts/telem_ground.py"   "$OPT/telem_ground.py"
 install -m 0755 "$SRC_DIR/scripts/camera_service.py" "$OPT/camera_service.py"
+install -m 0755 "$SRC_DIR/scripts/cv_preview_ctl.py" "$OPT/cv_preview_ctl.py"
+install -m 0755 "$SRC_DIR/scripts/cv_preview_rtp.py" "$OPT/cv_preview_rtp.py"
 install -m 0755 "$SRC_DIR/systemd/apply-profile.sh"  "$OPT/apply-profile.sh"
 # CV 预览的代码在 cuadc_perception(cv-preview 单元按 PYTHONPATH 引用它,见 ADR-0008),
 # 不再拷到 /opt。
@@ -40,8 +42,9 @@ fi
 systemctl daemon-reload
 systemctl enable cuadc-onboard-fanout.service \
                  cuadc-onboard-camera.service \
-                 cuadc-onboard-profile.service
-# video-forward / cv-preview / cv-forward 不在 base:由 ground-monitor profile 拉起(见 apply-profile.sh)
+                 cuadc-onboard-profile.service \
+                 cuadc-onboard-cv-preview-ctl.service
+# video-forward 由 ground-monitor profile 拉起;CV 检测/转发由 ctl 默认关、地面按钮才开
 
 echo
 echo "installed + enabled base (fanout, camera) + profile applier."

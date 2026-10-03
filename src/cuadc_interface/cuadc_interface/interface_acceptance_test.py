@@ -12,6 +12,10 @@ src/cuadc_sim/README.md）。
 用法：
   ros2 launch cuadc_interface interface_bringup.launch.py   # 另一个终端
   ros2 run cuadc_interface interface_acceptance_test
+
+真机首次短距（约 1 m 高、正北 3 m，不投放）：
+  ros2 run cuadc_interface interface_acceptance_test --ros-args \\
+    -p takeoff_altitude_m:=1.0 -p hop_north_m:=3.0 -p skip_release_payload:=true
 """
 import math
 import time
@@ -33,12 +37,16 @@ class InterfaceAcceptanceTest(Node):
         self.declare_parameter('ekf_ready_timeout_sec', 60.0)
         self.declare_parameter('telemetry_timeout_sec', 10.0)
         self.declare_parameter('takeoff_altitude_m', 10.0)
+        self.declare_parameter('hop_north_m', 5.0)  # 起飞后水平位移（正北，米）
+        self.declare_parameter('skip_release_payload', False)  # 真机首次短距可跳过空中投放
         self.declare_parameter('takeoff_timeout_sec', 30.0)
         self.declare_parameter('land_timeout_sec', 60.0)
         self._service_timeout = self.get_parameter('service_timeout_sec').value
         self._ekf_ready_timeout = self.get_parameter('ekf_ready_timeout_sec').value
         self._telemetry_timeout = self.get_parameter('telemetry_timeout_sec').value
         self._takeoff_altitude = self.get_parameter('takeoff_altitude_m').value
+        self._hop_north_m = float(self.get_parameter('hop_north_m').value)
+        self._skip_release = bool(self.get_parameter('skip_release_payload').value)
         self._takeoff_timeout = self.get_parameter('takeoff_timeout_sec').value
         self._land_timeout = self.get_parameter('land_timeout_sec').value
 
@@ -152,9 +160,11 @@ class InterfaceAcceptanceTest(Node):
         result = self._call(self._takeoff_client, Takeoff.Request(alt=self._takeoff_altitude), 'takeoff')
         if not result.success:
             raise RuntimeError('takeoff returned success=False')
+        # 1 m 起飞时「目标-1 m」会变成 0，瞬间判过；按高度比例留容差。
+        climb_need = self._takeoff_altitude - min(
+            1.0, max(0.25, 0.3 * self._takeoff_altitude))
         self._wait_for_condition(
-            lambda: (self._latest_position.altitude - base_alt) >=
-            self._takeoff_altitude - 1.0,
+            lambda: (self._latest_position.altitude - base_alt) >= climb_need,
             'altitude telemetry confirming climb', timeout=self._takeoff_timeout)
         self.get_logger().info('takeoff confirmed via telemetry (climbed to target altitude)')
 
@@ -171,11 +181,12 @@ class InterfaceAcceptanceTest(Node):
             lambda: self._latest_position is not None, 'a global_position sample')
         pos = self._latest_position
         base_lat, base_lon = pos.latitude, pos.longitude
-        target_lat = base_lat + 0.000045  # ~5m north
+        meters_per_deg_lat = 111320.0
+        target_lat = base_lat + self._hop_north_m / meters_per_deg_lat
         target_lon = base_lon
         self.get_logger().info(
             f'calling goto_location(lat={target_lat:.7f}, lon={target_lon:.7f}, '
-            f'alt={self._takeoff_altitude}) ...')
+            f'alt={self._takeoff_altitude}, hop_north={self._hop_north_m:.1f}m) ...')
         request = GotoLocation.Request(
             lat=target_lat, lon=target_lon, alt=self._takeoff_altitude)
         result = self._call(self._goto_client, request, 'goto_location')
@@ -185,17 +196,21 @@ class InterfaceAcceptanceTest(Node):
         def distance_from_base():
             dlat = self._latest_position.latitude - base_lat
             dlon = self._latest_position.longitude - base_lon
-            return math.hypot(dlat, dlon) * 111320  # 粗略换算成米
+            return math.hypot(dlat, dlon) * meters_per_deg_lat
 
+        hop_need = self._hop_north_m * 0.7
         self._wait_for_condition(
-            lambda: distance_from_base() >= 4.0,
-            'position telemetry confirming the vehicle actually moved ~5m',
-            timeout=15.0)
+            lambda: distance_from_base() >= hop_need,
+            f'position telemetry confirming ~{self._hop_north_m:.0f}m hop',
+            timeout=20.0)
         self.get_logger().info(
             f'goto_location confirmed via telemetry (moved '
             f'{distance_from_base():.1f}m from base)')
 
     def _check_release_payload(self):
+        if self._skip_release:
+            self.get_logger().info('skip_release_payload=true; not calling drop')
+            return
         # 在空中、已解锁状态调用（release_payload 有 armed 守卫，见 ADR-0007）；服务会跑完
         # 整段投放 RC override 时序才返回，这里会阻塞约 drop_run_s。
         self.get_logger().info('calling release_payload() ...')

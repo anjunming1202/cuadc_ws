@@ -11,6 +11,9 @@
 
 为什么不用 mavlink-router / 裸 pyserial keepalive：见 ADR-0004（DTR/RTS 线状态、
 以及这块飞控要有人用 mavutil 那套请求序列持续喂才稳定发）。
+
+这块飞控 serial 关再开会把 TELEM 卡死（要飞控断电才恢复），所以心跳超时和
+循环异常都**不 close 串口**；只在设备 open 失败时重试。
 """
 from __future__ import annotations
 
@@ -62,6 +65,8 @@ def main() -> None:
     m = None
     backoff = 1.0
     last_req = 0.0
+    last_wait_log = 0.0
+    got_hb = False
     while True:
         if m is None:
             try:
@@ -73,25 +78,21 @@ def main() -> None:
                 time.sleep(backoff)
                 backoff = min(10.0, backoff * 1.5)
                 continue
-            print("waiting for heartbeat ...", flush=True)
-            if m.wait_heartbeat(timeout=30) is None:
-                print("no heartbeat; reopening", file=sys.stderr, flush=True)
-                try:
-                    m.close()
-                except Exception:
-                    pass
-                m = None
-                continue
-            request_streams(m, args.rate)
-            last_req = time.monotonic()
+            got_hb = False
             backoff = 1.0
-            print(f"connected sys={m.target_system}; streams requested", flush=True)
+            request_streams(m, args.rate)  # sysid 默认 1；未解锁也会发心跳
+            last_req = time.monotonic()
+            last_wait_log = last_req
+            print("serial held open; waiting for heartbeat (will not reopen)", flush=True)
 
         try:
             now = time.monotonic()
             if now - last_req > 2.0:  # 持续重请求，喂活数据流
                 request_streams(m, args.rate)
                 last_req = now
+            if not got_hb and now - last_wait_log > 30.0:
+                print("still no heartbeat; keeping serial open", file=sys.stderr, flush=True)
+                last_wait_log = now
 
             serial_fd = getattr(m, "fd", None)
             rlist = [u.fileno() for u in socks]
@@ -119,6 +120,13 @@ def main() -> None:
                         break
                     if msg.get_type() == "BAD_DATA":
                         continue
+                    if (not got_hb) and msg.get_type() == "HEARTBEAT":
+                        got_hb = True
+                        print(
+                            f"heartbeat sys={m.target_system} "
+                            f"comp={m.target_component}",
+                            flush=True,
+                        )
                     buf = msg.get_msgbuf()
                     for u, dest in zip(socks, dests):
                         try:
@@ -126,12 +134,7 @@ def main() -> None:
                         except OSError:
                             pass
         except Exception as exc:
-            print(f"loop error: {exc}; reopening", file=sys.stderr, flush=True)
-            try:
-                m.close()
-            except Exception:
-                pass
-            m = None
+            print(f"loop error: {exc}; keeping serial", file=sys.stderr, flush=True)
             time.sleep(0.5)
 
 

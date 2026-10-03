@@ -29,11 +29,9 @@ case "${profile:-none}" in
     : # 只跑底座，消费者全手动（相机服务仍在推本地端点，只是没人转发到地面）
     ;;
   ground-monitor)
-    # 外场监看：数传 + 干净图传(5603→5600) + CV 预览图传(5602→5604→5606)
+    # 外场监看：数传 + 干净图传。OpenCV 由 cv-preview-ctl 开机听按钮,默认关。
     systemctl start cuadc-onboard-telem.service
     systemctl start cuadc-onboard-video-forward.service
-    systemctl start cuadc-onboard-cv-preview.service
-    systemctl start cuadc-onboard-cv-forward.service
     ;;
   mission)
     # 任务侧 bringup 按名引用；任务栈接线前为占位，不阻断底座

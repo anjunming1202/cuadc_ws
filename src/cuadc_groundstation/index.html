@@ -71,6 +71,7 @@
     }
     .rec-btn:hover { border-color: var(--accent); }
     .rec-btn.on { background: var(--bad); color: #fff; border-color: var(--bad); }
+    .rec-btn.cv-on { background: var(--accent); color: #fff; border-color: var(--accent); }
     .rec-btn:disabled { opacity: 0.6; cursor: default; }
     main {
       max-width: 1600px;
@@ -172,6 +173,7 @@
   <header>
     <h1>DroneLink</h1>
     <div class="header-right">
+      <button id="cvBtn" class="rec-btn" type="button">OpenCV 关</button>
       <button id="recBtn" class="rec-btn" type="button">● 录制</button>
       <div id="cpuBadge">Pi CPU: —</div>
       <div id="status">初始化…</div>
@@ -207,7 +209,7 @@
     </div>
     <p class="hint">
       左：干净图传 <code>/stream.ts</code>（机载 5603→5600）。
-      右：CV 预览 <code>/stream_cv.ts</code>（5602→标注→5604→5606）。
+      右：CV 预览 <code>/stream_cv.ts</code>（默认关；顶栏按钮开检测）。
       遥测：UDP JSON <code>:5701</code> → <code>/telemetry.json</code>。
     </p>
   </main>
@@ -523,6 +525,35 @@
     recBtn.addEventListener("click", toggleRec);
     pollRec();
     setInterval(pollRec, 1000);
+
+    const cvBtn = document.getElementById("cvBtn");
+    let cvOn = false;
+    function applyCv(st) {
+      cvOn = !!(st && st.running);
+      cvBtn.textContent = cvOn ? "OpenCV 开" : "OpenCV 关";
+      cvBtn.classList.toggle("cv-on", cvOn);
+      cvBtn.title = st && st.error ? String(st.error) : "";
+    }
+    async function toggleCv() {
+      cvBtn.disabled = true;
+      try {
+        const res = await fetch(cvOn ? "/cv-preview/stop" : "/cv-preview/start", { method: "POST" });
+        applyCv(await res.json());
+      } catch (err) {
+        console.warn("cv-preview", err);
+      } finally {
+        cvBtn.disabled = false;
+      }
+    }
+    async function pollCv() {
+      try {
+        const res = await fetch("/cv-preview/status", { cache: "no-store" });
+        applyCv(await res.json());
+      } catch (err) { /* server or Pi ctrl down */ }
+    }
+    cvBtn.addEventListener("click", toggleCv);
+    pollCv();
+    setInterval(pollCv, 2000);
 
     cleanPlayer.start();
     cvPlayer.start();

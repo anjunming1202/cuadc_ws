@@ -56,3 +56,12 @@ ros2 run cuadc_interface interface_precision_test
 ```
 ros2 run cuadc_interface interface_velocity_test
 ```
+
+真机首次短距（会解锁起飞；默认验收仍是 10 m / 正北 5 m）：
+
+```
+ros2 run cuadc_interface interface_acceptance_test --ros-args \
+  -p takeoff_altitude_m:=1.0 -p hop_north_m:=3.0 -p skip_release_payload:=true
+```
+
+水平段是 **GPS 正北**，不是机头前方。台架未解锁测舵机：launch 加 `allow_disarmed_drop:=true`（飞之前关掉）。拆桨台架脚本在 [`local/flight_ctrl_tests/`](../../local/flight_ctrl_tests/)：电机只听遥控 arm；投放用 `DO_SET_SERVO` 写 **SERVO9(=AUX1)**，不是 RC9 override。

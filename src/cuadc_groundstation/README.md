@@ -24,6 +24,7 @@ start.bat              Windows 启动:从本目录跑 python server.py
 
 1. 双击 `start.bat`(或在本目录 `python server.py`)。
 2. 浏览器打开 **http://127.0.0.1:8765/** → 左干净图传 / 右 CV 预览 + 遥测 HUD。
+   右侧 OpenCV 预览默认关；用页面按钮经机载 UDP **5611** 启停（`POST /cv-preview/start|stop`）。
 
 无飞控自测 HUD:另开一个终端 `python send_fake_telemetry.py`(默认发 127.0.0.1:5701)。
 
