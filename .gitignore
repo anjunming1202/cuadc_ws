@@ -11,3 +11,7 @@ mav.parm
 
 # Captured image datasets (large; dataset tooling itself lives on feature/cylinder-dataset)
 src/cylinder_dataset/data/
+
+# Ground/Pi capture dumps and one-off bundles (scripts stay tracked)
+local/recordings/
+local/field-test.bundle

@@ -10,7 +10,8 @@
 
 ```
 server.py             收 5600 干净图传 + 5606 CV 预览(本机 ffmpeg 转 MPEG-TS)+ 5701/5601 遥测，
-                        在 http://127.0.0.1:8765/ 提供双画面网页 + HUD
+                        在 http://127.0.0.1:8765/ 提供双画面网页 + HUD；
+                        并代理机载图传/CV 开关(UDP → Pi 5612 / 5611)
 index.html / mpegts.js 网页前端(/stream.ts + /stream_cv.ts，HUD 读 /telemetry.json)
 send_fake_telemetry.py 无飞控时本机灌假遥测测 HUD
 DroneLink.sdp          air-link 参考(运行时不读，ffmpeg 用自动生成的 loopback SDP)
@@ -24,7 +25,22 @@ start.bat              Windows 启动:从本目录跑 python server.py
 
 1. 双击 `start.bat`(或在本目录 `python server.py`)。
 2. 浏览器打开 **http://127.0.0.1:8765/** → 左干净图传 / 右 CV 预览 + 遥测 HUD。
-   右侧 OpenCV 预览默认关；用页面按钮经机载 UDP **5611** 启停（`POST /cv-preview/start|stop`）。
+   HUD 的 **EKF/GPS** 行显示机载 `ekf_ready`（与接口层同一判据）及 `fix`/`sats`。
+
+### 图传 / OpenCV 开关（顶栏按钮）
+
+浏览器 → `server.py` HTTP → Pi UDP JSON（主机默认 `192.168.50.1,10.10.10.1`）：
+
+| 按钮 | HTTP | Pi UDP | 机载脚本 | 开机默认 |
+|------|------|--------|----------|----------|
+| **图传** | `/video-forward/start\|stop\|status` | **5612** | `video_forward_ctl.py`（5603→5600） | **开** |
+| **OpenCV** | `/cv-preview/start\|stop\|status` | **5611** | `cv_preview_ctl.py`（检测+5604→5606） | **关** |
+
+需机载已装对应 ctl 单元。2026-10-04 已烧到 Pi 正式路径（`/opt/cuadc-onboard`，
+开机默认：图传开 / OpenCV 关）。备份与回档见
+[`cuadc_onboard` README](../cuadc_onboard/README.md)（目录
+`/home/wly/cuadc-onboard-backup-20261004_133328`）。烧录包在
+`local/pi_burn_video_ctls/`。`--air-ctrl-hosts` 可改 Pi 地址。
 
 无飞控自测 HUD:另开一个终端 `python send_fake_telemetry.py`(默认发 127.0.0.1:5701)。
 

@@ -6,6 +6,7 @@ Pi 上可整夹删除的台架脚本（仓库副本在本目录）。走扇出 `
 ```bash
 /home/wly/dronelink-venv/bin/python3 ~/flight_ctrl_tests/bench_motors.py
 /home/wly/dronelink-venv/bin/python3 ~/flight_ctrl_tests/bench_drop.py
+/home/wly/dronelink-venv/bin/python3 ~/flight_ctrl_tests/check_ekf_gps.py
 ```
 
 - `bench_motors.py`：只打印 HEARTBEAT 的 armed；你遥控解锁看电机，再上锁。
@@ -13,3 +14,4 @@ Pi 上可整夹删除的台架脚本（仓库副本在本目录）。走扇出 `
   不是 RC 通道 9 override（RC9 ≠ SERVO9；MAVLink1 override 也到不了 CH9）。
   台架飞控：`SERVO9_FUNCTION=0`；AUX 舵机单独供电、与飞控共地。
   打印 `ack=0` 为 ACCEPTED；`DENIED` 检查 FUNCTION / 供电。
+- `check_ekf_gps.py`：只读 EKF/GPS（`EKF_POS_HORIZ_ABS|EKF_POS_VERT_ABS`、fix、sats）。不解锁。地面 HUD 同源字段由 `telem_ground.py` 推。

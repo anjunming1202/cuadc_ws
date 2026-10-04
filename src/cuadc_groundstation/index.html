@@ -71,6 +71,7 @@
     }
     .rec-btn:hover { border-color: var(--accent); }
     .rec-btn.on { background: var(--bad); color: #fff; border-color: var(--bad); }
+    .rec-btn.stream-on { background: var(--accent); color: #fff; border-color: var(--accent); }
     .rec-btn.cv-on { background: var(--accent); color: #fff; border-color: var(--accent); }
     .rec-btn:disabled { opacity: 0.6; cursor: default; }
     main {
@@ -173,7 +174,8 @@
   <header>
     <h1>DroneLink</h1>
     <div class="header-right">
-      <button id="cvBtn" class="rec-btn" type="button">OpenCV 关</button>
+      <button id="vidBtn" class="rec-btn" type="button" title="原始图传 5603→5600">图传 关</button>
+      <button id="cvBtn" class="rec-btn" type="button" title="OpenCV 预览 5602→5606">OpenCV 关</button>
       <button id="recBtn" class="rec-btn" type="button">● 录制</button>
       <div id="cpuBadge">Pi CPU: —</div>
       <div id="status">初始化…</div>
@@ -195,6 +197,7 @@
               <span>姿态</span><span id="vAtt">—</span>
               <span>模式</span><span id="vMode">—</span>
               <span>电量</span><span id="vBatt">—</span>
+              <span>EKF/GPS</span><span id="vEkf">—</span>
               <span>Pi CPU</span><span id="vCpu">—</span>
             </div>
           </div>
@@ -209,8 +212,8 @@
     </div>
     <p class="hint">
       左：干净图传 <code>/stream.ts</code>（机载 5603→5600）。
-      右：CV 预览 <code>/stream_cv.ts</code>（默认关；顶栏按钮开检测）。
-      遥测：UDP JSON <code>:5701</code> → <code>/telemetry.json</code>。
+      右：CV 预览 <code>/stream_cv.ts</code>。顶栏「图传」控机载 UDP 5612（开机默认开）；
+      「OpenCV」控 5611（开机默认关）。遥测：UDP JSON <code>:5701</code> → <code>/telemetry.json</code>。
     </p>
   </main>
   <script src="/mpegts.js"></script>
@@ -222,6 +225,7 @@
     const vAtt = document.getElementById("vAtt");
     const vMode = document.getElementById("vMode");
     const vBatt = document.getElementById("vBatt");
+    const vEkf = document.getElementById("vEkf");
     const vCpu = document.getElementById("vCpu");
 
     const streamState = { clean: "初始化", cv: "初始化" };
@@ -265,6 +269,8 @@
         vAtt.textContent = "—";
         vMode.textContent = "—";
         vBatt.textContent = "—";
+        vEkf.textContent = "—";
+        vEkf.style.color = "";
         setCpuDisplay(null);
         return;
       }
@@ -309,6 +315,22 @@
         vBatt.textContent = pct + "%";
       } else {
         vBatt.textContent = volts + " V";
+      }
+
+      // ekf_ready 与接口层同一判据；附带 fix/sats 方便现场看卫星。
+      if (typeof data.ekf_ready === "boolean") {
+        const sats = (typeof data.gps_sats === "number") ? data.gps_sats : null;
+        const fix = (typeof data.gps_fix_type === "number") ? data.gps_fix_type : null;
+        let detail = data.ekf_ready ? "ready" : "not ready";
+        if (sats !== null || fix !== null) {
+          detail += " · fix=" + (fix === null ? "—" : fix)
+            + " sats=" + (sats === null ? "—" : sats);
+        }
+        vEkf.textContent = detail;
+        vEkf.style.color = data.ekf_ready ? "var(--ok)" : "var(--bad)";
+      } else {
+        vEkf.textContent = "—";
+        vEkf.style.color = "";
       }
 
       setCpuDisplay(typeof data.cpu_pct === "number" ? data.cpu_pct : null);
@@ -526,34 +548,45 @@
     pollRec();
     setInterval(pollRec, 1000);
 
-    const cvBtn = document.getElementById("cvBtn");
-    let cvOn = false;
-    function applyCv(st) {
-      cvOn = !!(st && st.running);
-      cvBtn.textContent = cvOn ? "OpenCV 开" : "OpenCV 关";
-      cvBtn.classList.toggle("cv-on", cvOn);
-      cvBtn.title = st && st.error ? String(st.error) : "";
-    }
-    async function toggleCv() {
-      cvBtn.disabled = true;
-      try {
-        const res = await fetch(cvOn ? "/cv-preview/stop" : "/cv-preview/start", { method: "POST" });
-        applyCv(await res.json());
-      } catch (err) {
-        console.warn("cv-preview", err);
-      } finally {
-        cvBtn.disabled = false;
+    // ---- 机载图传 / OpenCV 开关（server → Pi UDP 5612 / 5611）----
+    function bindAirToggle(btnId, statusPath, startPath, stopPath, labelOn, labelOff, onClass) {
+      const btn = document.getElementById(btnId);
+      let on = false;
+      function apply(st) {
+        on = !!(st && st.running);
+        btn.textContent = on ? labelOn : labelOff;
+        btn.classList.toggle(onClass, on);
+        btn.title = st && st.error ? String(st.error) : "";
       }
+      async function toggle() {
+        btn.disabled = true;
+        try {
+          const res = await fetch(on ? stopPath : startPath, { method: "POST" });
+          apply(await res.json());
+        } catch (err) {
+          console.warn(btnId, err);
+        } finally {
+          btn.disabled = false;
+        }
+      }
+      async function poll() {
+        try {
+          const res = await fetch(statusPath, { cache: "no-store" });
+          apply(await res.json());
+        } catch (err) { /* Pi ctl down */ }
+      }
+      btn.addEventListener("click", toggle);
+      poll();
+      setInterval(poll, 2000);
     }
-    async function pollCv() {
-      try {
-        const res = await fetch("/cv-preview/status", { cache: "no-store" });
-        applyCv(await res.json());
-      } catch (err) { /* server or Pi ctrl down */ }
-    }
-    cvBtn.addEventListener("click", toggleCv);
-    pollCv();
-    setInterval(pollCv, 2000);
+    bindAirToggle(
+      "vidBtn", "/video-forward/status", "/video-forward/start", "/video-forward/stop",
+      "图传 开", "图传 关", "stream-on"
+    );
+    bindAirToggle(
+      "cvBtn", "/cv-preview/status", "/cv-preview/start", "/cv-preview/stop",
+      "OpenCV 开", "OpenCV 关", "cv-on"
+    );
 
     cleanPlayer.start();
     cvPlayer.start();

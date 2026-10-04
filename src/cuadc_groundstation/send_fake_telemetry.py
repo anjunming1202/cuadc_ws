@@ -39,6 +39,9 @@ def main() -> None:
                 "mode": "GUIDED",
                 "batt_v": 22.0 - 0.01 * t,
                 "batt_pct": max(0.0, 90.0 - 0.05 * t),
+                "ekf_ready": True,
+                "gps_fix_type": 3,
+                "gps_sats": 12,
                 "cpu_pct": 55.0 + 20.0 * math.sin(t / 2.0),
             }
             sock.sendto(json.dumps(payload).encode("utf-8"), (args.host, args.port))

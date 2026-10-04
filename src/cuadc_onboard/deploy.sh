@@ -24,9 +24,9 @@ install -m 0755 "$SRC_DIR/scripts/telem_ground.py"   "$OPT/telem_ground.py"
 install -m 0755 "$SRC_DIR/scripts/camera_service.py" "$OPT/camera_service.py"
 install -m 0755 "$SRC_DIR/scripts/cv_preview_ctl.py" "$OPT/cv_preview_ctl.py"
 install -m 0755 "$SRC_DIR/scripts/cv_preview_rtp.py" "$OPT/cv_preview_rtp.py"
+install -m 0755 "$SRC_DIR/scripts/video_forward_ctl.py" "$OPT/video_forward_ctl.py"
 install -m 0755 "$SRC_DIR/systemd/apply-profile.sh"  "$OPT/apply-profile.sh"
-# CV 预览的代码在 cuadc_perception(cv-preview 单元按 PYTHONPATH 引用它,见 ADR-0008),
-# 不再拷到 /opt。
+# 检测算法仍在 cuadc_perception(PYTHONPATH)；RTP worker 由 cv_preview_ctl 拉起。
 
 for u in "$SRC_DIR"/systemd/*.service; do
   install -m 0644 "$u" "$UNIT_DIR/$(basename "$u")"
@@ -44,10 +44,10 @@ systemctl enable cuadc-onboard-fanout.service \
                  cuadc-onboard-camera.service \
                  cuadc-onboard-profile.service \
                  cuadc-onboard-cv-preview-ctl.service
-# video-forward 由 ground-monitor profile 拉起;CV 检测/转发由 ctl 默认关、地面按钮才开
+# video-forward-ctl 由 ground-monitor profile 拉起(默认开图传)；CV 检测默认关、地面按钮开。
 
 echo
-echo "installed + enabled base (fanout, camera) + profile applier."
+echo "installed + enabled base (fanout, camera, cv-preview-ctl) + profile applier."
 echo "profile = $(cat "$ETC/profile")  (edit $ETC/profile, then restart cuadc-onboard-profile)"
 echo
 echo "扇出必须对『刚上电的飞控』开串口，不能热交接（见 ADR-0004），所以启用后请整机断电重启一次。"
