@@ -2,6 +2,7 @@
 """cuadc_onboard CV 预览开关 —— 地面 viewer 按钮经 UDP 启停检测进程。
 
 默认不跑 OpenCV(省 CPU)。收到 JSON `{cmd:on|off|status}` 后启停 worker
+(`python3 -m cuadc_perception.cv_preview`,经 PYTHONPATH 引用,见 ADR-0008)
 和 5604→5606 转发,并把 `{ok,running}` 回给来源地址。控制口对外(Wi-Fi)。
 """
 from __future__ import annotations
@@ -14,10 +15,9 @@ import socket
 import subprocess
 import sys
 import time
-from pathlib import Path
 
 DEFAULT_PORT = 5611  # 地面 viewer UDP 控制口;勿与 5610 相机控制冲突
-DEFAULT_WORKER = Path("/opt/cuadc-onboard/cv_preview_rtp.py")
+WORKER_MODULE = "cuadc_perception.cv_preview"  # 检测代码在 cuadc_perception,按 PYTHONPATH 引用
 FORWARD_CMD = [
     "gst-launch-1.0",
     "udpsrc", "port=5604",
@@ -31,8 +31,7 @@ def _running(proc: subprocess.Popen | None) -> bool:
 
 
 class PreviewCtl:
-    def __init__(self, worker: Path, env: dict[str, str], worker_args: list[str]) -> None:
-        self._worker = worker
+    def __init__(self, env: dict[str, str], worker_args: list[str]) -> None:
         self._env = env
         self._args = worker_args
         self._proc: subprocess.Popen | None = None
@@ -74,9 +73,7 @@ class PreviewCtl:
     def start(self) -> dict:
         if _running(self._proc):
             return self.status()
-        if not self._worker.is_file():
-            return {"ok": False, "running": False, "error": f"missing {self._worker}"}
-        cmd = ["python3", str(self._worker), *self._args]
+        cmd = ["python3", "-m", WORKER_MODULE, *self._args]
         self._proc = subprocess.Popen(
             cmd,
             env=self._env,
@@ -110,23 +107,21 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="UDP 开关 OpenCV 预览(默认关)")
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--port", type=int, default=DEFAULT_PORT)
-    ap.add_argument("--worker", type=Path, default=DEFAULT_WORKER)
     args = ap.parse_args()
 
     env = os.environ.copy()
     env.setdefault("GST_PLUGIN_PATH", "/usr/local/lib/aarch64-linux-gnu/gstreamer-1.0")
-    env.setdefault("CUADC_PERCEPTION_ROOT", "/home/wly/cuadc_ws/src/cuadc_perception")
     env.setdefault("PYTHONPATH", "/home/wly/cuadc_ws/src/cuadc_perception")
     worker_args = [
         "--from-rtp-port", "5602",
         "--src-fps", "10",
-        "--dst-port", "5604",
+        "--port", "5604",
         "--width", "960",
         "--height", "540",
         "--bitrate", "1000",
         "--profile", "real",
     ]
-    ctl = PreviewCtl(args.worker, env, worker_args)
+    ctl = PreviewCtl(env, worker_args)
 
     def _shutdown(_signum, _frame) -> None:
         ctl.stop()
@@ -138,7 +133,7 @@ def main() -> None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind((args.host, args.port))
-    print(f"[cv-ctl] udp {args.host}:{args.port} worker={args.worker} (default off)", flush=True)
+    print(f"[cv-ctl] udp {args.host}:{args.port} worker=-m {WORKER_MODULE} (default off)", flush=True)
 
     while True:
         try:

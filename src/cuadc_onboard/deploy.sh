@@ -23,10 +23,9 @@ install -m 0755 "$SRC_DIR/scripts/mav_fanout.py"     "$OPT/mav_fanout.py"
 install -m 0755 "$SRC_DIR/scripts/telem_ground.py"   "$OPT/telem_ground.py"
 install -m 0755 "$SRC_DIR/scripts/camera_service.py" "$OPT/camera_service.py"
 install -m 0755 "$SRC_DIR/scripts/cv_preview_ctl.py" "$OPT/cv_preview_ctl.py"
-install -m 0755 "$SRC_DIR/scripts/cv_preview_rtp.py" "$OPT/cv_preview_rtp.py"
 install -m 0755 "$SRC_DIR/systemd/apply-profile.sh"  "$OPT/apply-profile.sh"
-# CV 预览的代码在 cuadc_perception(cv-preview 单元按 PYTHONPATH 引用它,见 ADR-0008),
-# 不再拷到 /opt。
+# CV 检测/预览的代码在 cuadc_perception(cv-preview 单元和 cv_preview_ctl 按
+# PYTHONPATH 引用它,见 ADR-0008),不拷到 /opt。
 
 for u in "$SRC_DIR"/systemd/*.service; do
   install -m 0644 "$u" "$UNIT_DIR/$(basename "$u")"
