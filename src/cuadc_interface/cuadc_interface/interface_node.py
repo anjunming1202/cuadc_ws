@@ -31,8 +31,7 @@ from geometry_msgs.msg import PoseStamped, TwistStamped
 from sensor_msgs.msg import BatteryState, Imu, NavSatFix
 from std_msgs.msg import Bool, Float64, String
 
-# EKF_STATUS_REPORT.flags 判定"位置估计可信"的两个必要位，跟
-# cuadc_sim/sitl_smoke_test.py 用的是同一组——早于这两位置位时飞控会
+# EKF_STATUS_REPORT.flags 判定"位置估计可信"的两个必要位——早于这两位置位时飞控会
 # ACCEPT 解锁/起飞请求，但高度基准不稳，几秒后自动上锁。
 _EKF_POS_READY = (mavutil.mavlink.EKF_POS_HORIZ_ABS
                   | mavutil.mavlink.EKF_POS_VERT_ABS)

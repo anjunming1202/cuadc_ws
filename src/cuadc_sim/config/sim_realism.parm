@@ -1,5 +1,5 @@
 # 仿真真实感注入 —— 叠加在 mission_defaults.parm 之上,建模真实飞行条件下的扰动。
-# sim 默认加载(gazebo_bringup / sitl_bringup);imperfections:=false 或 sim_realism_params:='' 关闭。
+# sim 默认加载(gazebo_bringup);imperfections:=false 或 sim_realism_params:='' 关闭。
 # 用途与度量见 docs/spec/sim-stress-testbed.md。这里放偏离默认、用于压测的扰动量。
 
 # 风不在这里:ArduPilot 的 SIM_WIND_* 在 Gazebo(JSON) 模式不生效,风由 sim_disturbance_node 在 Gazebo 侧加。

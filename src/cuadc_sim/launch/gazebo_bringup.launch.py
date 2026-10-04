@@ -18,9 +18,8 @@ with the vehicle already statically included (the same approach already
 verified end-to-end without ROS2 involved) and bridges only the camera
 topic into ROS2 ourselves via ros_gz_bridge's parameter_bridge.
 
-Runs SITL with MAVProxy enabled, same dual-output convention as
-sitl_bringup.launch.py: udp:14550 free for QGroundControl, udp:14551
-reserved for our own scripts/nodes.
+Runs SITL with MAVProxy enabled, two outputs: udp:14550 (our interface
+layer / task and test scripts) and udp:14551 (spare: GCS / ad-hoc tools).
 
 First run in a fresh sitl_run_dir needs a EEPROM wipe, e.g.:
     ros2 launch cuadc_sim gazebo_bringup.launch.py extra_sitl_args:=-w
