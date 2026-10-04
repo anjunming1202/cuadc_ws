@@ -28,6 +28,7 @@ class SearchConfig:
     settle_seconds: float = 1.5              # 进 SEARCH 后先攒这么久样本再考虑选目标
     min_detection_confidence: float = 0.5    # 只收置信度够的检测（桩恒发 1.0，真实 CV 会过滤）
     min_candidates_before_select: int = 3    # 候选够这么多才允许选（正式=筒数 3；bench 场景覆盖成 1=看到就投）
+    max_tilt_deg: float = 10.0               # 机身倾斜超过此值的帧不收：急加减速时姿态与图像对不齐，反投影偏
 
 
 def load_config(profile: str) -> SearchConfig:
@@ -64,10 +65,18 @@ def _update_clusters(clusters, points, match_threshold):
             best.append((x, y, size))
 
 
+def _tilted(ctx, max_tilt_rad):
+    """拍照时刻（感知随检测发的位姿）或当前姿态任一倾斜超限即算倾斜；都没有姿态时不拦。"""
+    angles = [a for a in (ctx.det_roll_rad, ctx.det_pitch_rad, ctx.roll_rad, ctx.pitch_rad) if a is not None]
+    return any(abs(a) > max_tilt_rad for a in angles)
+
+
 def observe(ctx, cfg, in_drop_zone):
-    """把本帧筒检测（按置信度过滤、只看投放区那一侧）归并进 ctx.drop_task.clusters。
+    """把本帧筒检测（按置信度过滤、只看投放区那一侧、机身够平）归并进 ctx.drop_task.clusters。
     in_drop_zone(x, y)（起飞坐标系）判定检测点是否在投放区一侧（场地坐标与分界由 mission_logic
     给；Detection 本身不带区域信息，用中点粗分即可）。"""
+    if _tilted(ctx, math.radians(cfg.max_tilt_deg)):
+        return
     points = [
         (d.position.x, d.position.y, d.apparent_size)
         for d in ctx.detections
