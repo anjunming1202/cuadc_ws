@@ -12,8 +12,13 @@
 server.py             收 5600 干净图传 + 5606 CV 预览(本机 ffmpeg 转 MPEG-TS)+ 5701/5601 遥测，
                         在 http://127.0.0.1:8765/ 提供双画面网页 + HUD；
                         并代理机载图传/CV 开关(UDP → Pi 5612 / 5611)
-index.html / mpegts.js 网页前端(/stream.ts + /stream_cv.ts，HUD 读 /telemetry.json)
-send_fake_telemetry.py 无飞控时本机灌假遥测测 HUD
+index.html            网页：顶上静态赛道 + 橙机位 + 近 30s 高度折线 + 双视频 + HUD
+                        （赛道/高度/GUIDED 锁原点写在本页，不依赖飞控）
+field_pose.py         地面估算：每次进入 GUIDED 锁原点(=H)，退出钉回 H；近 30s 高度缓冲
+field_map.js          赛道绘制辅助（页面主逻辑在 index.html）
+replay_telemetry.py   机载 mcap/zip → jsonl，并可 UDP 回放到 viewer
+replays/              回放数据（如 20261004_152633_suite.jsonl）
+send_fake_telemetry.py 无飞控时本机灌假遥测测 HUD / 赛道图（6s 后才变 GUIDED）
 DroneLink.sdp          air-link 参考(运行时不读，ffmpeg 用自动生成的 loopback SDP)
 start.bat              Windows 启动:从本目录跑 python server.py
 ```
@@ -23,9 +28,17 @@ start.bat              Windows 启动:从本目录跑 python server.py
 前提:笔记本连 **DroneLink** AP、静态 IP `192.168.50.2/24`;装好 **Python** 与
 **ffmpeg**(`winget install --id Gyan.FFmpeg -e`)。机载端(Pi)已在推流。
 
-1. 双击 `start.bat`(或在本目录 `python server.py`)。
+1. 双击 `start.bat`(或在本目录 `python server.py`)。**同时只开一份**，两份会抢 UDP 5600/5701 和 ffmpeg，图传会黑。
 2. 浏览器打开 **http://127.0.0.1:8765/** → 左干净图传 / 右 CV 预览 + 遥测 HUD。
    HUD 的 **EKF/GPS** 行显示机载 `ekf_ready`（与接口层同一判据）及 `fix`/`sats`。
+   打开页面**顶部就是赛道图**（写在 HTML 里，不需要飞控、也不用等 JS）。
+   `start.bat` 只是 `cd` 到本目录再 `python server.py`，两者等价。改完代码后要
+   **重启 server 并在浏览器 Ctrl+F5 强刷**，只重启 Python 不刷新页面会仍看旧 HTML。
+   **GUIDED 锁原点**：不在 GUIDED 时飞机钉在 H。**每次进入 GUIDED 的那一帧**
+   把当时的位置/航向当作原点（该点 = H，机头 = 赛道 +x），之后只画相对这一帧的位移。
+   退出 GUIDED（RTL 等）立刻钉回 H；再进 GUIDED 重新锁，不接着上一段轨迹。
+   优先 `ned_n`/`ned_e`，没有则用经纬度。机载只回传原始字段。
+   再下方是**近 30 秒高度折线**（真实 `alt_m`，GUIDED 前后都记）。暂不画圆桶。
 
 ### 图传 / OpenCV 开关（顶栏按钮）
 
@@ -42,7 +55,17 @@ start.bat              Windows 启动:从本目录跑 python server.py
 `/home/wly/cuadc-onboard-backup-20261004_133328`）。烧录包在
 `local/pi_burn_video_ctls/`。`--air-ctrl-hosts` 可改 Pi 地址。
 
-无飞控自测 HUD:另开一个终端 `python send_fake_telemetry.py`(默认发 127.0.0.1:5701)。
+无飞控自测 HUD 和赛道图:另开一个终端 `python send_fake_telemetry.py`(默认发 127.0.0.1:5701)。
+前约 6 秒 `STABILIZE`（飞机应钉在 H），之后 `GUIDED` 沿 +x 走动。
+
+回放一次真实飞行（viewer 先开着）：
+
+```bash
+python replay_telemetry.py convert recordings.zip -o replays/20261004_152633_suite.jsonl
+python replay_telemetry.py replay replays/20261004_152633_suite.jsonl
+```
+
+`--speed 4` 可四倍速。GUIDED 前钉在 H；该袋约 336 s，157 s 进 GUIDED，318 s RTL（退出 GUIDED 后应钉回 H），高度约 0–5 m。
 
 ## 录制(每次运行都可开,和任务解耦)
 

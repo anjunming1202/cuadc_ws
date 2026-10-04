@@ -23,6 +23,9 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 VIEWER_DIR = Path(__file__).resolve().parent
+if str(VIEWER_DIR) not in sys.path:
+    sys.path.insert(0, str(VIEWER_DIR))
+from field_pose import AltitudeTrace, FieldPoseTracker
 DEFAULT_SDP = VIEWER_DIR.parent / "DroneLink.sdp"  # docs / air-link reference
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
@@ -44,6 +47,8 @@ CLIENT_QUEUE_MAX = 64  # ~ drop old TS if a slow browser falls behind
 _telemetry_lock = threading.Lock()
 _latest_telemetry: dict | None = None
 _latest_telemetry_recv_mono: float = 0.0
+_field_pose = FieldPoseTracker()  # 每次 GUIDED 上升沿锁 H；退出 GUIDED 钉回 H
+_alt_trace = AltitudeTrace(window_s=30.0)  # 近 30s 高度，给折线图
 _air_ctrl_hosts: list[str] = [
     h.strip() for h in DEFAULT_AIR_CTRL_HOSTS.split(",") if h.strip()
 ]
@@ -89,6 +94,9 @@ def _ingest_telemetry_payload(payload: bytes, addr: tuple[str, int]) -> bool:
     if not isinstance(obj, dict):
         return False
     with _telemetry_lock:
+        obj.update(_field_pose.update(obj))
+        _alt_trace.update(obj)
+        obj["alt_trace"] = _alt_trace.snapshot()
         _latest_telemetry = obj
         _latest_telemetry_recv_mono = time.monotonic()
     return True
@@ -501,10 +509,20 @@ def _telemetry_snapshot() -> dict:
             else None
         )
         fresh = age is not None and age <= TELEMETRY_STALE_S
+        data = _latest_telemetry
+        if data is None:
+            data = {
+                "field_x_m": 0.0,
+                "field_y_m": 0.0,
+                "field_yaw_deg": 0.0,
+                "field_airborne": False,
+                "field_src": "pre-guided",
+                "alt_trace": _alt_trace.snapshot(),
+            }
         return {
             "ok": bool(fresh),
             "age_s": None if age is None else round(age, 3),
-            "data": _latest_telemetry,
+            "data": data,
             "stale": bool(_latest_telemetry is not None and not fresh),
         }
 
@@ -564,6 +582,10 @@ class ViewerHandler(BaseHTTPRequestHandler):
             return
         if path == "/mpegts.js":
             body = (VIEWER_DIR / "mpegts.js").read_bytes()
+            self._send_bytes(body, "application/javascript; charset=utf-8")
+            return
+        if path == "/field_map.js":
+            body = (VIEWER_DIR / "field_map.js").read_bytes()
             self._send_bytes(body, "application/javascript; charset=utf-8")
             return
         if path == "/telemetry.json":

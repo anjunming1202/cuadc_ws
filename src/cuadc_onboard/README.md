@@ -12,7 +12,7 @@
 ```
 scripts/   通信程序（能手动跑，不依赖 systemd）
              mav_fanout.py         串口扇出（底座）
-             telem_ground.py       数传发送：读扇出 → JSON 发地面 HUD（消费者）
+             telem_ground.py       数传发送：读扇出 → JSON 发地面 HUD（含 ned_n/ned_e、lat/lon；赛道投影在地面算）
              video_forward_ctl.py  干净图传开关 UDP 5612（默认开 5603→5600）
              cv_preview_ctl.py     OpenCV 开关 UDP 5611（默认关）
              cv_preview_rtp.py     ctl 拉起的检测 worker（5602→5604）
@@ -132,6 +132,16 @@ sudo /home/wly/cuadc-onboard-backup-20261004_133328/restore.sh
 会把 `/opt` 和 unit 拷回去，并重新拉起旧的常开 video/cv 单元。不解锁、不碰 `dronelink-network`。
 
 装完若 5611 被抢：不要留 `/home/wly/cv_preview_ctl.py` 那种家目录副本和正式 ctl 一起听。
+
+数传 JSON 现含 `ned_n`/`ned_e`/`lat_deg`/`lon_deg`（赛道图在**地面**投影，Pi 不算）。
+只换数传、不动扇出/网络：
+
+```bash
+sudo install -m 0755 /tmp/telem_ground.py /opt/cuadc-onboard/telem_ground.py
+sudo systemctl restart cuadc-onboard-telem.service
+```
+
+2026-10-04 19:16 已装到本机 `/opt`。HUD 无 `ned_*` 时先确认 Pi 上是这份脚本。
 
 > 状态：底座（扇出 + 相机 tee）与数传消费者、profile、deploy.sh 已就位；
 > 扇出多消费者共存已真机验证（2026-09-19）；2026-10-03 TELEM3@57600 地面 HUD 有飞控数据。

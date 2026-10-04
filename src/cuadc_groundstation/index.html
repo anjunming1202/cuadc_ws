@@ -116,6 +116,7 @@
       border-radius: 6px;
       overflow: hidden;
       aspect-ratio: 16 / 9;
+      max-height: 42vh;
     }
     video {
       display: block;
@@ -157,6 +158,52 @@
     }
     .hud-grid span:nth-child(odd) { color: var(--muted); }
     .hud-grid span:nth-child(even) { color: var(--text); text-align: right; }
+    .field-wrap {
+      margin-top: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .field-stage {
+      background: var(--panel);
+      border: 1px solid #2a3340;
+      border-radius: 6px;
+      padding: 0.65rem 0.75rem 0.5rem;
+      overflow-x: auto;
+    }
+    .field-stage:not(.alt-stage) svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      min-height: 160px;
+      aspect-ratio: 5.4 / 1;
+    }
+    .alt-stage svg {
+      display: block;
+      width: 100%;
+      height: 110px;
+      min-height: 110px;
+    }
+    .alt-stage text {
+      font-family: Consolas, "Segoe UI", "Microsoft YaHei", monospace;
+    }
+    .field-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.55rem 1rem;
+      margin: 0.35rem 0 0;
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+    .field-legend i {
+      display: inline-block;
+      width: 0.7rem;
+      height: 0.7rem;
+      border-radius: 2px;
+      margin-right: 0.3rem;
+      vertical-align: -0.1rem;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
     .hint {
       margin-top: 0.85rem;
       color: var(--muted);
@@ -182,6 +229,85 @@
     </div>
   </header>
   <main>
+    <div class="field-wrap">
+      <div class="stage-label">赛道平面 <span class="pill">打开即显示 · 不需要飞控 · 往下才是图传</span></div>
+      <div class="field-stage">
+        <div id="fieldMap">
+          <svg viewBox="-9.8 -6.6 71.6 13.2" width="100%" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg" id="fieldSvg" aria-label="CUADC 单条任务区平面图">
+            <rect x="-9.8" y="-6.6" width="71.6" height="13.2" fill="#12171d"/>
+            <rect x="-8" y="-4" width="5" height="8" fill="#1a2834" stroke="#4a5a6c" stroke-width="0.08"/>
+            <text x="-5.5" y="0.15" text-anchor="middle" fill="#e8ecf1" font-size="1.05" font-family="Segoe UI, Microsoft YaHei, sans-serif">准备区</text>
+            <text x="-5.5" y="1.25" text-anchor="middle" fill="#8b95a5" font-size="0.7" font-family="Segoe UI, Microsoft YaHei, sans-serif">5 m 示意</text>
+            <rect x="-3" y="-4" width="33" height="8" fill="#1e3a4c" stroke="#4a5a6c" stroke-width="0.08"/>
+            <text x="13.5" y="0.15" text-anchor="middle" fill="#e8ecf1" font-size="1.05" font-family="Segoe UI, Microsoft YaHei, sans-serif">起降区</text>
+            <text x="13.5" y="1.25" text-anchor="middle" fill="#8b95a5" font-size="0.7" font-family="Segoe UI, Microsoft YaHei, sans-serif">33 × 8 m</text>
+            <rect x="30" y="-4" width="5" height="8" fill="#3d4a28" stroke="#4a5a6c" stroke-width="0.08"/>
+            <text x="32.5" y="0.15" text-anchor="middle" fill="#e8ecf1" font-size="1.05" font-family="Segoe UI, Microsoft YaHei, sans-serif">投放区</text>
+            <text x="32.5" y="1.25" text-anchor="middle" fill="#8b95a5" font-size="0.7" font-family="Segoe UI, Microsoft YaHei, sans-serif">5 × 8 m</text>
+            <rect x="35" y="-4" width="20" height="8" fill="#243040" stroke="#4a5a6c" stroke-width="0.08"/>
+            <text x="45" y="0.15" text-anchor="middle" fill="#e8ecf1" font-size="1.05" font-family="Segoe UI, Microsoft YaHei, sans-serif">过渡</text>
+            <text x="45" y="1.25" text-anchor="middle" fill="#8b95a5" font-size="0.7" font-family="Segoe UI, Microsoft YaHei, sans-serif">20 × 8 m</text>
+            <rect x="55" y="-4" width="5" height="8" fill="#3a2d4c" stroke="#4a5a6c" stroke-width="0.08"/>
+            <text x="57.5" y="0.15" text-anchor="middle" fill="#e8ecf1" font-size="1.05" font-family="Segoe UI, Microsoft YaHei, sans-serif">侦察区</text>
+            <text x="57.5" y="1.25" text-anchor="middle" fill="#8b95a5" font-size="0.7" font-family="Segoe UI, Microsoft YaHei, sans-serif">5 × 8 m</text>
+            <line x1="2" y1="-4" x2="2" y2="4" stroke="#e6b84d" stroke-width="0.12" stroke-dasharray="0.35 0.22"/>
+            <circle cx="0" cy="0" r="0.4" fill="#0f1216" stroke="#3d9cf0" stroke-width="0.1"/>
+            <text x="0" y="-0.7" text-anchor="middle" fill="#3d9cf0" font-size="0.7" font-family="Segoe UI, sans-serif" font-weight="700">H</text>
+            <polygon points="1.35,0 0.55,0.32 0.55,-0.32" fill="#3d9cf0"/>
+            <text x="2.35" y="-4.45" fill="#e6b84d" font-size="0.7" font-family="Segoe UI, Microsoft YaHei, sans-serif">起飞线</text>
+            <text x="60.35" y="0.2" fill="#8b95a5" font-size="0.7" font-family="Segoe UI, Microsoft YaHei, sans-serif">+x</text>
+            <text x="-8.35" y="-4.35" text-anchor="end" fill="#8b95a5" font-size="0.7" font-family="Segoe UI, Microsoft YaHei, sans-serif">+y</text>
+            <text x="26" y="6.25" text-anchor="middle" fill="#8b95a5" font-size="0.7" font-family="Consolas, monospace">x (m) · 宽 8 m（上侧 +y）</text>
+            <line x1="-8" y1="4" x2="-8" y2="4.45" stroke="#8b95a5" stroke-width="0.06"/>
+            <text x="-8" y="5.35" text-anchor="middle" fill="#8b95a5" font-size="0.72" font-family="Consolas, monospace">−8</text>
+            <line x1="-3" y1="4" x2="-3" y2="4.45" stroke="#8b95a5" stroke-width="0.06"/>
+            <text x="-3" y="5.35" text-anchor="middle" fill="#8b95a5" font-size="0.72" font-family="Consolas, monospace">−3</text>
+            <line x1="0" y1="4" x2="0" y2="4.45" stroke="#8b95a5" stroke-width="0.06"/>
+            <text x="0" y="5.35" text-anchor="middle" fill="#8b95a5" font-size="0.72" font-family="Consolas, monospace">0</text>
+            <line x1="2" y1="4" x2="2" y2="4.45" stroke="#8b95a5" stroke-width="0.06"/>
+            <text x="2" y="5.35" text-anchor="middle" fill="#8b95a5" font-size="0.72" font-family="Consolas, monospace">2</text>
+            <line x1="30" y1="4" x2="30" y2="4.45" stroke="#8b95a5" stroke-width="0.06"/>
+            <text x="30" y="5.35" text-anchor="middle" fill="#8b95a5" font-size="0.72" font-family="Consolas, monospace">30</text>
+            <line x1="35" y1="4" x2="35" y2="4.45" stroke="#8b95a5" stroke-width="0.06"/>
+            <text x="35" y="5.35" text-anchor="middle" fill="#8b95a5" font-size="0.72" font-family="Consolas, monospace">35</text>
+            <line x1="55" y1="4" x2="55" y2="4.45" stroke="#8b95a5" stroke-width="0.06"/>
+            <text x="55" y="5.35" text-anchor="middle" fill="#8b95a5" font-size="0.72" font-family="Consolas, monospace">55</text>
+            <line x1="60" y1="4" x2="60" y2="4.45" stroke="#8b95a5" stroke-width="0.06"/>
+            <text x="60" y="5.35" text-anchor="middle" fill="#8b95a5" font-size="0.72" font-family="Consolas, monospace">60</text>
+            <g id="fieldCraft">
+              <polygon points="1.1,0 -0.55,0.45 -0.55,-0.45" fill="#ff8a3d" stroke="#0f1216" stroke-width="0.08"/>
+              <text id="fieldCraftLabel" x="0" y="-1.35" text-anchor="middle" fill="#ff8a3d" font-size="0.72" font-family="Segoe UI, Microsoft YaHei, sans-serif">钉在 H</text>
+            </g>
+          </svg>
+        </div>
+        <p class="field-legend">
+          <span><i style="background:#1a2834"></i>准备区（深度 5m 示意，规则未定）</span>
+          <span><i style="background:#1e3a4c"></i>起降区 33×8 m</span>
+          <span><i style="background:#3d4a28"></i>投放区 5×8 m</span>
+          <span><i style="background:#243040"></i>过渡 20×8 m</span>
+          <span><i style="background:#3a2d4c"></i>侦察区 5×8 m</span>
+          <span><i style="background:#ff8a3d"></i>飞机（GUIDED 后才离 H）</span>
+        </p>
+      </div>
+    </div>
+    <div class="field-wrap">
+      <div class="stage-label">高度 <span class="pill">最近 30 s</span></div>
+      <div class="field-stage alt-stage">
+        <div id="altChart">
+          <!-- viewBox 跟像素对齐，避免 preserveAspectRatio=none 把字拉扁 -->
+          <svg id="altSvg" viewBox="0 0 800 110" width="100%" height="110" preserveAspectRatio="xMinYMin meet" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="最近30秒高度">
+            <rect id="altBg" x="0" y="0" width="800" height="110" fill="#12171d"/>
+            <rect id="altPlot" x="40" y="14" width="748" height="70" fill="#1a1f26" stroke="#2a3340" stroke-width="1"/>
+            <polyline id="altLine" fill="none" stroke="#3d9cf0" stroke-width="1.5" stroke-linejoin="round"/>
+            <text id="altMaxLab" x="36" y="18" text-anchor="end" fill="#8b95a5" font-size="11">—</text>
+            <text id="altMinLab" x="36" y="84" text-anchor="end" fill="#8b95a5" font-size="11">0</text>
+            <text id="altNowLab" x="788" y="12" text-anchor="end" fill="#3d9cf0" font-size="12">等待高度</text>
+            <text id="altT0Lab" x="40" y="104" fill="#8b95a5" font-size="11">−30 s</text>
+            <text id="altT1Lab" x="788" y="104" text-anchor="end" fill="#8b95a5" font-size="11">现在</text>
+          </svg>
+        </div>
+      </div>
+    </div>
     <div class="stages">
       <div class="stage-wrap">
         <div class="stage-label">原始图传 <span class="pill">:5600 → /stream.ts</span></div>
@@ -199,6 +325,7 @@
               <span>电量</span><span id="vBatt">—</span>
               <span>EKF/GPS</span><span id="vEkf">—</span>
               <span>Pi CPU</span><span id="vCpu">—</span>
+              <span>赛道</span><span id="vField">—</span>
             </div>
           </div>
         </div>
@@ -211,9 +338,9 @@
       </div>
     </div>
     <p class="hint">
-      左：干净图传 <code>/stream.ts</code>（机载 5603→5600）。
-      右：CV 预览 <code>/stream_cv.ts</code>。顶栏「图传」控机载 UDP 5612（开机默认开）；
-      「OpenCV」控 5611（开机默认关）。遥测：UDP JSON <code>:5701</code> → <code>/telemetry.json</code>。
+      顶上就是赛道（不需要飞控）。左：干净图传 <code>/stream.ts</code>。
+      右：CV 预览 <code>/stream_cv.ts</code>。每次进入 GUIDED 的那一帧锁成 H；退出 GUIDED（如 RTL）后钉回 H，再进 GUIDED 重新锁。
+      高度折线看近 30 秒 <code>alt_m</code>。
     </p>
   </main>
   <script src="/mpegts.js"></script>
@@ -227,6 +354,146 @@
     const vBatt = document.getElementById("vBatt");
     const vEkf = document.getElementById("vEkf");
     const vCpu = document.getElementById("vCpu");
+    const vField = document.getElementById("vField");
+    const craftEl = document.getElementById("fieldCraft");
+    const craftLabEl = document.getElementById("fieldCraftLabel");
+    const altSvgEl = document.getElementById("altSvg");
+    const altBgEl = document.getElementById("altBg");
+    const altPlotEl = document.getElementById("altPlot");
+    const altLineEl = document.getElementById("altLine");
+    const altMaxEl = document.getElementById("altMaxLab");
+    const altMinEl = document.getElementById("altMinLab");
+    const altNowEl = document.getElementById("altNowLab");
+    const altT0El = document.getElementById("altT0Lab");
+    const altT1El = document.getElementById("altT1Lab");
+    // 平面图 / 高度图画在本页，不依赖 field_map.js 是否加载成功。
+    const fieldView = {
+      setCraft: function (pose) {
+        if (!craftEl) return;
+        const x = Number(pose && pose.x);
+        const y = Number(pose && pose.y);
+        const yaw = Number(pose && pose.yawDeg);
+        const px = Number.isFinite(x) ? x : 0;
+        const py = Number.isFinite(y) ? y : 0;
+        const pyaw = Number.isFinite(yaw) ? yaw : 0;
+        craftEl.setAttribute("transform", "translate(" + px + "," + (-py) + ") rotate(" + pyaw + ")");
+        if (craftLabEl) craftLabEl.textContent = (pose && pose.label) || "";
+      },
+    };
+    const altView = (function () {
+      let lastRows = [];
+      function geom() {
+        const w = Math.max(320, (altSvgEl && altSvgEl.clientWidth) || 800);
+        const h = Math.max(96, (altSvgEl && altSvgEl.clientHeight) || 110);
+        const L = 44, R = 12, T = 16, B = 22;
+        return { w: w, h: h, L: L, T: T, plotW: w - L - R, plotH: h - T - B };
+      }
+      function layoutChrome(g) {
+        if (altSvgEl) altSvgEl.setAttribute("viewBox", "0 0 " + g.w + " " + g.h);
+        if (altBgEl) {
+          altBgEl.setAttribute("width", String(g.w));
+          altBgEl.setAttribute("height", String(g.h));
+        }
+        if (altPlotEl) {
+          altPlotEl.setAttribute("x", String(g.L));
+          altPlotEl.setAttribute("y", String(g.T));
+          altPlotEl.setAttribute("width", String(g.plotW));
+          altPlotEl.setAttribute("height", String(g.plotH));
+        }
+        if (altMaxEl) { altMaxEl.setAttribute("x", String(g.L - 4)); altMaxEl.setAttribute("y", String(g.T + 4)); }
+        if (altMinEl) { altMinEl.setAttribute("x", String(g.L - 4)); altMinEl.setAttribute("y", String(g.T + g.plotH)); }
+        if (altNowEl) { altNowEl.setAttribute("x", String(g.w - 8)); altNowEl.setAttribute("y", String(g.T - 4)); }
+        if (altT0El) { altT0El.setAttribute("x", String(g.L)); altT0El.setAttribute("y", String(g.h - 6)); }
+        if (altT1El) { altT1El.setAttribute("x", String(g.w - 8)); altT1El.setAttribute("y", String(g.h - 6)); }
+      }
+      return {
+        setTrace: function (pts) {
+          lastRows = Array.isArray(pts) ? pts : [];
+          if (!altLineEl) return;
+          const g = geom();
+          layoutChrome(g);
+          if (!lastRows.length) {
+            altLineEl.setAttribute("points", "");
+            if (altMaxEl) altMaxEl.textContent = "—";
+            if (altNowEl) altNowEl.textContent = "等待高度";
+            return;
+          }
+          const t1 = Number(lastRows[lastRows.length - 1].t);
+          const t0 = t1 - 30;
+          let aMax = 5;
+          for (let i = 0; i < lastRows.length; i++) {
+            const a = Number(lastRows[i].alt);
+            if (Number.isFinite(a) && a > aMax) aMax = a;
+          }
+          aMax = Math.max(5, aMax * 1.15);
+          const ptsStr = [];
+          for (let i = 0; i < lastRows.length; i++) {
+            const t = Number(lastRows[i].t), a = Number(lastRows[i].alt);
+            if (!Number.isFinite(t) || !Number.isFinite(a)) continue;
+            const x = g.L + g.plotW * Math.max(0, Math.min(1, (t - t0) / 30));
+            const y = g.T + g.plotH * (1 - Math.max(0, Math.min(1, a / aMax)));
+            ptsStr.push(x.toFixed(1) + "," + y.toFixed(1));
+          }
+          altLineEl.setAttribute("points", ptsStr.join(" "));
+          if (altMaxEl) altMaxEl.textContent = aMax.toFixed(0) + " m";
+          const last = Number(lastRows[lastRows.length - 1].alt);
+          if (altNowEl) altNowEl.textContent = (Number.isFinite(last) ? last.toFixed(1) : "—") + " m";
+        },
+      };
+    })();
+    fieldView.setCraft({ x: 0, y: 0, yawDeg: 0, airborne: false, label: "钉在 H" });
+    altView.setTrace([]);
+    // 每次 GUIDED 上升沿锁 H；退出 GUIDED 就钉回 H。不依赖 field_map.js。
+    const poseTracker = (function () {
+      let airborne = false, n0 = null, e0 = null, yaw0 = 0;
+      let last = { x: 0, y: 0, yawDeg: 0, airborne: false, label: "钉在 H" };
+      return {
+        update: function (d) {
+          d = d || {};
+          const guided = String(d.mode || "").trim().toUpperCase() === "GUIDED";
+          const nn = Number(d.ned_n), ne = Number(d.ned_e);
+          const has = Number.isFinite(nn) && Number.isFinite(ne);
+          if (airborne && !guided) {
+            airborne = false;
+            n0 = null;
+            e0 = null;
+            last = { x: 0, y: 0, yawDeg: 0, airborne: false, label: "钉在 H" };
+            return last;
+          }
+          if (!airborne) {
+            if (!guided) {
+              last = { x: 0, y: 0, yawDeg: 0, airborne: false, label: "钉在 H" };
+              return last;
+            }
+            if (!has) {
+              last = { x: 0, y: 0, yawDeg: 0, airborne: false, label: "GUIDED 无 NED" };
+              return last;
+            }
+            n0 = nn;
+            e0 = ne;
+            yaw0 = (Number.isFinite(Number(d.yaw_deg)) ? Number(d.yaw_deg) : 0) * Math.PI / 180;
+            airborne = true;
+          }
+          if (!has) {
+            last.airborne = true;
+            last.label = "hold";
+            return last;
+          }
+          const dn = nn - n0, de = ne - e0;
+          const c = Math.cos(yaw0), s = Math.sin(yaw0);
+          const yawNow = (Number.isFinite(Number(d.yaw_deg)) ? Number(d.yaw_deg) : 0) * Math.PI / 180;
+          last = {
+            x: dn * c + de * s,
+            y: dn * s - de * c,
+            yawDeg: ((yawNow - yaw0) * 180 / Math.PI % 360 + 360) % 360,
+            airborne: true,
+            label: "NED",
+          };
+          return last;
+        },
+      };
+    })();
+    const altLocal = [];
 
     const streamState = { clean: "初始化", cv: "初始化" };
 
@@ -261,8 +528,18 @@
     }
 
     function updateHud(snapshot) {
-      const data = snapshot && snapshot.data;
-      if (!data) {
+      const data = (snapshot && snapshot.data) || {};
+      const altM = Number(data.alt_m);
+      if (Number.isFinite(altM)) {
+        const now = Date.now() / 1000;
+        altLocal.push({ t: now, alt: altM });
+        const cut = now - 30;
+        while (altLocal.length && altLocal[0].t < cut) altLocal.shift();
+      }
+      altView.setTrace(altLocal);
+
+      const live = !!(snapshot && (snapshot.ok || snapshot.stale));
+      if (!live) {
         telemStateEl.textContent = "无数据";
         telemStateEl.className = "telem-state missing";
         vAlt.textContent = "—";
@@ -272,6 +549,8 @@
         vEkf.textContent = "—";
         vEkf.style.color = "";
         setCpuDisplay(null);
+        vField.textContent = "钉在 H（未 GUIDED）";
+        fieldView.setCraft({ x: 0, y: 0, yawDeg: 0, airborne: false, label: "钉在 H" });
         return;
       }
 
@@ -334,6 +613,17 @@
       }
 
       setCpuDisplay(typeof data.cpu_pct === "number" ? data.cpu_pct : null);
+
+      const pose = poseTracker.update(data);
+      if (pose.airborne) {
+        vField.textContent = pose.x.toFixed(1) + " / " + pose.y.toFixed(1) + " m";
+        fieldView.setCraft(pose);
+      } else {
+        const nedHint = Number.isFinite(Number(data.ned_n))
+          ? (" n=" + Number(data.ned_n).toFixed(1)) : " 无ned";
+        vField.textContent = pose.label + nedHint;
+        fieldView.setCraft({ x: 0, y: 0, yawDeg: 0, airborne: false, label: pose.label });
+      }
     }
 
     async function pollTelemetry() {

@@ -3,8 +3,8 @@
 
 Usage (on the Windows ground PC, with the localhost viewer already running):
 
-    python windows\\send_fake_telemetry.py
-    python windows\\send_fake_telemetry.py --host 127.0.0.1 --port 5701
+    python send_fake_telemetry.py
+    python send_fake_telemetry.py --host 127.0.0.1 --port 5701
 """
 
 from __future__ import annotations
@@ -30,18 +30,21 @@ def main() -> None:
     try:
         while True:
             t = time.time() - t0
+            guided = t >= 6.0  # 前 6s STABILIZE：NED 乱走也不该离 H
             payload = {
                 "t": time.time(),
-                "alt_m": 10.0 + 2.0 * math.sin(t / 3.0),
+                "alt_m": 0.0 if not guided else 10.0 + 2.0 * math.sin(t / 3.0),
                 "roll_deg": 5.0 * math.sin(t),
                 "pitch_deg": 3.0 * math.cos(t * 0.7),
-                "yaw_deg": (t * 20.0) % 360.0,
-                "mode": "GUIDED",
+                "yaw_deg": 0.0,  # 北；与起飞机头一致时赛道 +x = 北
+                "mode": "GUIDED" if guided else "STABILIZE",
                 "batt_v": 22.0 - 0.01 * t,
                 "batt_pct": max(0.0, 90.0 - 0.05 * t),
                 "ekf_ready": True,
                 "gps_fix_type": 3,
                 "gps_sats": 12,
+                "ned_n": 3.0 * math.sin(t) if not guided else (t - 6.0) * 2.0,  # GUIDED 后沿北走
+                "ned_e": 2.0 * math.cos(t) if not guided else 0.0,
                 "cpu_pct": 55.0 + 20.0 * math.sin(t / 2.0),
             }
             sock.sendto(json.dumps(payload).encode("utf-8"), (args.host, args.port))

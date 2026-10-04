@@ -70,6 +70,10 @@ class MavlinkTelemetrySource:
             "ekf_ready": None,  # bool；未收到 EKF_STATUS_REPORT 前为 None
             "gps_fix_type": None,  # 0=无, 3=3D, …
             "gps_sats": None,
+            "ned_n": None,  # LOCAL_POSITION_NED.x 北向 m；地面赛道图用
+            "ned_e": None,  # LOCAL_POSITION_NED.y 东向 m
+            "lat_deg": None,
+            "lon_deg": None,
         }
 
     def snapshot(self) -> dict[str, Any]:
@@ -199,10 +203,14 @@ class MavlinkTelemetrySource:
                 self._state["yaw_deg"] = _unwrap_deg(msg.yaw) % 360.0
         elif mtype == "LOCAL_POSITION_NED":
             with self._lock:
+                self._state["ned_n"] = float(msg.x)
+                self._state["ned_e"] = float(msg.y)
                 self._state["alt_m"] = float(-msg.z)
         elif mtype == "GLOBAL_POSITION_INT":
             with self._lock:
                 self._state["alt_m"] = msg.relative_alt / 1000.0
+                self._state["lat_deg"] = msg.lat / 1e7
+                self._state["lon_deg"] = msg.lon / 1e7
         elif mtype == "VFR_HUD":
             with self._lock:
                 if self._state["alt_m"] is None:
@@ -310,6 +318,10 @@ def run_forever(args: argparse.Namespace) -> None:
                 "ekf_ready": state.get("ekf_ready"),
                 "gps_fix_type": state.get("gps_fix_type"),
                 "gps_sats": state.get("gps_sats"),
+                "ned_n": state.get("ned_n"),
+                "ned_e": state.get("ned_e"),
+                "lat_deg": state.get("lat_deg"),
+                "lon_deg": state.get("lon_deg"),
                 "cpu_pct": None if cpu_pct is None else round(cpu_pct, 1),
             }
             compact = {k: v for k, v in payload.items() if v is not None or k in ("t", "link")}
