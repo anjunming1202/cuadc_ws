@@ -3,16 +3,20 @@
 # 自起 headless gazebo(bench world) + interface + perception，跑量测，按 PID 组拆除
 # （只杀自己起的进程组，绝不 pkill 模式串，见 docs/lessons.md）。
 #
-# Usage: ./scripts/run_measure_reprojection.sh [latency_ms] [pose_at]
-#   latency_ms  相机->CV 图像延迟注入(sim-only 扰动,保留拍照戳),默认 0=干净
+# Usage: ./scripts/run_measure_reprojection.sh [latency_ms] [pose_at] [gazebo 透传参数…]
+#   latency_ms  相机->CV 图像延迟(保留拍照戳);省略或 default = 仿真世界默认(disturbances.yaml)
 #   pose_at     capture(默认,生产行为) | latest(仅证据链 A/B 对照)
+#   透传        如 imperfections:=false(干净 sim)、sim_realism_params:=''(只关风/噪声)
 # 证据链(ADR-0010 B/C): 0 capture=PASS; 150 latest=moving 行出大偏差; 150 capture=恢复。
 # 退出码 = 量测 PASS(0)/FAIL(非0)，可当保真回归门。
 
 set -eo pipefail
 
-LATENCY_MS="${1:-0}"
+LATENCY_MS="${1:-default}"
 POSE_AT="${2:-capture}"
+shift $(( $# < 2 ? $# : 2 ))
+GZ_ARGS=("$@")
+[ "$LATENCY_MS" != "default" ] && GZ_ARGS+=("image_latency_ms:=$LATENCY_MS")
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$REPO_ROOT/scripts/activate_env.sh"
@@ -32,7 +36,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-setsid ros2 launch cuadc_sim gazebo_bringup.launch.py "world:=$BENCH_WORLD" gui:=false \
+setsid ros2 launch cuadc_sim gazebo_bringup.launch.py "world:=$BENCH_WORLD" gui:=false "${GZ_ARGS[@]}" \
     > /tmp/measure_reproj_gazebo.log 2>&1 &
 PIDS+=($!)
 echo "waiting for gazebo world..."
@@ -45,16 +49,7 @@ setsid ros2 launch cuadc_interface interface_bringup.launch.py connection:=udp:1
     > /tmp/measure_reproj_iface.log 2>&1 &
 PIDS+=($!)
 
-IMAGE_TOPIC=/camera/image_raw
-if [ "$LATENCY_MS" != "0" ]; then
-    IMAGE_TOPIC=/camera/image_delayed
-    echo "injecting camera->CV latency: ${LATENCY_MS}ms (capture stamp preserved)"
-    setsid ros2 run cuadc_sim image_delay_node --ros-args \
-        -p "delay_ms:=${LATENCY_MS}.0" -p use_sim_time:=true \
-        -r image_in:=/camera/image_raw -r "image_out:=$IMAGE_TOPIC" \
-        > /tmp/measure_reproj_delay.log 2>&1 &
-    PIDS+=($!)
-fi
+IMAGE_TOPIC=/camera/image_raw  # 仿真世界已按 image_latency_ms 延迟(保留拍照戳)
 
 setsid ros2 launch cuadc_perception cv_perception_bringup.launch.py profile:=sim frame_source:=ros \
     use_sim_time:=true "image_topic:=$IMAGE_TOPIC" "pose_at:=$POSE_AT" \

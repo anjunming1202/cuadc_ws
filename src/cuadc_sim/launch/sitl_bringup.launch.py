@@ -24,7 +24,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 
 
 def generate_launch_description():
@@ -48,6 +48,14 @@ def generate_launch_description():
         default_value='',
         description="Extra args appended to sim_vehicle.py, e.g. '-w' to wipe EEPROM on first run",
     )
+    imperfections_arg = DeclareLaunchArgument(
+        'imperfections', default_value='true',
+        description='Wind / sensor noise on by default (same as gazebo_bringup); false = clean sim')
+    sim_realism_params_arg = DeclareLaunchArgument(
+        'sim_realism_params',
+        default_value=os.path.join(
+            get_package_share_directory('cuadc_sim'), 'config', 'sim_realism.parm'),
+        description="SITL .parm layered last; '' = none. Ignored when imperfections:=false.")
 
     sitl_process = ExecuteProcess(
         cmd=[[
@@ -60,6 +68,10 @@ def generate_launch_description():
             ' --add-param-file ',
             PathJoinSubstitution([get_package_share_directory('cuadc_sim'),
                                    'config', 'mission_defaults.parm']),
+            PythonExpression([
+                "' --add-param-file ' + '", LaunchConfiguration('sim_realism_params'),
+                "' if '", LaunchConfiguration('imperfections'), "'.lower() == 'true' and '",
+                LaunchConfiguration('sim_realism_params'), "' else ''"]),
             # SITL's default build has HAL_WITH_ESC_TELEM=0 (no CAN/serial
             # RCOut), which compiles out the entire body of
             # Copter::takeoff_check() -- the only place that ever clears
@@ -84,5 +96,7 @@ def generate_launch_description():
         sitl_run_dir_arg,
         frame_arg,
         extra_sitl_args_arg,
+        imperfections_arg,
+        sim_realism_params_arg,
         sitl_process,
     ])

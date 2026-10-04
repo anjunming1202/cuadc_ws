@@ -22,9 +22,10 @@
    硬造假的比留空更坏。真机本有、sim 复现不了的，诚实留空。
 3. **姿态噪声不手工加**：开传感器噪声层，经**真实 EKF** 传播出的姿态本身就带真实噪声/延迟，
    感知反投影用的正是这个 EKF 姿态——手工再加高斯是双重计数+造假。
-4. **扰动默认全关**：算法先在干净 sim 上按真实物理调好；扰动层只用来看"扛不扛得住"，
+4. **扰动默认全开**（2026-10-04 起，负责人定：sim 默认就该像真机，`imperfections:=false` 关）；
    **绝不用来把增益调去抵消某个具体假噪声**。
-5. **扰动只许待在 sim-only / opt-in 处**（parm 不传、sim-only 节点），生产/实机路径逐字节不变；
+5. **扰动只许待在 sim 世界侧**（SITL parm、sim-only 节点，都在 `gazebo_bringup`/`sitl_bringup` 里），
+   生产/实机路径逐字节不变；
    有真机 `.bin` 日志后拿它对拍，sim 加扰动的行为分布要对得上真机——防"扰动是虚构的"的终极闸。
 
 ## 2. 指标与判定
@@ -53,21 +54,23 @@
 `mission_state` 记状态时间线 → 判定 → **按捕获的 PID/进程组干净拆除** → 硬
 超时兜底 → 汇总 N 轮成 CSV + 摘要。
 
-### 3.2 真实感注入总索引（默认全关 → 干净 sim 行为不变）
+### 3.2 真实感注入总索引（默认全开，`imperfections:=false` 全关）
+
+都挂在**仿真世界**（`gazebo_bringup`；`sitl_bringup` 只有飞控层）上——它们建模的是飞机/传感器本身，
+所以跑在这个世界上的任务、飞行测试、量测尺、压测全部自动带上，不另写"带扰动"的脚本。
+透传给 `run_gazebo_*.sh`：`imperfections:=false`（全关）、`sim_realism_params:=''`（只关风/噪声）、
+`image_latency_ms:=0`（只关延迟）或其它值覆盖。
 
 扰动分三层，各有一张**参数表**做数值的单一事实源（都在 `cuadc_sim/config/`，
 sim-only 包）；本节只记角色、注入点和加载方式，数值以表为准：
 
 | 层 | 参数表 | 注入点 / 加载方式 | 旋钮 |
 |---|---|---|---|
-| 飞控动力学（风） | `sim_realism.parm` | ArduPilot 内建风模型；`gazebo_bringup sim_realism_params:=<path>` 叠 `--add-param-file`，不传=不加载 | `SIM_WIND_SPD` / `SIM_WIND_DIR` / `SIM_WIND_TURB` |
+| 飞控动力学（风） | `sim_realism.parm` | ArduPilot 内建风模型；默认叠最后一层 `--add-param-file`，`sim_realism_params:=<path>` 换文件、`''` 不加载 | `SIM_WIND_SPD` / `SIM_WIND_DIR` / `SIM_WIND_TURB` |
 | 传感器噪声 | 同一 parm 文件 | ArduPilot 自带传感器模型（GPS 噪声经真实 EKF 传播，见 §1.1 红线 3） | `SIM_GPS_*`、`SIM_ACC*_RND`、`SIM_GYR*_RND`、`SIM_BARO_RND` |
-| ROS 链路（相机→CV 图像时延） | `disturbances.yaml` | **sim-only** `image_delay_node` 插在相机↔感知之间，延迟转发 `Image`、**保留拍照戳**——注入点与真机物理一致(拍照→CV)，并触发位姿-图像时刻不一致（§3.3）。入口 `run_mission_sim_delayed.sh [ms]`（省略 ms=用表值）/ 压测 `--latency-ms` / 量测 `run_measure_reprojection.sh [ms]` | `image_latency_ms` |
+| ROS 链路（相机→CV 图像时延） | `disturbances.yaml` | **sim-only** `image_delay_node` 插在相机↔感知之间，延迟转发 `Image`、**保留拍照戳**——注入点与真机物理一致(拍照→CV)，并触发位姿-图像时刻不一致（§3.3）。世界里相机桥出 `/camera/image_capture`，延迟后发 `/camera/image_raw`（所有消费者看到的"相机"）。覆盖：`image_latency_ms:=…` / 压测 `--latency-ms` / 量测 `run_measure_reprojection.sh [ms]` | `image_latency_ms`（40，真机实测 20–40ms 取上限） |
 
-生产 `mission_bringup` / 世界 bringup 不读任何一张表；不传 parm + 表值 0 =
-干净 sim，行为与现在完全一致。**常驻化路径**：链路延迟真机本来就有，等 Pi 上
-实测出基线延迟后把 `image_latency_ms` 填成测量值、delayed 路径转为 sim 默认
-路径——在那之前不填猜测值（红线 1）。
+生产 `mission_bringup` 不读任何一张表。压测台加 `--clean` 跑干净对照。
 
 ### 3.3 反投影的两个延迟效应（区分清楚）
 
@@ -91,10 +94,9 @@ sim-only 包）；本节只记角色、注入点和加载方式，数值以表�
 
 > **姿态噪声不单列**：见 §1.1 第 3 条，由传感器噪声层经真实 EKF 自然产生，感知直接用该 EKF 位姿。
 
-> **时延为什么在 sim-only 节点、不在生产节点**：`mission_sim_delayed.launch.py`
-> 用 `SetRemap` 把感知的图像订阅改道到 `image_delay_node` 的延迟输出；生产
-> `mission_bringup` 不含这套（生产文件与基线逐字节一致）。
-> 入口 `run_mission_sim_delayed.sh <delay_ms>`；零延迟走 `run_mission_sim.sh`。
+> **时延为什么在仿真世界、不在任务 launch**：延迟是相机→CV 链路的物理属性，放在世界侧
+> （`gazebo_bringup` 的 `image_delay_node`）后，生产 `mission_bringup` 不含任何 sim 专用节点，
+> 也不用另一份"带延迟"的任务入口。
 
 > **相机成像噪声——放弃 sim 注入**：gz-sim 8.14 + ogre2 相机不吃 `<noise>`（注入
 > stddev=8，两帧不同渲染却逐字节几乎相同；已排除改错文件/渲染引擎）。成像留到真机阶段
