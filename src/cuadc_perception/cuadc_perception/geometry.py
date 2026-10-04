@@ -107,6 +107,33 @@ def reproject_to_cylinder_top(u, v, camera: CameraParams, cam_origin,
     return (world_x, world_y), range_m
 
 
+def transverse_radius_m(contour, u, v, camera: CameraParams, cam_to_world, range_m):
+    """筒的物理半径：轮廓在"横向"（垂直于 画面正下方点 -> 筒 连线）上的宽度。
+
+    竖直的筒侧壁在画面里全部指向正下方点（竖直方向的灭点），只把轮廓沿径向拉长；横向宽度
+    恒等于筒口直径，不受侧壁露出多少影响（面积等效半径离正下方 2m 会偏大 30-50%）。
+    宽度像素 -> 米：横向位移垂直于视线，ds = dpx * 斜距 * cos(视线离光轴角) / f。"""
+    pts = np.asarray(contour, dtype=float).reshape(-1, 2)
+    if len(pts) < 3 or range_m is None:
+        return None
+    down_cam = cam_to_world.T @ np.array([0.0, 0.0, 1.0])  # 世界竖直向下在相机系
+    radial = None
+    if down_cam[2] > 1e-6:
+        nadir = (camera.cx + camera.fx * down_cam[0] / down_cam[2],
+                 camera.cy + camera.fy * down_cam[1] / down_cam[2])
+        r = np.array([u - nadir[0], v - nadir[1]])
+        if np.hypot(*r) > 1.0:
+            radial = r / np.hypot(*r)
+    if radial is None:  # 几乎正下方：没有侧壁，取两轴宽度均值
+        width_px = 0.5 * (np.ptp(pts[:, 0]) + np.ptp(pts[:, 1]))
+    else:
+        width_px = np.ptp(pts @ np.array([-radial[1], radial[0]]))
+    d = np.array([(u - camera.cx) / camera.fx, (v - camera.cy) / camera.fy, 1.0])
+    cos_a = 1.0 / float(np.linalg.norm(d))
+    f = 0.5 * (camera.fx + camera.fy)
+    return 0.5 * float(width_px) * range_m * cos_a / f
+
+
 def _quaternion_to_matrix(x, y, z, w):
     """机体->世界旋转矩阵，标准四元数公式，跟 decision_node.py 里
     `_rpy_from_quaternion` 提取 roll/pitch/yaw 用的是同一个约定

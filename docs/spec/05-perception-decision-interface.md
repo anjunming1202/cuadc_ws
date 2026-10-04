@@ -73,8 +73,8 @@ geometry_msgs/Point position  # 世界坐标；与接口层 telemetry/local_posi
                                # 感知内部完成坐标转换后再发布（粗接近/PBVS 用）
 float64 bearing_x        # 归一化像平面坐标 (u-cx)/fx（无量纲），末端 IBVS 用
 float64 bearing_y        # 归一化像平面坐标 (v-cy)/fy（无量纲），末端 IBVS 用
-float64 apparent_size     # 视在尺寸（比如外接圆半径），供"挑最小的"
-                           # 这类判断用
+float64 apparent_size     # 筒口物理半径（米）：轮廓垂直于"正下方点->筒"方向的宽度，
+                           # 不受侧壁露出影响（geometry.transverse_radius_m）；供"挑最小的"
 float64 confidence
 ```
 

@@ -91,7 +91,10 @@ class PerceptionCore:
                     range_m = None
                     reason = 'reproject_fail'
                 else:
-                    radius_m = obs.radius_px * range_m / self._camera.fx
+                    radius_m = geometry.transverse_radius_m(
+                        obs.contour, obs.u, obs.v, self._camera, cam_to_world, range_m)
+                    if radius_m is None:  # 轮廓点太少：退回面积等效半径
+                        radius_m = obs.radius_px * range_m / self._camera.fx
                     if radius_m < self._min_radius_m:
                         reason = 'too_small'
                     elif radius_m > self._max_radius_m:

@@ -11,6 +11,7 @@ approaches/ 提升成子文件夹按方法分 yaml，现在只一个方法，扁
 """
 
 import math
+import statistics
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -46,6 +47,12 @@ def _cluster_mean(cluster):
         sum(p[1] for p in cluster) / n,
         sum(p[2] for p in cluster) / n,
     )
+
+
+def _cluster_estimate(cluster):
+    """候选的位置和尺寸取样本中位数：机动中偶发的偏样本（偏 ~1m 或尺寸离群）拖不动。
+    归并新样本仍按均值匹配（_update_clusters）。"""
+    return tuple(float(statistics.median(p[i] for p in cluster)) for i in range(3))
 
 
 def _update_clusters(clusters, points, match_threshold):
@@ -89,7 +96,7 @@ def observe(ctx, cfg, in_drop_zone):
 
 def candidates(ctx, cfg):
     """够样本的聚类做成候选（选目标、投完找下一个都用这一份）。"""
-    return [Candidate(*_cluster_mean(c)) for c in ctx.drop_task.clusters
+    return [Candidate(*_cluster_estimate(c)) for c in ctx.drop_task.clusters
             if len(c) >= cfg.min_cluster_samples]
 
 

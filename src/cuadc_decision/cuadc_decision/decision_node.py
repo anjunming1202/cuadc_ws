@@ -313,8 +313,8 @@ class DecisionNode(Node):
             # 看均值有没有被斜视早样本拖偏 / 有没有把两个筒并成一簇。
             parts = []
             for c in self._ctx.drop_task.clusters:
-                mx, my, _ = search_strategy._cluster_mean(c)
-                parts.append(f'({mx:.1f},{my:.1f})x{len(c)}')
+                mx, my, mr = search_strategy._cluster_estimate(c)
+                parts.append(f'({mx:.1f},{my:.1f})r{mr:.3f}x{len(c)}')
             self.get_logger().info(
                 f'[SEARCH] clusters={len(parts)} used={len(self._ctx.drop_task.used_positions)} '
                 f'[{"; ".join(parts)}]', throttle_duration_sec=1.0)
