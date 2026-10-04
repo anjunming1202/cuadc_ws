@@ -30,7 +30,8 @@ def generate_launch_description():
     # 内参不在这里传——按 profile 从 camera.<profile>.yaml 读（见 ADR-0009）。
     cv_passthrough_args = [
         DeclareLaunchArgument('frame_source', default_value='shm'),
-        DeclareLaunchArgument('preview_enabled', default_value='true'),
+        # 地面预览归 onboard cv-preview-ctl（占 5604→5606）；本节点默认不推，免得抢端口。
+        DeclareLaunchArgument('preview_enabled', default_value='false'),
         DeclareLaunchArgument('preview_port', default_value='5604'),
         DeclareLaunchArgument('detection_log_enabled', default_value='false'),
     ]

@@ -16,8 +16,6 @@ echo "cuadc-onboard profile: ${profile:-none}"
 KNOWN_CONSUMERS=(
   cuadc-onboard-telem.service
   cuadc-onboard-video-forward.service
-  cuadc-onboard-cv-preview.service
-  cuadc-onboard-cv-forward.service
 )
 
 for u in "${KNOWN_CONSUMERS[@]}"; do
@@ -29,13 +27,9 @@ case "${profile:-none}" in
     : # 只跑底座，消费者全手动（相机服务仍在推本地端点，只是没人转发到地面）
     ;;
   ground-monitor)
-    # 外场监看：数传 + 干净图传(5603→5600) + CV 标注图传(5604→5606)。
-    # 不自启 cv-preview：任务/感知节点(preview_enabled)自己就产出 5604 标注流，独立的
-    # cv-preview 会跟它抢单客户端 shm。cv-forward 只把 5604 转到地面(谁产的都转)，因此
-    # 与任务/L1 感知同时跑不冲突。相机自检/纯调参需要独立预览时再手动起 cv-preview(ADR-0008)。
+    # 外场监看：数传 + 干净图传。OpenCV 由 cv-preview-ctl 开机听按钮,默认关。
     systemctl start cuadc-onboard-telem.service
     systemctl start cuadc-onboard-video-forward.service
-    systemctl start cuadc-onboard-cv-forward.service
     ;;
   mission)
     # 任务侧 bringup 按名引用；任务栈接线前为占位，不阻断底座

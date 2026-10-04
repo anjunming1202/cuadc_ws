@@ -33,7 +33,8 @@ setup(
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
         (os.path.join('share', package_name, 'worlds'), glob('worlds/*.sdf')),
-        (os.path.join('share', package_name, 'config'), glob('config/*.parm')),
+        (os.path.join('share', package_name, 'config'),
+            glob('config/*.parm') + glob('config/*.yaml')),
         *data_files_tree('models', os.path.join('share', package_name)),
     ],
     install_requires=['setuptools'],
@@ -52,7 +53,8 @@ setup(
             # 操作性验证节点在 tests/ 子包（手动 ros2 run，非 pytest）
             'sitl_smoke_test = cuadc_sim.tests.sitl_smoke_test:main',
             'flight_acceptance_test = cuadc_sim.tests.flight_acceptance_test:main',
-            'detection_delay_node = cuadc_sim.detection_delay_node:main',
+            'drop_bottle_bridge = cuadc_sim.drop_bottle_bridge:main',
+            'image_delay_node = cuadc_sim.image_delay_node:main',
         ],
     },
 )

@@ -1,0 +1,17 @@
+[Unit]
+Description=cuadc_onboard CV preview control (UDP 5611; detector default off)
+# 【编排】只听地面按钮;默认不跑 OpenCV。on 才起 5602→画框→5604 和 5604→5606。
+After=network.target cuadc-onboard-camera.service
+Wants=cuadc-onboard-camera.service
+
+[Service]
+Type=simple
+User=wly
+Environment=GST_PLUGIN_PATH=/usr/local/lib/aarch64-linux-gnu/gstreamer-1.0
+Environment=PYTHONPATH=/home/wly/cuadc_ws/src/cuadc_perception
+ExecStart=/usr/bin/python3 /opt/cuadc-onboard/cv_preview_ctl.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

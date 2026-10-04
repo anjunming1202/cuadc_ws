@@ -22,12 +22,19 @@ install -d "$OPT" "$ETC"
 install -m 0755 "$SRC_DIR/scripts/mav_fanout.py"     "$OPT/mav_fanout.py"
 install -m 0755 "$SRC_DIR/scripts/telem_ground.py"   "$OPT/telem_ground.py"
 install -m 0755 "$SRC_DIR/scripts/camera_service.py" "$OPT/camera_service.py"
+install -m 0755 "$SRC_DIR/scripts/cv_preview_ctl.py" "$OPT/cv_preview_ctl.py"
 install -m 0755 "$SRC_DIR/systemd/apply-profile.sh"  "$OPT/apply-profile.sh"
-# CV 预览的代码在 cuadc_perception(cv-preview 单元按 PYTHONPATH 引用它,见 ADR-0008),
-# 不再拷到 /opt。
+# CV 检测/预览的代码在 cuadc_perception(cv_preview_ctl 按 PYTHONPATH 引用它,
+# 见 ADR-0008),不拷到 /opt。
 
 for u in "$SRC_DIR"/systemd/*.service; do
   install -m 0644 "$u" "$UNIT_DIR/$(basename "$u")"
+done
+
+# 已退役单元(被 cv-preview-ctl 的按钮路径取代):老 Pi 上可能还装着,收敛掉。
+for u in cuadc-onboard-cv-preview.service cuadc-onboard-cv-forward.service; do
+  systemctl disable --now "$u" 2>/dev/null || true
+  rm -f "$UNIT_DIR/$u"
 done
 
 if [ ! -f "$ETC/profile" ]; then
@@ -40,8 +47,9 @@ fi
 systemctl daemon-reload
 systemctl enable cuadc-onboard-fanout.service \
                  cuadc-onboard-camera.service \
-                 cuadc-onboard-profile.service
-# video-forward / cv-preview / cv-forward 不在 base:由 ground-monitor profile 拉起(见 apply-profile.sh)
+                 cuadc-onboard-profile.service \
+                 cuadc-onboard-cv-preview-ctl.service
+# video-forward 由 ground-monitor profile 拉起;CV 检测/转发由 ctl 默认关、地面按钮才开
 
 echo
 echo "installed + enabled base (fanout, camera) + profile applier."

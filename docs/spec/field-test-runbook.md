@@ -66,7 +66,7 @@ ros2 service call /cuadc_interface/release_payload cuadc_interface_msgs/srv/Rele
 或让机械子队直接用遥控器打投放通道验证——**绝不带桨在地面解锁**。
 
 > **所有会解锁/起飞的流程（arm 检查 / 起降 / 合集 / 投放单点 / 任务）同一套起飞条件，固定顺序**
-> （[ADR-0010](adr/0010-pilot-arm-takeoff-point-frame.md)）：
+> （[ADR-0011](adr/0011-pilot-arm-takeoff-point-frame.md)）：
 > 1. 飞手：**模式开关拨到 STABILIZE 挡**，arm 开关在 disarm 挡；
 > 2. 脚本起来后停在 `READY`（桨不转）。**确认现场安全后**，从另一个 SSH 发放行：
 >    ```

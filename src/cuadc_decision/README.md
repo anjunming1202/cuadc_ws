@@ -83,7 +83,7 @@ ros2 launch cuadc_decision decision_bringup.launch.py scenario:=drop_zone_bench
   **执行**走 item 3 的相机控制服务端点（见
   [`camera-tuning.md`](../../docs/spec/camera-tuning.md)）——一个资源一个持有者。
 - **命名**：approach 名字要长、点出算法形态（它编码整套「怎么接近」，不是一个
-  小旋钮）。第一份 = **`coarse_pbvs_then_terminal_ibvs`**（粗接近世界坐标
+  小旋钮）。第一份 = **`stepped_descent_ibvs`**（粗接近世界坐标
   PBVS、末端像素 IBVS，决策见
   [ADR-0005](../../docs/spec/adr/0005-terminal-align-visual-servoing.md)）。以后
   有新形态再加（如 `spiral_search_then_ibvs`），不复用一个太泛的名字。
@@ -124,7 +124,7 @@ ros2 launch cuadc_decision decision_bringup.launch.py scenario:=drop_zone_bench
   单元。
 - **迁移做两件事**：(1) 把 approach 抽成上面的可替换单元（dict + enter/loop/
   exit + `TickResult` 加速度字段）；(2) 落地第一份
-  `coarse_pbvs_then_terminal_ibvs`（粗段沿用现有 PBVS、末端加 IBVS）。
+  `stepped_descent_ibvs`（粗段沿用现有 PBVS、末端加 IBVS）。
 - **有意写死/耦合的部分**（迁移不动）：任务 FSM 的状态与转移（06）、transition
   契约、三条对外接口。**自由的部分**：approach 内部实现。抽象只做到「approach
   这条已被证明稳定的缝」，**不**预先给「检测 × 控制」的组合建框架——那是

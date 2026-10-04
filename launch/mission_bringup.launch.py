@@ -22,8 +22,10 @@ scripts/run_mission_real.sh）各自把它写死，调这份文件时不需要�
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
+from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -53,17 +55,18 @@ def generate_launch_description():
         'frame_source', default_value='ros',
         description='感知取帧源，仿真 ros、真机 shm',
     )
-    # 真机把标注预览推本地 preview_port，交给 ground-monitor 的 cv-forward 转地面；仿真默认关。
-    # 相机内参不在这里传——按 profile 从 camera.<profile>.yaml 读（见 ADR-0009）。
-    preview_enabled_arg = DeclareLaunchArgument(
-        'preview_enabled', default_value='false', description='真机标注预览推本地 preview_port')
-    preview_port_arg = DeclareLaunchArgument(
-        'preview_port', default_value='5604', description='真机预览本地推流端口')
+
+    # 仿真下 interface/perception 走 Gazebo 仿真时间(/clock 由 gazebo_bringup 桥接)，
+    # 使图像拍照时间戳与遥测时间戳同钟——拍照时刻对齐位姿需要(ADR-0010 B)。真机
+    # (profile=real)保持墙钟。值传给两个 bringup 的 use_sim_time 参数(参数归它们所有)。
+    sim_time_flag = PythonExpression(
+        ["'true' if '", LaunchConfiguration('profile'), "' == 'sim' else 'false'"])
 
     interface_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution(
             [FindPackageShare('cuadc_interface'), 'launch', 'interface_bringup.launch.py'])),
-        launch_arguments={'connection': LaunchConfiguration('connection')}.items(),
+        launch_arguments={'connection': LaunchConfiguration('connection'),
+                          'use_sim_time': sim_time_flag}.items(),
     )
 
     cv_perception_launch = IncludeLaunchDescription(
@@ -72,8 +75,7 @@ def generate_launch_description():
         launch_arguments={
             'profile': LaunchConfiguration('profile'),
             'frame_source': LaunchConfiguration('frame_source'),
-            'preview_enabled': LaunchConfiguration('preview_enabled'),
-            'preview_port': LaunchConfiguration('preview_port'),
+            'use_sim_time': sim_time_flag,
         }.items(),
     )
 
@@ -86,6 +88,17 @@ def generate_launch_description():
         }.items(),
     )
 
-    return LaunchDescription([connection_arg, profile_arg, scenario_arg,
-                              frame_source_arg, preview_enabled_arg, preview_port_arg,
-                              interface_launch, cv_perception_launch, decision_launch])
+    # 仿真专用：把决策的投放事件(DROP_PAYLOAD)翻译成 Gazebo 物理水瓶脱钩(见
+    # cuadc_sim/drop_bottle_bridge)。真机投放由 interface 的 release_payload 驱动真舵机,
+    # 不需要它,故 profile=='sim' 才起。世界 bringup(gazebo_bringup)保持不含任务逻辑,这个
+    # 桥属于任务侧、放这里(见 sim/task 解耦约定)。
+    sim_drop_bridge = Node(
+        package='cuadc_sim', executable='drop_bottle_bridge', name='drop_bottle_bridge',
+        output='screen',
+        condition=IfCondition(PythonExpression(
+            ["'", LaunchConfiguration('profile'), "' == 'sim'"])),
+    )
+
+    return LaunchDescription([connection_arg, profile_arg, scenario_arg, frame_source_arg,
+                              interface_launch, cv_perception_launch, decision_launch,
+                              sim_drop_bridge])

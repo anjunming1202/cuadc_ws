@@ -36,6 +36,8 @@ from cuadc_decision.mission import config as mission_config
 
 _INTERFACE_NS = '/cuadc_interface'
 
+_DETECTIONS_STALE_S = 0.5  # 感知流超过这个时长没来新帧就视为断流(正常 ~10Hz,=丢 5 帧)
+
 _SERVICE_SPECS = {
     'set_mode': (SetMode, f'{_INTERFACE_NS}/set_mode'),
     'arm': (Arm, f'{_INTERFACE_NS}/arm'),
@@ -55,6 +57,7 @@ class DecisionNode(Node):
 
     def __init__(self):
         super().__init__('cuadc_decision')
+        self._last_detections_monotonic = 0.0
 
         # profile = sim/real 环境档（选各算法/配置层的 .sim/.real 文件）；scenario = 跑哪种
         # 场景（full_mission / drop_zone_bench / recon_zone_bench，含 initial_state 与跑哪些
@@ -149,6 +152,16 @@ class DecisionNode(Node):
 
     def _on_detections(self, msg):
         self._ctx.detections = list(msg.detections)
+        self._last_detections_monotonic = time.monotonic()
+        # vehicle_pose = 这帧图像**拍照时刻**的位姿(契约见 DetectionArray.msg)。四元数
+        # 全零 = 上游没填(异常/旧版) -> 置 None,IBVS 退化用实时遥测(旧行为)。
+        q = msg.vehicle_pose.orientation
+        if q.w == 0.0 and q.x == 0.0 and q.y == 0.0 and q.z == 0.0:
+            self._ctx.det_roll_rad = self._ctx.det_pitch_rad = self._ctx.det_height_m = None
+        else:
+            roll, pitch, _yaw = _rpy_from_quaternion(q.x, q.y, q.z, q.w)
+            self._ctx.det_roll_rad, self._ctx.det_pitch_rad = roll, pitch
+            self._ctx.det_height_m = -msg.vehicle_pose.position.z
 
     def _on_task_start_trigger(self, msg):
         self._ctx.task_start_triggered = True
@@ -175,6 +188,17 @@ class DecisionNode(Node):
     # ---- 主循环 ----
 
     def _on_timer(self):
+        # 检测新鲜度守卫:感知流断掉(CV 挂死/桥哑死)时,绝不能拿最后一帧当现实继续
+        # 伺服——那是自我追逐跑飞(冻结的 off 恒差 -> 积分饱和 -> 定速漂走)。过期即
+        # 清空,approach 自然走丢失路径(悬停/重捕获/守卫)。
+        if (self._ctx.detections
+                and time.monotonic() - self._last_detections_monotonic > _DETECTIONS_STALE_S):
+            self._ctx.detections = []
+            self._ctx.det_roll_rad = self._ctx.det_pitch_rad = self._ctx.det_height_m = None
+            self.get_logger().warn(
+                f'[STALE] detections older than {_DETECTIONS_STALE_S}s -> cleared '
+                '(perception stream down?)', throttle_duration_sec=5.0)
+
         self._ctx.last_service_result = self._poll_pending_service_result()
 
         tick_started = time.monotonic()
@@ -191,6 +215,16 @@ class DecisionNode(Node):
         if result.notice:
             self.get_logger().warn(f'[PILOT] {result.notice}')
         if result.next_state is not None and result.next_state != self._ctx.current_state:
+            if result.next_state == mission_logic.State.DROP_PAYLOAD:
+                # 投放瞬间的瞄准快照:跨轮对比 bearing/冻结偏移的可复现性,是
+                # aim_trims_m 经验标定的输入(见 approach yaml)。
+                ast = mission_logic._ACTIVE_APPROACH.state
+                b, om = ast.last_bearing, ast.prev_off_meas
+                bstr = f'({b[0]:.4f},{b[1]:.4f})' if b else 'None'
+                ostr = f'({om[0]:.3f},{om[1]:.3f})' if om else 'None'
+                self.get_logger().info(
+                    f'[DROP_AIM] drop={self._ctx.drop_task.drop_count} bearing={bstr} '
+                    f'off_frozen={ostr} lever_eff=({ast.lever[0]:.3f},{ast.lever[1]:.3f})')
             self.get_logger().info(f'[STATE] {self._ctx.current_state} -> {result.next_state}')
             if result.next_state == mission_logic.State.PILOT_TAKEOVER:
                 self.get_logger().warn(
@@ -269,7 +303,8 @@ class DecisionNode(Node):
             ndstr = f'{ndist:.2f}' if ndist is not None else 'None'
             hstr = f'{-self._ctx.local_position_z:.2f}' if self._ctx.local_position_z is not None else 'None'
             self.get_logger().info(
-                f'[APPROACH] phase={ast.phase} yaw={self._yaw_rad:.3f} v={vstr} '
+                f'[APPROACH] phase={ast.phase} lever=({ast.lever[0]:.2f},{ast.lever[1]:.2f}) '
+                f'yaw={self._yaw_rad:.3f} v={vstr} '
                 f'off={offstr} miss={ast.miss} dist2lock={diststr} near_det={ndstr} h={hstr} '
                 f'hspeed={self._ctx.horizontal_speed}',
                 throttle_duration_sec=0.3)

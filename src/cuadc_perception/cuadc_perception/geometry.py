@@ -26,6 +26,14 @@ class CameraParams:
     mount_roll_rad: float = 0.0
     mount_pitch_rad: float = 1.5708  # nadir 惯例，见 gazebo_bringup.launch.py 同名参数
     mount_yaw_rad: float = 0.0
+    # 相机光心相对机体原点(FC/EKF)的平移，机体 FRD(前/右/下)，米。真机相机装在
+    # FC 前下方，反投影射线须从相机光心而非机体原点出发（见 ADR-0010 簇①）。
+    t_forward_m: float = 0.0
+    t_right_m: float = 0.0
+    t_down_m: float = 0.0
+    # 飞控停在地面时离地高。位姿原点 = 解锁时的飞控位置（接口层换算，ADR-0011），地面在其下方
+    # 这么多；与 approaches/*.yaml 的同名值是同一个机体实测量。
+    fc_rest_clearance_m: float = 0.0
 
 
 def load_camera_params(profile: str) -> CameraParams:
@@ -54,6 +62,15 @@ def cam_to_world_matrix(camera: CameraParams, pose: VehiclePose):
     return body_to_world @ cam_to_body
 
 
+def camera_origin_ned(camera: CameraParams, pose: VehiclePose):
+    """相机光心在世界(NED)的位置 = 机体原点(pose.position_ned，即 EKF/FC 位置)
+    + 机体系相机平移转到世界。反投影射线从这里出发，抵消相机相对 FC 的安装偏置
+    带来的系统性定位偏差（见 ADR-0010 簇①）。每帧算一次、传给逐个检测复用。"""
+    body_to_world = _quaternion_to_matrix(*pose.orientation_xyzw)
+    t_body = np.array([camera.t_forward_m, camera.t_right_m, camera.t_down_m])
+    return np.array(pose.position_ned, dtype=float) + body_to_world @ t_body
+
+
 def normalize_bearing(u, v, camera: CameraParams) -> Tuple[float, float]:
     """像素 -> 归一化像平面方位 (u-cx)/fx, (v-cy)/fy（无量纲，内参已除掉）。
     末端 IBVS 用：决策拿它 + 高度/姿态就能算出米级误差，不需要知道相机内参。
@@ -62,24 +79,25 @@ def normalize_bearing(u, v, camera: CameraParams) -> Tuple[float, float]:
     return ((u - camera.cx) / camera.fx, (v - camera.cy) / camera.fy)
 
 
-def reproject_to_cylinder_top(u, v, camera: CameraParams, pose: VehiclePose,
+def reproject_to_cylinder_top(u, v, camera: CameraParams, origin_ned,
                                cam_to_world, cylinder_height_m):
     """像素 -> 世界坐标：像素反投影成相机系射线，转到世界系，跟筒顶所在平面
-    （NED down = -cylinder_height_m，不是地面 down=0）求交——检测到的色块主要
-    反映筒的顶面，跟地面求交会引入正比于视线倾角的系统性偏差。返回
-    (world_xy, 斜距)，射线太接近水平（姿态倾斜太大）时返回 (None, None)。"""
+    （地面 down = fc_rest_clearance_m，筒顶在其上 cylinder_height_m）求交——检测到的色块主要
+    反映筒的顶面，跟地面求交会引入正比于视线倾角的系统性偏差。`origin_ned` 是
+    相机光心的世界位置（见 camera_origin_ned）。返回 (world_xy, 斜距)，射线太
+    接近水平（姿态倾斜太大）时返回 (None, None)。"""
     d_cam = np.array([(u - camera.cx) / camera.fx, (v - camera.cy) / camera.fy, 1.0])
     d_world = cam_to_world @ d_cam
 
-    origin_down = pose.position_ned[2]
+    origin_down = origin_ned[2]
     if d_world[2] < _MIN_RAY_DOWN_COMPONENT:
         return None, None
-    t = (-cylinder_height_m - origin_down) / d_world[2]
+    t = (camera.fc_rest_clearance_m - cylinder_height_m - origin_down) / d_world[2]
     if t <= 0:
         return None, None
 
-    world_north = pose.position_ned[0] + t * d_world[0]
-    world_east = pose.position_ned[1] + t * d_world[1]
+    world_north = origin_ned[0] + t * d_world[0]
+    world_east = origin_ned[1] + t * d_world[1]
     range_m = t * float(np.linalg.norm(d_cam))
     return (world_north, world_east), range_m
 

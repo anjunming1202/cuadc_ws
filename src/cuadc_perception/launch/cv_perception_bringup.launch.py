@@ -41,9 +41,15 @@ def generate_launch_description():
     src_fps_arg = DeclareLaunchArgument('src_fps', default_value='10')
     cv_width_arg = DeclareLaunchArgument('cv_width', default_value='960', description='shm 源出帧/检测/预览分辨率;真机内参要对应这个分辨率')
     cv_height_arg = DeclareLaunchArgument('cv_height', default_value='540')
-    preview_enabled_arg = DeclareLaunchArgument('preview_enabled', default_value='false', description='真机把标注预览编码推本地 preview_port(cv-forward 转地面)')
+    preview_enabled_arg = DeclareLaunchArgument('preview_enabled', default_value='false', description='真机把标注预览编码推本地 preview_port(onboard 转发到地面)')
     preview_port_arg = DeclareLaunchArgument('preview_port', default_value='5604')
     preview_bitrate_arg = DeclareLaunchArgument('preview_bitrate', default_value='1000')
+    # 仿真工具直接起本文件(不经 mission_bringup)时传 true(见 interface_bringup 同名参数)。
+    use_sim_time_arg = DeclareLaunchArgument('use_sim_time', default_value='false')
+    # 量测/压测工具插图像延迟节点时把订阅 remap 到延迟后话题(默认=原话题,no-op)；
+    # pose_at=latest 仅证据链 A/B / 真机拍照戳异常兜底用。
+    image_topic_arg = DeclareLaunchArgument('image_topic', default_value='/camera/image_raw')
+    pose_at_arg = DeclareLaunchArgument('pose_at', default_value='capture')
     detection_log_arg = DeclareLaunchArgument(
         'detection_log_enabled', default_value='false',
         description='逐帧打印检测判定链(px半径→反投影距离→物理半径→接受/拒因),运行时也可 ros2 param set')
@@ -72,8 +78,11 @@ def generate_launch_description():
             'preview_enabled': LaunchConfiguration('preview_enabled'),
             'preview_port': LaunchConfiguration('preview_port'),
             'preview_bitrate': LaunchConfiguration('preview_bitrate'),
+            'use_sim_time': LaunchConfiguration('use_sim_time'),
+            'pose_at': LaunchConfiguration('pose_at'),
             'detection_log_enabled': LaunchConfiguration('detection_log_enabled'),
         }],
+        remappings=[('/camera/image_raw', LaunchConfiguration('image_topic'))],
     )
 
     return LaunchDescription([
@@ -81,6 +90,6 @@ def generate_launch_description():
         debug_annotated_arg, debug_contours_arg, debug_mask_arg, max_concurrent_debug_arg,
         frame_source_arg, raw_shm_arg, src_width_arg, src_height_arg, src_fps_arg,
         cv_width_arg, cv_height_arg, preview_enabled_arg, preview_port_arg, preview_bitrate_arg,
-        detection_log_arg,
+        use_sim_time_arg, image_topic_arg, pose_at_arg, detection_log_arg,
         cv_perception_node,
     ])

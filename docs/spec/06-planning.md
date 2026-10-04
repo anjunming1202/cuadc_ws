@@ -62,7 +62,7 @@ PILOT_TAKEOVER         — 终态（跨状态守卫进入）：Pi 接管后出�
                          = 飞手/飞控已接手，Pi 不再发任何指令、不再切模式
 ```
 
-解锁归飞手、飞手夺控即停手的依据见 [ADR-0010](adr/0010-pilot-arm-takeoff-point-frame.md)。
+解锁归飞手、飞手夺控即停手的依据见 [ADR-0011](adr/0011-pilot-arm-takeoff-point-frame.md)。
 `PILOT_TAKEOVER` 检查排在所有强制打断之前，否则电量/failsafe 守卫会再切 RTL 把控制权抢回来。
 
 > `working-notes.md` 里此前拍板过一版更粗的状态机：`INIT →

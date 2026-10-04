@@ -27,16 +27,16 @@
    network/AP、eth 链路
 
 ② 消费者层（profile 选择性自启，或手动跑；都只连端点、不碰硬件）
-   数传发送 / video-forward（5603→5600）/ cv-preview+cv-forward（5602→5604→5606）/
+   数传发送 / video-forward（5603→5600）/ cv-preview-ctl 的检测+转发（5602→5604→5606，按钮启停）/
    onboard_record（录制 5605 全质量 + rosbag）/ dataset 采集 / CV / cuadc_interface …
 ```
 
 **底座不向地面发**：它把硬件变成本地端点（并主动 keepalive 喂活飞控数据流），
 **任何往地面发的都是消费者**——遥测由数传、干净图传由 **video-forward**
-（5603→5600）、CV 预览由 **cv-preview + cv-forward**（5602→标注→5604→5606）。
-video-forward / cv-* 都归 **ground-monitor profile**（不是底座）：投到本地
-5603 的干净画面、或经 cv-preview 产出的 5604，由对应 forward 上地面，生产者
-不各写"发地面"。因此 **profile=none 时底座在跑、本地端点有数据，但地面什么
+（5603→5600）、CV 预览由 **cv-preview-ctl**（常驻开关，UDP 5611 听地面按钮，
+默认关：按下才起检测 worker 5602→标注→5604 和转发 5604→5606）。video-forward
+归 **ground-monitor profile**（不是底座）：投到本地 5603 的干净画面由它上地面，
+生产者不各写"发地面"。因此 **profile=none 时底座在跑、本地端点有数据，但地面什么
 都没有**；要地面看到东西，起对应 profile（如 ground-monitor）或手动起消费者。
 
 **相机服务可运行时控制**：相机生产者是一个 **gst 应用**（非静态 gst-launch）,
@@ -61,10 +61,10 @@ PLAYING 态即改曝光/增益/对焦（实测该机 `libcamerasrc` 这些属性
 | 相机 raw 帧 | `shm:/tmp/cuadc-cam-raw.shm` | NV12 raw | OpenCV/cv-preview 直吃（相机 raw tee，无需解码） |
 | 图传转发输入 | `udp:127.0.0.1:5603` | H.264/RTP | 相机服务 tee 的一路；video-forward 读它转地面 |
 | 机载录制 tap | `udp:127.0.0.1:5605` | H.264/RTP | 相机服务 tee 的一路(同干净编码)；onboard_record 读它录全质量；无人读则内核丢弃 |
-| CV 预览本地 | `udp:127.0.0.1:5604` | H.264/RTP | cv-preview 标注/处理后的画面；cv-forward 读它转地面 |
+| CV 预览本地 | `udp:127.0.0.1:5604` | H.264/RTP | cv-preview-ctl 的检测 worker 标注后的画面；其转发读它转地面 |
 | 相机控制口 | `udpin:127.0.0.1:5610` | JSON datagram | 向相机服务发 `{ae,exposure_us,gain,af,lens,…}` 运行时改拍摄参数 |
 | 图传→地面 | `192.168.50.2:5600` | H.264/RTP | 干净图传；**video-forward** 读 5603 转发 |
-| CV 预览→地面 | `192.168.50.2:5606` | H.264/RTP | OpenCV/标注预览；**cv-forward** 读 5604 转发 |
+| CV 预览→地面 | `192.168.50.2:5606` | H.264/RTP | OpenCV/标注预览；**cv-preview-ctl** 读 5604 转发 |
 | 地面数据总线 | `udp:127.0.0.1:5700` | JSON datagram（含 `topic`） | 要往地面发的数据投这里，底座按 topic 转发到地面 |
 | GCS | `192.168.50.2:14560` | MAVLink | Mission Planner 双向 |
 | 回程 JSON（地面→机载） | `udp:127.0.0.1:5701`（预留） | JSON datagram | 地面下发自定义数据给某消费者；管道搭好，按需接 |
@@ -92,7 +92,7 @@ PLAYING 态即改曝光/增益/对焦（实测该机 `libcamerasrc` 这些属性
 | profile | 开机自启的消费者 | 场景 |
 |---|---|---|
 | `none` | 无（只起底座） | 日常开发：消费者全手动跑 |
-| `ground-monitor` | 数传 + video-forward（5603→5600）+ cv-preview + cv-forward（5602→5604→5606） | 外场一通电，地面站有干净图传 + CV 预览 + 遥测 |
+| `ground-monitor` | 数传 + video-forward（5603→5600） | 外场一通电，地面站有干净图传 + 遥测；CV 预览按地面按钮开（cv-preview-ctl，不归 profile） |
 | `mission` | 任务侧 bringup（**按名引用**） | 比赛：无人值守、栈内等"开始"信号 |
 
 profile 落地为一行运行态设置 + 一个 oneshot applier：`/etc/cuadc-onboard/profile`

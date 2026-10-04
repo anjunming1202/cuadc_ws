@@ -89,7 +89,7 @@ def _world_xy_to_ned(world_x, world_y, takeoff_point):
     转成接口层 telemetry/local_position 用的 NED (north, east)。local_position 原点是
     起飞（解锁）点，先减去起飞点的场地坐标 `takeoff_point`；再 X/Y 对调，换算依据同
     cuadc_perception/stub_perception_node.py 里的同名函数（仿真机型
-    iris_with_gimbal 的 `gazeboXYZToNED` 插件参数）。2026-07-19 实机
+    cuadc_iris 的 `gazeboXYZToNED` 插件参数）。2026-07-19 实机
     测试（SITL+Gazebo）发现飞机往侧边飞，就是这里之前没做这个换算、
     直接把场地坐标当 NED 坐标用导致的。
     """
@@ -208,6 +208,11 @@ class MissionContext:
     roll_rad: Optional[float] = None
     pitch_rad: Optional[float] = None
     detections: list = field(default_factory=list)  # 元素需要有 .target_type/.position.x/.position.y/.apparent_size
+    # 当前 detections 那帧图像**拍照时刻**的姿态/离地高(来自 DetectionArray.vehicle_pose)。
+    # IBVS 姿态补偿/米换算必须用它(与 bearing 同刻)；投放门等"当下状态"判断仍用实时遥测。
+    det_roll_rad: Optional[float] = None
+    det_pitch_rad: Optional[float] = None
+    det_height_m: Optional[float] = None
     task_start_triggered: bool = False
 
     drop_task: DropTaskState = field(default_factory=DropTaskState)
@@ -418,7 +423,7 @@ def _tick_drop_payload(ctx):
         ctx.drop_task.waypoint_index = 0
         return TickResult(next_state=State.SEARCH_DROP_TARGETS)
 
-    # 投放执行是接口层的 release_payload（RC override 定时序列，投放物理完成才返回；见
+    # 投放执行是接口层的 release_payload（DO_SET_SERVO 定时序列，投放物理完成才返回；见
     # docs/spec/adr/0007）。DROP_PAYLOAD 态不发运动指令=飞机悬停，等投放跑完才转下一阶段。
     return _dispatch_and_await(ctx, 'release_payload', {}, on_success)
 

@@ -122,7 +122,7 @@ check('ground plane <pose> is centered on GROUND_X/Y_MIN/MAX\'s midpoint, not ju
 # Vehicle spawn == field A's landing pad (this session's actual bug: it
 # used to spawn at the takeoff line instead). Only field A gets a vehicle
 # (see gen_world.py's WORLD_TEMPLATE comment for why).
-vehicle_include = world.find("include[uri='model://iris_with_gimbal']")
+vehicle_include = world.find("include[uri='model://cuadc_iris']")
 vx, vy, *_ = vehicle_include.find('pose').text.split()
 expected_vehicle_xy = (config.LANDING_PAD_CENTER[0],
                        config.LANDING_PAD_CENTER[1] + config.FIELD_Y_OFFSETS['A'])

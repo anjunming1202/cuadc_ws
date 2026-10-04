@@ -79,10 +79,11 @@ class PerceptionCore:
         contour_results: list = []
         if pose is not None:
             cam_to_world = geometry.cam_to_world_matrix(self._camera, pose)
+            cam_origin = geometry.camera_origin_ned(self._camera, pose)
             t_reproject = time.monotonic()
             for obs in observations:
                 world_xy, range_m = geometry.reproject_to_cylinder_top(
-                    obs.u, obs.v, self._camera, pose, cam_to_world, self._cylinder_height_m)
+                    obs.u, obs.v, self._camera, cam_origin, cam_to_world, self._cylinder_height_m)
                 det = None
                 radius_m = None
                 reason = ''

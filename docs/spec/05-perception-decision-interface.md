@@ -78,7 +78,13 @@ float64 apparent_size     # 视在尺寸（比如外接圆半径），供"挑最
 float64 confidence
 ```
 
-`DetectionArray.msg`：`std_msgs/Header header` + `Detection[] detections`。
+`DetectionArray.msg`：`std_msgs/Header header` + `geometry_msgs/Pose vehicle_pose`
++ `Detection[] detections`。**`header.stamp` = 这帧图像的拍照时刻**（不是感知处理完成
+时刻）；`vehicle_pose` = 拍照时刻的机体位姿（NED 位置 + 机体→世界四元数，感知按拍照
+时刻从位姿缓冲插值）。测量与其时刻绑定发布：决策 IBVS 的姿态补偿/高度换算必须用
+`vehicle_pose`（与 `bearing` 同刻），不能用决策 tick 时的最新遥测——链路有延迟时两个
+时刻不同，用错时刻补偿本身就是错的（见 ADR-0010 B）。投放门等"当下状态"判断仍用实时
+遥测：测量随测量走、状态随状态走。
 
 `bearing_x/y` 是为投放**末端图像伺服（IBVS）**加的：末端对准直接用像素误差
 驱动速度、对世界坐标定位误差免疫，决策依据见
