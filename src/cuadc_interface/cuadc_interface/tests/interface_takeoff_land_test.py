@@ -5,8 +5,8 @@
 再上 interface_flight_suite_test 那套全向/速度/高度的完整合集。不做任何
 水平移动，飞机只在起飞点正上方上下——风险最低。飞手 RC 全程待命。
 
-高度用相对起飞点的高度（`local_position` 的 `-z`），不用海拔，见
-docs/spec/04-interfaces.md「高度基准」。sim/real 同一节点，连接目标由
+高度用离起飞地面的高度（AGL = `local_position` 的 `-z` 减起飞前地面基线；实机 EKF 原点
+不在起飞地面，`-z` 本身带常量偏置），不用海拔。sim/real 同一节点，连接目标由
 各自的启动脚本写死（run_flight_check_sim/real.sh）。
 
 放行闸门：起来后停在 arm **之前**（桨不转）、等放行，另一 SSH 发
@@ -39,6 +39,7 @@ class InterfaceTakeoffLandTest(Node):
         super().__init__('interface_takeoff_land_test')
         self.declare_parameter('service_timeout_sec', 10.0)
         self.declare_parameter('ekf_ready_timeout_sec', 60.0)
+        self.declare_parameter('ekf_settle_sec', 5.0)  # healthy 须持续此秒数再放行(抗瞬态)
         # arm+takeoff 放行闸门：默认开(现场安全)。sim 快速迭代可 -p wait_for_start:=false 直接飞。
         self.declare_parameter('wait_for_start', True)
         self.declare_parameter('start_timeout_sec', 600.0)
@@ -49,6 +50,7 @@ class InterfaceTakeoffLandTest(Node):
         self.declare_parameter('land_timeout_sec', 60.0)
         self._service_timeout = self.get_parameter('service_timeout_sec').value
         self._ekf_ready_timeout = self.get_parameter('ekf_ready_timeout_sec').value
+        self._ekf_settle_sec = self.get_parameter('ekf_settle_sec').value
         self._wait_for_start_enabled = self.get_parameter('wait_for_start').value
         self._start_timeout = self.get_parameter('start_timeout_sec').value
         self._takeoff_altitude = self.get_parameter('takeoff_altitude_m').value
@@ -73,15 +75,27 @@ class InterfaceTakeoffLandTest(Node):
         self.create_subscription(Empty, START_TOPIC, self._on_start, 10)
 
         self._results = []
+        self._z0 = 0.0  # 起飞前地面基线(EKF 原点系的 -z);高度按相对它的 AGL 算
 
     def run(self):
         self._wait_for_services()
         self._wait_for_ekf_ready()
         self._wait_for_start()
-        self._check_set_mode()
+        # 本机飞控在 GUIDED 下直接 arm 会被 PreArm 拒;先在 STABILIZE 解锁,再切 GUIDED 起飞。
+        self._set_mode('STABILIZE')
         self._check_arm()
-        self._check_takeoff()
-        self._check_hover()
+        self._set_mode('GUIDED')
+        # 发了 takeoff 之后任何失败都不能直接退出(否则飞机在 GUIDED 里无人指挥地悬停):先尽力 LAND。
+        try:
+            self._check_takeoff()
+            self._check_hover()
+        except Exception:
+            self.get_logger().error('flight step failed while airborne -> commanding LAND before exit')
+            try:
+                self._set_mode('LAND')
+            except Exception as exc:  # noqa: BLE001 — 兜底本身失败只能告警,靠飞手 RC
+                self.get_logger().error(f'failsafe LAND failed ({exc}) -- PILOT TAKE OVER')
+            raise
         self._check_land_and_disarm()
 
         self._print_summary()
@@ -106,6 +120,10 @@ class InterfaceTakeoffLandTest(Node):
 
     def _relative_altitude(self):
         return -self._latest_local_pose.pose.position.z
+
+    def _agl(self):
+        # 相对起飞地面的高度:减去起飞前基线,抵消 EKF 原点(开机气压零点)与地面的垂直偏置。
+        return self._relative_altitude() - self._z0
 
     def _record_result(self, name, target, achieved, error):
         self._results.append((name, target, achieved, error))
@@ -147,10 +165,13 @@ class InterfaceTakeoffLandTest(Node):
                     f'{name} service not available -- is cuadc_interface running and connected?')
 
     def _wait_for_ekf_ready(self):
+        # 要求 healthy 持续 settle 秒再放行:GPS 刚锁/EKF 刚收敛时 healthy 会抖,
+        # 瞬态 true 就放行会导致随后 GUIDED/arm 被飞控拒(位置估计未稳)。
         self._wait_for_condition(
             lambda: self._latest_ekf is not None and self._latest_ekf.healthy,
-            'EKF/GPS becoming healthy', self._ekf_ready_timeout)
-        self.get_logger().info('EKF/GPS ready')
+            'EKF/GPS becoming healthy', self._ekf_ready_timeout,
+            settle_sec=self._ekf_settle_sec)
+        self.get_logger().info(f'EKF/GPS ready (healthy sustained {self._ekf_settle_sec:.0f}s)')
 
     def _wait_for_start(self):
         # 放行闸门:停在 arm 之前(桨不转),等另一 SSH 发 start。桨转前必须有人显式放行。
@@ -165,11 +186,24 @@ class InterfaceTakeoffLandTest(Node):
 
     # -- 起降链路 --
 
-    def _check_set_mode(self):
-        result = self._call(self._set_mode_client, SetMode.Request(mode='GUIDED'), 'set_mode')
-        if not result.success:
-            raise RuntimeError('set_mode(GUIDED) returned success=False')
-        self.get_logger().info('set_mode(GUIDED) confirmed')
+    def _set_mode(self, mode, attempts=3, retry_delay_sec=1.5):
+        # 本机飞控解锁后切 GUIDED 偶发性被拒(状态未 settle),重试几次抹平瞬态。
+        for i in range(1, attempts + 1):
+            result = self._call(self._set_mode_client, SetMode.Request(mode=mode), 'set_mode')
+            if result.success:
+                self.get_logger().info(f'set_mode({mode}) confirmed')
+                return
+            if i < attempts:
+                self.get_logger().warn(
+                    f'set_mode({mode}) rejected (attempt {i}/{attempts}), retrying in '
+                    f'{retry_delay_sec:.1f}s ...')
+                self._spin_sleep(retry_delay_sec)
+        raise RuntimeError(f'set_mode({mode}) returned success=False after {attempts} attempts')
+
+    def _spin_sleep(self, duration_sec):
+        end = time.monotonic() + duration_sec
+        while time.monotonic() < end:
+            rclpy.spin_once(self, timeout_sec=0.2)
 
     def _check_arm(self):
         result = self._call(self._arm_client, Arm.Request(arm=True), 'arm')
@@ -182,18 +216,22 @@ class InterfaceTakeoffLandTest(Node):
     def _check_takeoff(self):
         self._wait_for_condition(
             lambda: self._latest_local_pose is not None, 'local_position samples', 10.0)
+        # takeoff 相对起飞点爬、local_position 相对 EKF 原点报 → 先抓地面基线,高度一律用 AGL。
+        self._z0 = self._relative_altitude()
+        self.get_logger().info(
+            f'ground baseline z0={self._z0:+.2f}m (EKF-origin frame); altitudes below are AGL')
         self.get_logger().info(f'calling takeoff(alt={self._takeoff_altitude}) ...')
         result = self._call(
             self._takeoff_client, Takeoff.Request(alt=self._takeoff_altitude), 'takeoff')
         if not result.success:
             raise RuntimeError('takeoff returned success=False')
         self._wait_for_condition(
-            lambda: self._relative_altitude() >= self._takeoff_altitude * 0.8,
+            lambda: self._agl() >= self._takeoff_altitude * 0.8,
             'altitude telemetry confirming climb', self._takeoff_timeout)
-        climb_err = self._relative_altitude() - self._takeoff_altitude
+        climb_err = self._agl() - self._takeoff_altitude
         self._record_result('Takeoff', f'{self._takeoff_altitude:.1f}m',
-                            f'{self._relative_altitude():.2f}m', f'{climb_err:+.2f}m')
-        self.get_logger().info(f'takeoff confirmed (alt={self._relative_altitude():.2f}m)')
+                            f'{self._agl():.2f}m', f'{climb_err:+.2f}m')
+        self.get_logger().info(f'takeoff confirmed (AGL={self._agl():.2f}m)')
 
     def _check_hover(self):
         # 悬停观察：不发任何指令，看高度能不能稳住在目标附近，记录最大偏差。
@@ -202,7 +240,7 @@ class InterfaceTakeoffLandTest(Node):
         max_dev = 0.0
         while time.monotonic() < deadline:
             rclpy.spin_once(self, timeout_sec=0.2)
-            max_dev = max(max_dev, abs(self._relative_altitude() - self._takeoff_altitude))
+            max_dev = max(max_dev, abs(self._agl() - self._takeoff_altitude))
         self._record_result('Hover altitude hold', f'{self._takeoff_altitude:.1f}m',
                             f'max_dev={max_dev:.2f}m', f'{max_dev:.2f}m')
         self.get_logger().info(f'hover confirmed (max altitude deviation={max_dev:.2f}m)')

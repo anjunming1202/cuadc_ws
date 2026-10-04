@@ -87,9 +87,18 @@ ros2 service call /cuadc_interface/release_payload cuadc_interface_msgs/srv/Rele
 看电机真停再按其要求带桨并约束好。飞手 RC 全程在手。无 GPS 室内 bench 可 `-p mode:=STABILIZE`。
 **这一步没看到 RC 能 disarm/夺控，就不要往下做任何会飞的测试。**
 
+> **会飞的测试共同前提**：
+> - **RC 模式开关停在 STABILIZE 挡、飞行全程别动**（放行前确认飞控显示 STABILIZE）。节点在
+>   STABILIZE 下 arm 再自己切 GUIDED；GCS 设的模式会保持到开关挡位**变化**为止，所以开关在
+>   ALT_HOLD 等别的挡会把 GUIDED 顶掉。**拨动开关 = 飞手立刻夺控**。
+> - 高度一律是**相对起飞地面（AGL）**：节点起飞前抓一次地面基线。`local_position` 以 EKF 原点
+>   （开机时的气压零点）为基准，与起飞地面差一个常量（实测 0.9–2.1m），不能直接当离地高度。
+> - 起飞后任一步失败，节点**先切 RTL（合集）/ LAND（起降）再退出**；兜底也失败会打
+>   `PILOT TAKE OVER`。
+
 ### 起降 smoke（**会飞**，最简，RC 待命）
 ```
-./scripts/run_flight_check_real.sh                          # 起来后等放行(见上),默认起飞 5m
+./scripts/run_flight_check_real.sh                          # 起来后等放行(见上),默认起飞 1m
 ./scripts/run_flight_check_real.sh --ros-args -p takeoff_altitude_m:=3.0
 ```
 最短链路：（放行后）解锁→起飞→悬停观察→降落→自动上锁，全程盯遥测。**飞行指令测试的
@@ -101,9 +110,11 @@ fanout、跑完自动收尾。飞机只在起飞点正上方上下动。
 ./scripts/run_flight_suite_real.sh                          # 起来后等放行(见上),全阶段
 ./scripts/run_flight_suite_real.sh --ros-args -p phases:=box # 只跑某阶段（电量/时间）
 ```
-（放行后）一次连续飞行走 起飞→定 yaw 方框（全向平移、机头不转）→高度扫描（含 1m，贴近
-地效谨慎）→速度扫描（0.25–2 m/s，每档停悬 settle）→RTL 降落，量实机指令/传感器精度。
-⚠ **首飞前按场地核对水平余量**：方框边长 `box_leg_m`（默认 5m）、速度段单向
+（放行后）一次连续飞行走 起飞 3m→定 yaw 方框（3m，以起飞点为中心 ±2.5m，机头不转）→高度
+扫描（1→2→3→5m，回 3m）→速度扫描（3m，沿起飞时机头方向往返，0.25–2 m/s，每档停悬
+settle）→RTL 降落。基准 3m 是因为 1m 地效下实机明显发飘。yaw 漂移、停发漂移超容差只记录
++告警、不中断；结尾有超差项打 `COMPLETED with N out-of-tolerance item(s)`，全达标才 `PASSED`。
+⚠ **首飞前按场地核对水平余量**：方框 `box_leg_m`（默认 5m）、速度段单向
 `vel_leg_distance_m`（默认 3.5m）都要在场地内，必要时 `-p` 调小；起飞点四周及上方净空。
 sim 侧对应 `run_flight_check_sim.sh` / `run_flight_suite_sim.sh`（连 SITL，先在仿真验逻辑）。
 

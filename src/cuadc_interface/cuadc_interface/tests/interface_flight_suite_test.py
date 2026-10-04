@@ -3,21 +3,22 @@
 （cuadc_groundstation）实时看位置/高度/速度，并开 onboard_record 录制回看——
 但那两者是解耦的独立组件，本节点只驱动飞行，不启停它们。飞手 RC 全程待命。
 
-坐标系：原点=起飞点，local_position 是绝对局部 NED（x=北 y=东 z=下），高度
-用 -z（相对起飞点），见 docs/spec/04-interfaces.md「高度基准」。全程 yaw 固定=
+坐标系：local_position 是 EKF 原点系的绝对局部 NED（x=北 y=东 z=下）。实机 EKF 原点不在
+起飞点，故水平以起飞后的 home_x/home_y 为参考、高度以起飞前地面基线算 AGL。全程 yaw 固定=
 起飞朝向：位置指令走 `~/cmd/position_target_local`（绝对局部坐标，interface_node
 已锁 yaw、不触发 ArduCopter 自动朝向）。
 
 阶段（takeoff/land 恒有；中间段由 `phases` 参数选，逗号分隔，默认全开）：
-  takeoff  解锁 + 起飞到 takeoff_altitude_m（默认 1m 低空）
+  takeoff  STABILIZE 解锁 → 切 GUIDED → 起飞到 takeoff_altitude_m（默认 3m；1m 地效实机发飘）
   box      定 yaw 方框（**以起飞点为中心**，±L/2 绕 NE→NW→SW→SE 再回中心）：yaw 不变
            却全向平移=定yaw全向移动，每角量单次到位误差、闭环量累计误差、并断言机头没转
-  altitude 高度扫描（1→2→3→5→回 1m）：低空垂直位置控制，1m 贴近地效谨慎
+  altitude 高度扫描（1→2→3→5→回起飞高度）：垂直位置控制，1m 贴近地效谨慎
   velocity 速度扫描（0.25/0.5/1/1.5/2 m/s）：**从起飞 xy 出发、沿起飞时机头方向前进→停悬
            →反向→停悬**往返；量指令→实测速度跟踪，并反复验证停发后安全悬停不续飞
   land     RTL 回 home 降落 + 自动上锁，量返航误差
 
 最后打目标/实测/误差汇总表——sim 跑一遍给基线、real 跑一遍量精度，同格式对比。
+yaw/漂移超容差只记录告警不中断；起飞后任一步失败先切 RTL 再退出。
 sim/real 同一节点，连接目标由 run_flight_suite_sim/real.sh 各自写死。
 
 放行闸门：起来后停在 arm **之前**（桨不转）、等放行，另一 SSH 发
@@ -68,15 +69,16 @@ class InterfaceFlightSuiteTest(Node):
         super().__init__('interface_flight_suite_test')
         self.declare_parameter('service_timeout_sec', 10.0)
         self.declare_parameter('ekf_ready_timeout_sec', 60.0)
+        self.declare_parameter('ekf_settle_sec', 5.0)  # healthy 须持续此秒数再放行(抗瞬态)
         # arm+takeoff 放行闸门：默认开(现场安全)。sim 快速迭代可 -p wait_for_start:=false 直接飞。
         self.declare_parameter('wait_for_start', True)
         self.declare_parameter('start_timeout_sec', 600.0)
         self.declare_parameter('phases', 'box,altitude,velocity')
-        self.declare_parameter('takeoff_altitude_m', 1.0)     # 起飞/方框/速度段都在这个低高度
+        self.declare_parameter('takeoff_altitude_m', 3.0)     # 起飞/方框/速度段基准高度(1m 地效太飘)
         self.declare_parameter('takeoff_timeout_sec', 30.0)
         # 位置（方框/高度）收敛判定
         self.declare_parameter('box_leg_m', 5.0)               # 方框边长，以起飞点为中心（各向 ±L/2）
-        self.declare_parameter('altitude_steps_m', [1.0, 2.0, 3.0, 5.0])  # 高度扫描，之后回起飞高度 → 1,2,3,5,1
+        self.declare_parameter('altitude_steps_m', [1.0, 2.0, 3.0, 5.0])  # 高度扫描，之后回起飞高度 → 1,2,3,5,回3m
         self.declare_parameter('position_tolerance_m', 0.6)
         self.declare_parameter('position_settle_sec', 2.0)
         self.declare_parameter('leg_timeout_sec', 40.0)
@@ -96,6 +98,7 @@ class InterfaceFlightSuiteTest(Node):
         g = self.get_parameter
         self._service_timeout = g('service_timeout_sec').value
         self._ekf_ready_timeout = g('ekf_ready_timeout_sec').value
+        self._ekf_settle_sec = g('ekf_settle_sec').value
         self._wait_for_start_enabled = g('wait_for_start').value
         self._start_timeout = g('start_timeout_sec').value
         self._phases = [p.strip() for p in g('phases').value.split(',') if p.strip()]
@@ -142,30 +145,44 @@ class InterfaceFlightSuiteTest(Node):
         self.create_subscription(Empty, START_TOPIC, self._on_start, 10)
 
         self._results = []
+        self._warnings = []  # 超容差的测量项(记录不中断),汇总时点名
         self._home_x = 0.0
         self._home_y = 0.0
         self._takeoff_yaw = 0.0
+        self._z0 = 0.0  # 起飞前地面基线(EKF 原点系的 -z);高度一律按相对它的 AGL 算
 
     def run(self):
         self._wait_for_services()
         self._wait_for_ekf_ready()
         self._wait_for_start()
-        self._check_set_mode()
+        # 本机飞控在 GUIDED 下直接 arm 会被 PreArm 拒;先在 STABILIZE 解锁,再切 GUIDED 起飞。
+        self._set_mode('STABILIZE')
         self._check_arm()
-        self._check_takeoff()
-
-        if 'box' in self._phases:
-            self._run_box()
-        if 'altitude' in self._phases:
-            self._run_altitude_sweep()
-        if 'velocity' in self._phases:
-            self._run_velocity_sweep()
+        self._set_mode('GUIDED')
+        # 发了 takeoff 之后任何失败都不能直接退出(否则飞机在 GUIDED 里无人指挥地悬停):先尽力 RTL。
+        try:
+            self._check_takeoff()
+            if 'box' in self._phases:
+                self._run_box()
+            if 'altitude' in self._phases:
+                self._run_altitude_sweep()
+            if 'velocity' in self._phases:
+                self._run_velocity_sweep()
+        except Exception:
+            self._failsafe_rtl()
+            raise
 
         self._check_rtl_and_disarm()
 
         self._print_summary()
-        self.get_logger().info('interface flight-suite test PASSED (phases: '
-                               f'{",".join(self._phases)})')
+        phases = ",".join(self._phases)
+        if self._warnings:
+            self.get_logger().warn(f'interface flight-suite test COMPLETED with {len(self._warnings)} '
+                                   f'out-of-tolerance item(s) (phases: {phases}):')
+            for w in self._warnings:
+                self.get_logger().warn(f'  - {w}')
+        else:
+            self.get_logger().info(f'interface flight-suite test PASSED (phases: {phases})')
 
     # -- 遥测回调 --
 
@@ -193,6 +210,11 @@ class InterfaceFlightSuiteTest(Node):
     def _relative_altitude(self):
         return -self._latest_local_pose.pose.position.z
 
+    def _agl(self):
+        # 相对起飞地面的高度(above ground level):减去起飞前基线,抵消 EKF 原点与地面的垂直偏置
+        # (飞控气压零点在开机时定、不一定等于起飞地面,直接用 -z 会偏一个常量)。
+        return self._relative_altitude() - self._z0
+
     def _local_xy(self):
         p = self._latest_local_pose.pose.position
         return p.x, p.y
@@ -204,6 +226,10 @@ class InterfaceFlightSuiteTest(Node):
     def _horizontal_speed(self):
         v = self._latest_velocity.twist.linear
         return math.hypot(v.x, v.y)
+
+    def _warn(self, text):
+        self._warnings.append(text)
+        self.get_logger().warn(text)
 
     def _record_result(self, name, target, achieved, error):
         self._results.append((name, target, achieved, error))
@@ -246,10 +272,13 @@ class InterfaceFlightSuiteTest(Node):
                     f'{name} service not available -- is cuadc_interface running and connected?')
 
     def _wait_for_ekf_ready(self):
+        # 要求 healthy 持续 settle 秒再放行:GPS 刚锁/EKF 刚收敛时 healthy 会抖,
+        # 瞬态 true 就放行会导致随后 GUIDED/arm 被飞控拒(位置估计未稳)。
         self._wait_for_condition(
             lambda: self._latest_ekf is not None and self._latest_ekf.healthy,
-            'EKF/GPS becoming healthy', self._ekf_ready_timeout)
-        self.get_logger().info('EKF/GPS ready')
+            'EKF/GPS becoming healthy', self._ekf_ready_timeout,
+            settle_sec=self._ekf_settle_sec)
+        self.get_logger().info(f'EKF/GPS ready (healthy sustained {self._ekf_settle_sec:.0f}s)')
 
     def _wait_for_start(self):
         # 放行闸门:停在 arm 之前(桨不转),等另一 SSH 发 start。桨转前必须有人显式放行。
@@ -264,11 +293,21 @@ class InterfaceFlightSuiteTest(Node):
 
     # -- takeoff --
 
-    def _check_set_mode(self):
-        result = self._call(self._set_mode_client, SetMode.Request(mode='GUIDED'), 'set_mode')
-        if not result.success:
-            raise RuntimeError('set_mode(GUIDED) returned success=False')
-        self.get_logger().info('set_mode(GUIDED) confirmed')
+    def _set_mode(self, mode, attempts=3, retry_delay_sec=1.5):
+        # 本机飞控解锁后切 GUIDED 偶发性被拒(状态未 settle),重试几次抹平瞬态。
+        for i in range(1, attempts + 1):
+            result = self._call(self._set_mode_client, SetMode.Request(mode=mode), 'set_mode')
+            if result.success:
+                self.get_logger().info(f'set_mode({mode}) confirmed')
+                return
+            if i < attempts:
+                self.get_logger().warn(
+                    f'set_mode({mode}) rejected (attempt {i}/{attempts}), retrying in '
+                    f'{retry_delay_sec:.1f}s ...')
+                end = time.monotonic() + retry_delay_sec
+                while time.monotonic() < end:
+                    rclpy.spin_once(self, timeout_sec=0.2)
+        raise RuntimeError(f'set_mode({mode}) returned success=False after {attempts} attempts')
 
     def _check_arm(self):
         result = self._call(self._arm_client, Arm.Request(arm=True), 'arm')
@@ -282,38 +321,44 @@ class InterfaceFlightSuiteTest(Node):
         self._wait_for_condition(
             lambda: self._latest_local_pose is not None and self._latest_yaw is not None,
             'local_position/attitude samples', 10.0)
+        # 起飞前抓地面基线:之后所有高度都相对它算 AGL(takeoff 相对起飞点爬,local_position
+        # 相对 EKF 原点报,两者差一个常量偏置,不锚基线会让高度判据整体偏移)。
+        self._z0 = self._relative_altitude()
+        self.get_logger().info(
+            f'ground baseline z0={self._z0:+.2f}m (EKF-origin frame); altitudes below are AGL')
         self.get_logger().info(f'calling takeoff(alt={self._takeoff_altitude}) ...')
         result = self._call(
             self._takeoff_client, Takeoff.Request(alt=self._takeoff_altitude), 'takeoff')
         if not result.success:
             raise RuntimeError('takeoff returned success=False')
         self._wait_for_condition(
-            lambda: self._relative_altitude() >= self._takeoff_altitude * 0.8,
+            lambda: self._agl() >= self._takeoff_altitude * 0.8,
             'altitude telemetry confirming climb', self._takeoff_timeout, settle_sec=1.0)
         self._home_x, self._home_y = self._local_xy()
         self._takeoff_yaw = self._latest_yaw
-        climb_err = self._relative_altitude() - self._takeoff_altitude
+        climb_err = self._agl() - self._takeoff_altitude
         self._record_result('Takeoff', f'{self._takeoff_altitude:.1f}m',
-                            f'{self._relative_altitude():.2f}m', f'{climb_err:+.2f}m')
+                            f'{self._agl():.2f}m', f'{climb_err:+.2f}m')
         self.get_logger().info(
-            f'takeoff confirmed (alt={self._relative_altitude():.2f}m, '
+            f'takeoff confirmed (AGL={self._agl():.2f}m, '
             f'home=({self._home_x:.2f},{self._home_y:.2f}), yaw={math.degrees(self._takeoff_yaw):.0f}deg)')
 
     # -- 位置指令：绝对局部坐标，等到收敛 --
 
     def _goto_local(self, north, east, alt, label):
         """飞到相对起飞点 (north,east) 高度 alt（米），yaw 不变。收敛后记录到位误差。"""
-        tx, ty, tz = self._home_x + north, self._home_y + east, -alt
+        # alt 是相对起飞地面的 AGL;位置指令走 EKF 原点系的绝对 LOCAL_NED,故目标 z 要加回基线 z0。
+        tx, ty, tz = self._home_x + north, self._home_y + east, -(self._z0 + alt)
         self.get_logger().info(f'{label}: -> N={north:+.1f} E={east:+.1f} alt={alt:.1f} ...')
         self._position_target_local_pub.publish(PositionTarget(x=tx, y=ty, z=tz))
         # 收敛要同时满足水平到位 + 高度到位:高度扫描段 N/E 不变、水平距离一开始就≈0,
         # 只查水平会在垂直还没走完时就误判"到位"(alt_err 很大),必须把高度也纳入判据。
         self._wait_for_condition(
             lambda: self._distance_xy(tx, ty) <= self._pos_tolerance
-            and abs(self._relative_altitude() - alt) <= self._pos_tolerance,
+            and abs(self._agl() - alt) <= self._pos_tolerance,
             f'{label} reaching target', self._leg_timeout, settle_sec=self._pos_settle)
         pos_err = self._distance_xy(tx, ty)
-        alt_err = self._relative_altitude() - alt
+        alt_err = self._agl() - alt
         self._record_result(label, f'N={north:+.1f} E={east:+.1f} alt={alt:.1f}m',
                             f'pos_err={pos_err:.2f}m', f'{pos_err:.2f}m (alt_err={alt_err:+.2f}m)')
         self.get_logger().info(f'{label}: reached (pos_err={pos_err:.2f}m, alt_err={alt_err:+.2f}m)')
@@ -338,10 +383,9 @@ class InterfaceFlightSuiteTest(Node):
         yaw_err_deg = abs(math.degrees(_angle_diff(self._latest_yaw, self._takeoff_yaw)))
         self._record_result('Box heading held (fixed yaw)', f'{math.degrees(self._takeoff_yaw):.0f}deg',
                             f'{math.degrees(self._latest_yaw):.0f}deg', f'{yaw_err_deg:.1f}deg')
-        if yaw_err_deg > self._yaw_hold_tol_deg:
-            raise RuntimeError(
-                f'heading drifted {yaw_err_deg:.1f}deg during fixed-yaw box '
-                f'(tolerance {self._yaw_hold_tol_deg:.0f}deg)')
+        if yaw_err_deg > self._yaw_hold_tol_deg:  # 测量值:如实记录+告警,不在空中中断
+            self._warn(f'heading drifted {yaw_err_deg:.1f}deg during fixed-yaw box '
+                       f'(tolerance {self._yaw_hold_tol_deg:.0f}deg)')
         self.get_logger().info(
             f'box done (cumulative pos_err={cum_err:.2f}m, yaw held within {yaw_err_deg:.1f}deg)')
 
@@ -394,12 +438,19 @@ class InterfaceFlightSuiteTest(Node):
             max_drift = max(max_drift, self._distance_xy(sx, sy))
         self._record_result('Velocity stop-hover drift', f'<{self._drift_tolerance:.1f}m',
                             f'max_drift={max_drift:.2f}m', f'{max_drift:.2f}m')
-        if max_drift > self._drift_tolerance:
-            raise RuntimeError(
-                f'drifted {max_drift:.2f}m after stopping (tolerance {self._drift_tolerance:.1f}m)')
+        if max_drift > self._drift_tolerance:  # 测量值:如实记录+告警,不在空中中断
+            self._warn(f'drifted {max_drift:.2f}m after stopping '
+                       f'(tolerance {self._drift_tolerance:.1f}m)')
         self.get_logger().info(f'velocity sweep done (stop-hover drift={max_drift:.2f}m)')
 
     # -- 返航降落 --
+
+    def _failsafe_rtl(self):
+        self.get_logger().error('flight step failed while airborne -> commanding RTL before exit')
+        try:
+            self._set_mode('RTL')
+        except Exception as exc:  # noqa: BLE001 — 兜底本身失败只能告警,靠飞手 RC
+            self.get_logger().error(f'failsafe RTL failed ({exc}) -- PILOT TAKE OVER')
 
     def _check_rtl_and_disarm(self):
         self.get_logger().info('calling set_mode(RTL) to return home and land ...')
