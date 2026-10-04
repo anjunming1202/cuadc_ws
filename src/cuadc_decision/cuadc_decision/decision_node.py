@@ -90,6 +90,7 @@ class DecisionNode(Node):
 
         self.create_subscription(Bool, f'{_INTERFACE_NS}/status/connected', self._on_connected, 10)
         self.create_subscription(Bool, f'{_INTERFACE_NS}/status/armed', self._on_armed, 10)
+        self.create_subscription(String, f'{_INTERFACE_NS}/status/mode', self._on_mode, 10)
         self.create_subscription(FailsafeState, f'{_INTERFACE_NS}/status/failsafe', self._on_failsafe, 10)
         self.create_subscription(
             PoseStamped, f'{_INTERFACE_NS}/telemetry/local_position', self._on_local_position, 10)
@@ -118,6 +119,9 @@ class DecisionNode(Node):
 
     def _on_armed(self, msg):
         self._ctx.armed = msg.data
+
+    def _on_mode(self, msg):
+        self._ctx.mode = msg.data
 
     def _on_failsafe(self, msg):
         self._ctx.failsafe_active = msg.active
@@ -184,8 +188,14 @@ class DecisionNode(Node):
                 f'[PERF] tick() took {tick_elapsed_ms:.1f}ms (budget {self._tick_budget_ms:.1f}ms)',
                 throttle_duration_sec=1.0)
 
+        if result.notice:
+            self.get_logger().warn(f'[PILOT] {result.notice}')
         if result.next_state is not None and result.next_state != self._ctx.current_state:
             self.get_logger().info(f'[STATE] {self._ctx.current_state} -> {result.next_state}')
+            if result.next_state == mission_logic.State.PILOT_TAKEOVER:
+                self.get_logger().warn(
+                    f'[PILOT] pilot/FC took over (mode={self._ctx.mode}, armed={self._ctx.armed}) '
+                    '— mission stopped commanding')
             self._ctx.current_state = result.next_state
             self._ctx.command_dispatched = False
             self._ctx.state_entered_monotonic = time.monotonic()

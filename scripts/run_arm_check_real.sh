@@ -1,19 +1,19 @@
 #!/bin/bash
 # ARM + RC 接管检查（真机，**每次飞行测试前必做**；也是比赛前给裁判演示 RC 能 disarm/夺控的环节）。
-# 起接口层连 fanout + 跑 interface_arm_test：Pi arm → 给 RC 一个窗口 disarm/夺控 → 否则 Pi 自动 disarm。
-# 验证 ① 树莓派能否 arm(最小控制打通)  ② RC 能否 disarm/接管(桨转前必须证明人能停下)。
+# 起接口层连 fanout + 跑 interface_arm_test：放行 → 飞手 RC 解锁 → 15s 窗口内飞手 RC disarm/夺控 →
+# 否则飞控自动 disarm(Pi 兜底)。流程与实际飞行一致(解锁/上锁归飞手,Pi 不发 arm)。
+# 验证 ① Pi 能看到飞手解锁(并核对是否 STABILIZE 挡)  ② RC 能否 disarm/接管(桨转前必须证明人能停下)。
+# 只如实记录事件,不判 PASS/FAIL。
 #
-# ⚠ 安全：arm 会让电机转(有桨则桨转)。按队内 SOP 决定是否拆桨——只验 RC disarm 信号链路用拆桨最安全;
+# ⚠ 安全：解锁会让电机转(有桨则桨转)。按队内 SOP 决定是否拆桨——只验 RC disarm 信号链路用拆桨最安全;
 #   要给裁判看电机真停再按其要求带桨并做好约束。飞手 RC 全程在手。
-#   require_rc_disarm 真机默认 true：窗口内没看到 RC disarm 就判 FAIL,必须重做。
 #
-# 前置：底座在跑(mav_fanout 出 udp:127.0.0.1:14550)。无 GPS 的室内 bench 可 -p mode:=STABILIZE。
+# 前置：底座在跑(mav_fanout 出 udp:127.0.0.1:14550)。默认不等 EKF(室内无 GPS 也能做)。
 #
 # Usage: ./scripts/run_arm_check_real.sh [extra ros2 run args]
 #
-# 放行闸门:节点起来停在 arm 前(桨不转),确认安全后另一 SSH 发
+# 节点起来停在 READY(桨不转),确认安全后另一 SSH 发放行,之后飞手 RC 解锁:
 #   ros2 topic pub -1 /cuadc_flight_test/start std_msgs/msg/Empty "{}"
-# 才 arm。
 
 set -eo pipefail
 

@@ -98,6 +98,14 @@ class InterfaceNode(Node):
         self._mode_names = {}
         self._state_lock = threading.Lock()
         self._state = {'connected': False, 'armed': False, 'mode': '', 'yaw': 0.0}
+        # 起飞点原点（EKF 原点系 NED）：local_position 发布前减它、position_target_local 下发前加它，
+        # 使对外坐标都相对起飞点。飞控 EKF 原点不在起飞点（实机实测 z 偏 0.9–2.1m、xy 偏数米）。
+        # 原点 = 最近一次解锁瞬间的位置（同 ArduPilot 在解锁时设 home），上锁后保持（落地后读数仍
+        # 相对起飞点，返航误差可量）；从未解锁过时跟随当前位置。
+        self._origin_ned = None
+        self._raw_ned = None
+        self._armed_once = False
+        self._seen_heartbeat = False
         self._ack_lock = threading.Lock()
         self._pending_acks = {}  # command id -> threading.Event
         self._ack_results = {}  # command id -> COMMAND_ACK.result
@@ -232,8 +240,24 @@ class InterfaceNode(Node):
         armed = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
         mode = self._mode_names.get(msg.custom_mode, '')
         with self._state_lock:
+            was_armed = self._state['armed']
+            first = not self._seen_heartbeat
+            self._seen_heartbeat = True
             self._state['armed'] = armed
             self._state['mode'] = mode
+            if armed and not was_armed:
+                self._armed_once = True
+                self._origin_ned = self._raw_ned  # None 时由下一条 LOCAL_POSITION_NED 补上
+                if first:
+                    # 起来时已在解锁状态（空中重启接口层）：拿不到真正的起飞点，退化为当前位置。
+                    self.get_logger().warn(
+                        'interface started while ARMED: takeoff origin unknown, using current '
+                        'position -- local_position is NOT relative to the takeoff point')
+                elif self._origin_ned is not None:
+                    self.get_logger().info(
+                        'armed: takeoff origin frozen at EKF-frame '
+                        f'({self._origin_ned[0]:+.2f}, {self._origin_ned[1]:+.2f}, '
+                        f'{self._origin_ned[2]:+.2f})')
         self._safe_publish(self.armed_pub, Bool(data=armed))
         self._safe_publish(self.mode_pub, String(data=mode))
 
@@ -250,11 +274,16 @@ class InterfaceNode(Node):
         self._safe_publish(self.global_position_pub, fix)
 
     def _handle_local_position_ned(self, master, msg):
+        with self._state_lock:
+            self._raw_ned = (msg.x, msg.y, msg.z)
+            if not self._armed_once or self._origin_ned is None:
+                self._origin_ned = self._raw_ned
+            ox, oy, oz = self._origin_ned
         pose = PoseStamped()
         pose.header.stamp = self.get_clock().now().to_msg()
-        pose.pose.position.x = msg.x
-        pose.pose.position.y = msg.y
-        pose.pose.position.z = msg.z
+        pose.pose.position.x = msg.x - ox
+        pose.pose.position.y = msg.y - oy
+        pose.pose.position.z = msg.z - oz
         self._safe_publish(self.local_position_pub, pose)
 
         twist = TwistStamped()
@@ -471,17 +500,21 @@ class InterfaceNode(Node):
         master = self._master
         if master is None:
             return
-        # MAV_FRAME_LOCAL_NED：x/y/z 是绝对局部坐标（相对起飞点），跟
-        # _on_position_target 的机身相对偏移是两回事——这个 frame 下 yaw
+        # MAV_FRAME_LOCAL_NED：x/y/z 是相对起飞点的绝对局部坐标，下发前加回起飞点原点换成
+        # 飞控的 EKF 原点系。跟 _on_position_target 的机身相对偏移是两回事——这个 frame 下 yaw
         # 字段是绝对量，锁定当前朝向要显式回填当前角度（不能像
         # BODY_OFFSET_NED 那样发 0），不然会落回默认的 WP_YAW_BEHAVIOR。
         with self._state_lock:
             yaw = self._state['yaw']
+            origin = self._origin_ned
+        if origin is None:
+            self.get_logger().warn('position_target_local dropped: no local position yet')
+            return
         master.mav.set_position_target_local_ned_send(
             0, master.target_system, master.target_component,
             mavutil.mavlink.MAV_FRAME_LOCAL_NED,
             0b0000101111111000,
-            msg.x, msg.y, msg.z,
+            msg.x + origin[0], msg.y + origin[1], msg.z + origin[2],
             0, 0, 0, 0, 0, 0, yaw, 0)
 
     def _on_velocity(self, msg):

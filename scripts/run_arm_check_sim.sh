@@ -1,15 +1,16 @@
 #!/bin/bash
-# ARM 检查（仿真）：起接口层连 SITL + 跑 interface_arm_test，验 Pi arm→观察窗口→出口链路。
-# sim 无 RC，观察窗口内不会有 RC disarm/夺控，一般走「窗口结束→飞控自动 disarm / Pi 兜底」出口；
+# ARM 检查（仿真）：起接口层连 SITL + 跑 interface_arm_test，验 等解锁→观察窗口→出口链路。
+# sim 无飞手：emulate_pilot_arm 由节点代飞手切 STABILIZE+解锁；观察窗口内不会有 RC disarm/夺控，
+# 一般走「窗口结束→飞控自动 disarm / Pi 兜底」出口；
 # RC disarm/夺控只能真机验，见 run_arm_check_real.sh。用于上真机前先在仿真确认节点逻辑。
 #
 # 前置：另一个终端已起 Gazebo+SITL，MAVLink 出 udp:127.0.0.1:14550。
 #
 # Usage: ./scripts/run_arm_check_sim.sh [extra ros2 run args]
 #
-# 放行闸门:节点起来停在 arm 前,另一 SSH 发
+# 放行信号:节点起来停在 READY,另一 SSH 发
 #   ros2 topic pub -1 /cuadc_flight_test/start std_msgs/msg/Empty "{}"
-# 才 arm(sim 可 -p wait_for_start:=false 跳过)。
+# 之后(sim 由节点代飞手)解锁(sim 可 -p wait_for_start:=false 跳过放行)。
 
 set -eo pipefail
 
@@ -25,4 +26,4 @@ cleanup() { kill "$IFACE_PID" 2>/dev/null || true; pkill -INT -f "$_iface_sig" 2
 trap cleanup EXIT INT TERM
 
 sleep 4
-ros2 run cuadc_interface interface_arm_test "$@"
+ros2 run cuadc_interface interface_arm_test --ros-args -p emulate_pilot_arm:=true -- "$@"

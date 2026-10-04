@@ -11,9 +11,10 @@
 #
 # Usage: ./scripts/run_flight_check_real.sh [extra ros2 run args, e.g. --ros-args -p takeoff_altitude_m:=3.0]
 #
-# 放行闸门:节点起来停在 arm 前(桨不转),另一 SSH 发
+# 起飞条件(固定顺序):节点起来停在 READY → 另一 SSH 发放行
 #   ros2 topic pub -1 /cuadc_flight_test/start std_msgs/msg/Empty "{}"
-# 才 arm+起飞(sim 可 -p wait_for_start:=false 跳过)。
+# → 飞手模式开关在 STABILIZE 挡、用 RC 解锁 → Pi 1s 内切 GUIDED 起飞。Pi 不发 arm。
+# 飞行中飞手拨模式开关/RC 上锁 = 夺控,Pi 立即停发指令退出。
 
 set -eo pipefail
 

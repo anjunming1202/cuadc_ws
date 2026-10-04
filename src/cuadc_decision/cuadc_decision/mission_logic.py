@@ -43,7 +43,8 @@ class State:
     INIT = 'INIT'
     WAIT_VEHICLE_READY = 'WAIT_VEHICLE_READY'
     WAIT_TASK_START = 'WAIT_TASK_START'
-    ARM_AND_TAKEOFF = 'ARM_AND_TAKEOFF'
+    WAIT_PILOT_ARM = 'WAIT_PILOT_ARM'
+    TAKEOFF = 'TAKEOFF'
     NAVIGATE_TO_DROP_ZONE = 'NAVIGATE_TO_DROP_ZONE'
     SEARCH_DROP_TARGETS = 'SEARCH_DROP_TARGETS'
     APPROACH_DROP_TARGET = 'APPROACH_DROP_TARGET'
@@ -51,6 +52,13 @@ class State:
     NAVIGATE_TO_RECON_ZONE = 'NAVIGATE_TO_RECON_ZONE'
     SURVEY_RECON_ZONE = 'SURVEY_RECON_ZONE'
     RTL_OR_LAND = 'RTL_OR_LAND'
+    PILOT_TAKEOVER = 'PILOT_TAKEOVER'
+
+
+# 解锁/上锁归飞手（Pi 不发 arm）：飞手须在此模式下 RC 解锁，开关在别的挡会顶掉 GUIDED。
+_ARM_MODE = 'STABILIZE'
+# Pi 接管后自己会设的模式；遥测出现这之外的模式 = 飞手拨开关或飞控 failsafe 接手。
+_PI_MODES = frozenset({'GUIDED', 'RTL'})
 
 
 @dataclass
@@ -65,6 +73,7 @@ class FsmTuning:
     recon_phase_timeout_s: float = 90.0
     battery_critical_fraction: float = 0.20   # sensor_msgs/BatteryState.percentage 是 0~1
     gps_fix_ok_threshold: int = 3             # MAVLink GPS_FIX_TYPE：3 = 3D fix
+    emulate_pilot_arm: bool = False           # 仅 sim：没有飞手，WAIT_PILOT_ARM 里替飞手切 STABILIZE+解锁
 
 
 def load_tuning(profile: str) -> FsmTuning:
@@ -75,21 +84,22 @@ def load_tuning(profile: str) -> FsmTuning:
     return FsmTuning(**data)
 
 
-def _world_xy_to_ned(world_x, world_y):
+def _world_xy_to_ned(world_x, world_y, takeoff_point):
     """场地坐标（cuadc_sim/field/config.py 的 x=飞行前进方向、y=侧向）
-    转成接口层 telemetry/local_position 用的 NED (north, east)——两者
-    不是恒等映射，X/Y 是对调的，换算依据同
+    转成接口层 telemetry/local_position 用的 NED (north, east)。local_position 原点是
+    起飞（解锁）点，先减去起飞点的场地坐标 `takeoff_point`；再 X/Y 对调，换算依据同
     cuadc_perception/stub_perception_node.py 里的同名函数（仿真机型
     iris_with_gimbal 的 `gazeboXYZToNED` 插件参数）。2026-07-19 实机
     测试（SITL+Gazebo）发现飞机往侧边飞，就是这里之前没做这个换算、
     直接把场地坐标当 NED 坐标用导致的。
     """
-    return (world_y, world_x)
+    return (world_y - takeoff_point[1], world_x - takeoff_point[0])
 
 
-def _scan_waypoints_ned(center, offsets):
+def _scan_waypoints_ned(center, offsets, takeoff_point):
     """场景配置里的区中心 + 相对 offsets（场地坐标）算成 NED 扫描航点列表。"""
-    return [_world_xy_to_ned(center[0] + dx, center[1] + dy) for dx, dy in offsets]
+    return [_world_xy_to_ned(center[0] + dx, center[1] + dy, takeoff_point)
+            for dx, dy in offsets]
 
 
 _DROP_STATES = frozenset({State.SEARCH_DROP_TARGETS, State.APPROACH_DROP_TARGET, State.DROP_PAYLOAD})
@@ -100,8 +110,10 @@ _RECON_STATES = frozenset({State.SURVEY_RECON_ZONE})
 _WORLD = mission_config.MissionWorld()          # A：世界/任务/场景
 _TUNING = FsmTuning()                            # B′：FSM 本体调参
 _SEARCH = search_strategy.SearchConfig()         # B：SEARCH 算法参数
-_DROP_SCAN_WAYPOINTS = _scan_waypoints_ned(_WORLD.drop_zone_center, _WORLD.drop_scan_offsets)
-_RECON_SCAN_WAYPOINTS = _scan_waypoints_ned(_WORLD.recon_zone_center, _WORLD.recon_scan_offsets)
+_DROP_SCAN_WAYPOINTS = _scan_waypoints_ned(
+    _WORLD.drop_zone_center, _WORLD.drop_scan_offsets, _WORLD.takeoff_point)
+_RECON_SCAN_WAYPOINTS = _scan_waypoints_ned(
+    _WORLD.recon_zone_center, _WORLD.recon_scan_offsets, _WORLD.takeoff_point)
 
 # 可替换的接近阶段策略实例（粗 PBVS -> 末端 IBVS 等，见 approaches/）。持有跨 tick 的接近
 # 内部状态（锁定目标）;进入 APPROACH 时 _tick_search 调 .enter() 重置。换算法改
@@ -121,8 +133,10 @@ def configure_mission(world, tuning, search):
     offsets 重算 NED 扫描航点。decision_node 在 __init__ 里调一次。"""
     global _WORLD, _TUNING, _SEARCH, _DROP_SCAN_WAYPOINTS, _RECON_SCAN_WAYPOINTS
     _WORLD, _TUNING, _SEARCH = world, tuning, search
-    _DROP_SCAN_WAYPOINTS = _scan_waypoints_ned(world.drop_zone_center, world.drop_scan_offsets)
-    _RECON_SCAN_WAYPOINTS = _scan_waypoints_ned(world.recon_zone_center, world.recon_scan_offsets)
+    _DROP_SCAN_WAYPOINTS = _scan_waypoints_ned(
+        world.drop_zone_center, world.drop_scan_offsets, world.takeoff_point)
+    _RECON_SCAN_WAYPOINTS = _scan_waypoints_ned(
+        world.recon_zone_center, world.recon_scan_offsets, world.takeoff_point)
 
 
 # ---- decision_node.py 与这里交换数据用的普通数据类型（不含任何 ROS 类型）----
@@ -145,6 +159,7 @@ class TickResult:
     position_target: Optional[Tuple[float, float, float]] = None  # (x, y, z)，同 telemetry/local_position 坐标系
     velocity_target: Optional[Tuple[float, float, float]] = None  # (前,右,下) 机体系速度 m/s，末端 IBVS 用，见 04-interfaces.md cmd/velocity
     service_call: Optional[ServiceCallRequest] = None
+    notice: Optional[str] = None  # 给现场操作员看的提示（decision_node 打 WARN），只在状况变化时给
 
 
 @dataclass
@@ -173,10 +188,15 @@ class MissionContext:
     state_entered_monotonic: float = field(default_factory=time.monotonic)
     command_dispatched: bool = False
     last_service_result: Optional[ServiceResult] = None
-    arm_takeoff_step: str = 'set_mode'
+    takeoff_step: str = 'set_mode'
+    pilot_arm_step: str = 'set_mode'          # 仅 emulate_pilot_arm（sim）用
+    pilot_arm_ready: bool = False             # 进 WAIT_PILOT_ARM 后已看到过未解锁（下一次解锁才算数）
+    already_armed_noted: bool = False
+    pi_in_control: bool = False               # 起飞指令被接受起 = Pi 接管；之后飞手改模式/上锁即夺控
 
     connected: bool = False
     armed: bool = False
+    mode: Optional[str] = None
     gps_fix_type: int = 0
     ekf_healthy: bool = False
     battery_fraction: Optional[float] = None
@@ -247,28 +267,84 @@ def _tick_wait_task_start(ctx):
     # 开发环境没有真实 GPIO，用 decision_node 订阅的一个替代触发话题
     # 代替，见该文件里的说明。
     if ctx.task_start_triggered:
-        return TickResult(next_state=State.ARM_AND_TAKEOFF)
+        return TickResult(next_state=State.WAIT_PILOT_ARM,
+                          notice=f'task started — WAITING FOR PILOT ARM ({_ARM_MODE} + RC arm)')
     return TickResult()
 
 
-def _tick_arm_and_takeoff(ctx):
-    step = ctx.arm_takeoff_step
+def _emulate_pilot_arm(ctx):
+    # 仅 sim：没有飞手，替飞手切 STABILIZE + 解锁；之后的判定（模式、接管）与真机完全相同。
+    if ctx.pilot_arm_step == 'set_mode':
+        def on_success():
+            ctx.pilot_arm_step = 'arm'
+            return TickResult()
+        return _dispatch_and_await(ctx, 'set_mode', {'mode': _ARM_MODE}, on_success)
+    if ctx.pilot_arm_step == 'arm':
+        def on_success():
+            ctx.pilot_arm_step = 'done'
+            return TickResult()
+        return _dispatch_and_await(ctx, 'arm', {'arm': True}, on_success)
+    return TickResult()
+
+
+def _tick_wait_pilot_arm(ctx):
+    # 起飞的最后一个动作永远是飞手 RC 解锁：本状态里先看到未解锁、再看到解锁才算数
+    # （放行前就解锁的不算）。Pi 看到解锁立刻起飞，赶在飞控 DISARM_DELAY 自动上锁之前。
+    if not ctx.armed:
+        ctx.pilot_arm_ready = True
+        ctx.already_armed_noted = False
+        if _TUNING.emulate_pilot_arm:
+            return _emulate_pilot_arm(ctx)
+        return TickResult()
+    if not ctx.pilot_arm_ready:
+        if not ctx.already_armed_noted:
+            ctx.already_armed_noted = True
+            return TickResult(notice='vehicle ALREADY ARMED — pilot: disarm with RC, '
+                                     'then re-arm when ready (only a fresh arm starts the flight)')
+        return TickResult()
+    if ctx.mode != _ARM_MODE:
+        ctx.pilot_arm_ready = False
+        ctx.already_armed_noted = True
+        return TickResult(notice=f'armed in {ctx.mode}, expected {_ARM_MODE} — NOT taking off; '
+                                 f'pilot: disarm, mode switch to {_ARM_MODE}, re-arm')
+    ctx.takeoff_step = 'set_mode'
+    return TickResult(next_state=State.TAKEOFF,
+                      notice=f'pilot armed in {_ARM_MODE} -> Pi taking control')
+
+
+def _abort_takeoff(ctx, why):
+    # 离地前飞手上锁/改模式：放弃这次起飞，回去等飞手重新解锁（放行信号保持有效）。
+    ctx.takeoff_step = 'set_mode'
+    ctx.pilot_arm_step = 'set_mode'
+    ctx.pilot_arm_ready = False
+    return TickResult(next_state=State.WAIT_PILOT_ARM, notice=f'takeoff aborted: {why}')
+
+
+def _tick_takeoff(ctx):
+    step = ctx.takeoff_step
+
+    if step != 'wait_altitude' and not ctx.armed:
+        return _abort_takeoff(ctx, 'pilot disarmed before liftoff')
 
     if step == 'set_mode':
         def on_success():
-            ctx.arm_takeoff_step = 'arm'
+            ctx.takeoff_step = 'wait_guided'
             return TickResult()
         return _dispatch_and_await(ctx, 'set_mode', {'mode': 'GUIDED'}, on_success)
 
-    if step == 'arm':
-        def on_success():
-            ctx.arm_takeoff_step = 'takeoff'
-            return TickResult()
-        return _dispatch_and_await(ctx, 'arm', {'arm': True}, on_success)
+    if step == 'wait_guided':
+        # 等 GUIDED 的遥测真到了再发起飞（set_mode 的应答早于下一条心跳）。
+        if ctx.mode == 'GUIDED':
+            ctx.takeoff_step = 'takeoff'
+        return TickResult()
 
     if step == 'takeoff':
+        if ctx.mode != 'GUIDED':
+            return _abort_takeoff(ctx, f'mode changed to {ctx.mode} before liftoff')
+
         def on_success():
-            ctx.arm_takeoff_step = 'wait_altitude'
+            ctx.takeoff_step = 'wait_altitude'
+            ctx.pi_in_control = True
             return TickResult()
         return _dispatch_and_await(ctx, 'takeoff', {'alt': _WORLD.cruise_alt_m}, on_success)
 
@@ -293,7 +369,7 @@ def _tick_search_drop_targets(ctx):
     # 那一侧的检测由 _WORLD.drop_recon_split_y_m 分界（field-layout.md：投放区/侦察区中
     # 间隔 20m 空档，用中点粗分即可；判断的是 position.y=NED east，场地 x/y 转 NED 对调，
     # 见 `_world_xy_to_ned`）。
-    search_strategy.observe(ctx, _SEARCH, _WORLD.drop_recon_split_y_m)
+    search_strategy.observe(ctx, _SEARCH, _WORLD.drop_recon_split_y_m - _WORLD.takeoff_point[0])
 
     # 候选还不够/还没扫完，按扫描航点继续飞，攒更多样本
     index = min(ctx.drop_task.waypoint_index, len(_DROP_SCAN_WAYPOINTS) - 1)
@@ -382,11 +458,17 @@ def _tick_rtl_or_land(ctx):
     return _dispatch_and_await(ctx, 'set_mode', {'mode': 'RTL'}, on_success)
 
 
+def _tick_pilot_takeover(ctx):
+    # 终态：飞手/飞控已接手，Pi 不再发任何指令、不再切模式（也不触发 RTL 守卫抢回控制）。
+    return TickResult()
+
+
 _DISPATCH = {
     State.INIT: _tick_init,
     State.WAIT_VEHICLE_READY: _tick_wait_vehicle_ready,
     State.WAIT_TASK_START: _tick_wait_task_start,
-    State.ARM_AND_TAKEOFF: _tick_arm_and_takeoff,
+    State.WAIT_PILOT_ARM: _tick_wait_pilot_arm,
+    State.TAKEOFF: _tick_takeoff,
     State.NAVIGATE_TO_DROP_ZONE: _tick_navigate_to_drop_zone,
     State.SEARCH_DROP_TARGETS: _tick_search_drop_targets,
     State.APPROACH_DROP_TARGET: _tick_approach_drop_target,
@@ -394,6 +476,7 @@ _DISPATCH = {
     State.NAVIGATE_TO_RECON_ZONE: _tick_navigate_to_recon_zone,
     State.SURVEY_RECON_ZONE: _tick_survey_recon_zone,
     State.RTL_OR_LAND: _tick_rtl_or_land,
+    State.PILOT_TAKEOVER: _tick_pilot_takeover,
 }
 
 
@@ -401,8 +484,17 @@ def _check_guards(ctx):
     """跨状态的强制打断：满足条件就返回强制目标状态，命中就跳过当前
     状态本来该跑的 tick 逻辑，见 docs/spec/06-planning.md"跨状态的强制
     打断"一节——真安全响应和任务时间预算共用这同一种机制，具体阈值都
-    是占位值。还没起飞、或已经在收尾阶段时，强制打断没有意义。"""
-    if not ctx.armed or ctx.current_state == State.RTL_OR_LAND:
+    是占位值。还没起飞、或已经在收尾阶段时，强制打断没有意义。
+
+    飞手夺控排第一：Pi 接管后出现 Pi 不会设的模式（拨开关/飞控 failsafe）或空中被上锁，
+    转 PILOT_TAKEOVER 永久停手——否则后面的电量/failsafe 守卫会再切 RTL 把控制权抢回来。"""
+    if ctx.pi_in_control and ctx.current_state != State.PILOT_TAKEOVER:
+        if not ctx.armed and ctx.current_state != State.RTL_OR_LAND:
+            return State.PILOT_TAKEOVER
+        if ctx.armed and ctx.mode is not None and ctx.mode not in _PI_MODES:
+            return State.PILOT_TAKEOVER
+
+    if not ctx.armed or ctx.current_state in (State.RTL_OR_LAND, State.PILOT_TAKEOVER):
         return None
 
     if ctx.battery_fraction is not None and ctx.battery_fraction < _TUNING.battery_critical_fraction:

@@ -9,9 +9,10 @@
 #
 # Usage: ./scripts/run_flight_check_sim.sh [extra ros2 run args, e.g. --ros-args -p takeoff_altitude_m:=3.0]
 #
-# 放行闸门:节点起来停在 arm 前(桨不转),另一 SSH 发
+# 放行信号:节点起来停在 READY(桨不转),另一 SSH 发
 #   ros2 topic pub -1 /cuadc_flight_test/start std_msgs/msg/Empty "{}"
-# 才 arm+起飞(sim 可 -p wait_for_start:=false 跳过)。
+# 之后飞手解锁才起飞——sim 无飞手,emulate_pilot_arm 由节点代飞手切 STABILIZE+解锁
+# (sim 可 -p wait_for_start:=false 跳过放行)。
 
 # No -u: ROS2 setup.bash 引用未定义变量，nounset 会破坏 source。
 set -eo pipefail
@@ -29,4 +30,4 @@ trap cleanup EXIT INT TERM
 
 # 接口层连上 SITL + 首帧遥测就绪需一点时间；测试节点自身也会等服务/EKF，这里只给个起步余量。
 sleep 4
-ros2 run cuadc_interface interface_takeoff_land_test "$@"
+ros2 run cuadc_interface interface_takeoff_land_test --ros-args -p emulate_pilot_arm:=true -- "$@"

@@ -1,16 +1,17 @@
 """接口层 ARM + RC 接管观察（**每次飞行测试前必做**，也是比赛前给裁判演示
-「RC 能夺控/disarm」的必要环节）。验证/观察两件事：
+「RC 能夺控/disarm」的必要环节）。流程与实际飞行一致：解锁/上锁归飞手，Pi 不发 arm。
+验证/观察两件事：
 
-  1. 树莓派能否 arm —— 最小的「Pi→飞控」控制链路打通（能 arm 就说明指令、
-     链路、PreArm 基本都通，能不能飞的第一道门）。
-  2. RC 能否 disarm / 接管 —— Pi arm 后进入观察窗口，安全飞手用 RC 执行 disarm
+  1. Pi 能否看到飞手 RC 解锁 —— 放行后飞手解锁，Pi 从遥测确认（链路、PreArm 都通），
+     并核对解锁时模式是否 STABILIZE（飞行时 Pi 只在 STABILIZE 挡解锁后才接管）。
+  2. RC 能否 disarm / 接管 —— 解锁后进入观察窗口，安全飞手用 RC 执行 disarm
      （杀锁）或切模式夺控；节点**如实记录**看到的事件（armed 掉、mode 变、failsafe）。
 
 **本节点只如实观察+汇报，不判 PASS/FAIL**：每种情况打一条 log，RC 介入时给正向提示。
 armed→false 到底是 RC 杀锁还是飞控自动 disarm，节点按时间戳如实报，由现场判读（飞手
-最清楚自己有没有拨杀锁）。退出码只在**根本没法跑**（连不上/EKF 超时/arm 被拒）时非零。
+最清楚自己有没有拨杀锁）。退出码只在**根本没法跑**（连不上/EKF 超时/等不到解锁）时非零。
 
-流程：放行闸门(桨不转) → set_mode+arm → 确认 armed → 观察窗口(默认 15s，每 1s 打倒计时)：
+流程：放行(桨不转) → 等飞手 RC 解锁(放行后的未解锁→解锁) → 观察窗口(默认 15s，每 1s 打倒计时)：
   - 窗口内 armed→false：记录时间，结束（RC 杀锁 或 接近飞控 DISARM_DELAY 的自动 disarm）；
   - mode 离开起飞模式(仍 armed)：记「RC 成功接管」，继续观察；
   - failsafe active：记「failsafe 触发」；
@@ -20,9 +21,10 @@ armed→false 到底是 RC 杀锁还是飞控自动 disarm，节点按时间戳�
 飞控自动 disarm 是 ArduCopter 自带 `DISARM_DELAY`（默认约 10s、可配）——armed 后地面
 无起飞状态到期自动上锁，本节点不自己定超时，超时出口交给它；窗口设 ≥ DISARM_DELAY。
 
-安全：arm 会让电机转(有桨则桨转)。地面做本测试按队内 SOP 决定是否拆桨——只验 RC 信号
-链路用拆桨最安全。飞手 RC 全程在手。`mode` 默认 STABILIZE（无 GPS 也能 arm）、不等 EKF
-healthy；室外起飞前当预检用 → `-p mode:=GUIDED -p require_ekf_healthy:=true`。
+安全：解锁会让电机转(有桨则桨转)。地面做本测试按队内 SOP 决定是否拆桨——只验 RC 信号
+链路用拆桨最安全。飞手 RC 全程在手。默认不等 EKF healthy（室内无 GPS 也能做）；室外起飞前
+当预检用 → `-p require_ekf_healthy:=true`。sim 没有飞手：`-p emulate_pilot_arm:=true`
+（仅 sim 脚本传）由节点代飞手切 STABILIZE+解锁。
 
 不在 launch 里，由 run_arm_check_{sim,real}.sh 起（自带接口层 + 放行提示）。
 """
@@ -36,8 +38,9 @@ from cuadc_interface_msgs.msg import EkfStatus, FailsafeState
 from cuadc_interface_msgs.srv import Arm, SetMode
 from std_msgs.msg import Bool, Empty, String
 
-# arm 放行闸门话题（所有会 arm 的测试共用），同最终任务 task_start_trigger 套路。
+# 放行信号话题（飞行测试节点共用），同最终任务 task_start_trigger 套路。
 START_TOPIC = '/cuadc_flight_test/start'
+_ARM_MODE = 'STABILIZE'                  # 飞行时飞手必须在此模式解锁
 
 
 class InterfaceArmTest(Node):
@@ -48,10 +51,10 @@ class InterfaceArmTest(Node):
         self.declare_parameter('ekf_ready_timeout_sec', 60.0)
         self.declare_parameter('wait_for_start', True)
         self.declare_parameter('start_timeout_sec', 600.0)
-        # 测 arm/RC 杀锁不需要位置估计：默认 STABILIZE(无 GPS 也能 arm)、不等 EKF healthy。
-        # 室外起飞前当预检用 → -p mode:=GUIDED -p require_ekf_healthy:=true。
-        self.declare_parameter('mode', 'STABILIZE')
+        # 测 arm/RC 杀锁不需要位置估计：默认不等 EKF healthy（室内无 GPS 也能做）。
         self.declare_parameter('require_ekf_healthy', False)
+        self.declare_parameter('pilot_arm_timeout_sec', 120.0)
+        self.declare_parameter('emulate_pilot_arm', False)  # 仅 sim：节点代飞手解锁
         self.declare_parameter('observe_window_sec', 15.0)     # 观察窗口；≥ 飞控 DISARM_DELAY
         self.declare_parameter('countdown_tick_sec', 1.0)      # 倒计时打印间隔
         self.declare_parameter('post_window_grace_sec', 8.0)   # 窗口后等飞控自动 disarm 的宽限
@@ -61,8 +64,9 @@ class InterfaceArmTest(Node):
         self._ekf_ready_timeout = g('ekf_ready_timeout_sec').value
         self._wait_for_start_enabled = g('wait_for_start').value
         self._start_timeout = g('start_timeout_sec').value
-        self._mode = g('mode').value
         self._require_ekf = g('require_ekf_healthy').value
+        self._pilot_arm_timeout = g('pilot_arm_timeout_sec').value
+        self._emulate_pilot_arm = g('emulate_pilot_arm').value
         self._observe_window = g('observe_window_sec').value
         self._tick_sec = g('countdown_tick_sec').value
         self._post_window_grace = g('post_window_grace_sec').value
@@ -156,11 +160,33 @@ class InterfaceArmTest(Node):
         if not self._wait_for_start_enabled:
             return
         self.get_logger().warn(
-            'READY — 链路活着, NOT armed. ARM 已挡住。确认现场安全(按 SOP 决定是否拆桨)、'
-            'RC 在手后,从另一个 SSH 发放行:\n'
+            'READY — 链路活着, NOT armed。确认现场安全(按 SOP 决定是否拆桨)、RC 在手后,'
+            '从另一个 SSH 发放行(之后由飞手 RC 解锁):\n'
             f'    ros2 topic pub -1 {START_TOPIC} std_msgs/msg/Empty "{{}}"')
         self._wait_for_condition(
             lambda: self._start_triggered, 'arm-test start trigger', self._start_timeout)
+
+    def _wait_for_pilot_arm(self):
+        self._wait_for_condition(
+            lambda: self._latest_armed is not None, 'armed telemetry', self._service_timeout)
+        if self._latest_armed:
+            self.get_logger().warn('vehicle ALREADY ARMED before start — 飞手先用 RC 上锁,再重新解锁')
+        self._wait_for_condition(
+            lambda: self._latest_armed is False, 'vehicle disarmed', self._pilot_arm_timeout)
+        if self._emulate_pilot_arm:
+            self.get_logger().info(f'SIM: emulating pilot RC arm ({_ARM_MODE} + arm)')
+            if not self._call(self._set_mode_client, SetMode.Request(mode=_ARM_MODE),
+                              'set_mode').success:
+                raise RuntimeError(f'SIM: set_mode({_ARM_MODE}) rejected')
+            if not self._call(self._arm_client, Arm.Request(arm=True), 'arm').success:
+                raise RuntimeError('SIM: emulated pilot arm rejected (see PreArm)')
+        else:
+            self.get_logger().warn(f'WAITING FOR PILOT ARM — 模式开关拨 {_ARM_MODE} 挡,用 RC 解锁')
+        self._wait_for_condition(
+            lambda: self._latest_armed is True, 'pilot RC arm', self._pilot_arm_timeout)
+        end = time.monotonic() + 0.3  # 同一心跳的 mode 消息排在 armed 之后，等它到再判模式
+        while time.monotonic() < end:
+            rclpy.spin_once(self, timeout_sec=0.1)
 
     # -- 主流程 --
 
@@ -172,19 +198,18 @@ class InterfaceArmTest(Node):
             self._wait_for_link()
         self._wait_for_start()
 
-        # 1) Pi arm（最小控制打通）
-        result = self._call(self._set_mode_client, SetMode.Request(mode=self._mode), 'set_mode')
-        if not result.success:
-            raise RuntimeError(f'set_mode({self._mode}) returned success=False')
-        result = self._call(self._arm_client, Arm.Request(arm=True), 'arm')
-        if not result.success:
-            raise RuntimeError(f'Pi 无法 arm(飞控拒绝): {result.message} -- 最小控制链未打通,不要飞')
-        self._wait_for_condition(
-            lambda: self._latest_armed is True, 'armed telemetry confirming True', 10.0)
+        # 1) 等飞手 RC 解锁（放行后的一次 未解锁→解锁，同飞行流程）
+        self._wait_for_pilot_arm()
         self.get_logger().warn(
             f'*** ARMED ***(电机已转,有桨则桨转)。观察窗口 {int(self._observe_window)}s 开始：'
             '安全飞手现在可用 RC disarm(杀锁)或切模式夺控;不动则到期由飞控自带 DISARM_DELAY 自动 disarm。')
-        self._log_event(0.0, f'Pi arm 成功(armed=true, mode={self._latest_mode})')
+        if self._latest_mode == _ARM_MODE:
+            self._log_event(0.0, f'Pi 看到飞手解锁(armed=true, mode={self._latest_mode})')
+        else:
+            self.get_logger().warn(
+                f'解锁时模式是 {self._latest_mode},不是 {_ARM_MODE} — 飞行测试/任务会拒绝起飞,'
+                f'飞前把模式开关拨到 {_ARM_MODE} 挡')
+            self._log_event(0.0, f'Pi 看到飞手解锁,但模式是 {self._latest_mode}(飞行要求 {_ARM_MODE})')
 
         # 2) 观察窗口
         start_mode = self._latest_mode
@@ -267,7 +292,7 @@ class InterfaceArmTest(Node):
             concl = '未见 RC 介入,飞控自动 disarm 收场(RC 未演示,如需验证请重跑并用 RC 杀锁)'
         else:
             concl = '飞控未自动 disarm,已 Pi 兜底(异常,请查 DISARM_DELAY)'
-        self.get_logger().info(f'本次结论：Pi arm 成功；{concl}')
+        self.get_logger().info(f'本次结论：Pi 看到飞手解锁；{concl}')
         self.get_logger().info(
             '（本测试只如实汇报。RC 能否 disarm/接管请对照上面事件与你的 RC 操作确认。）')
 
@@ -278,7 +303,7 @@ def main(args=None):
     exit_code = 0
     try:
         node.run()
-    except Exception as exc:  # noqa: BLE001 — 跑不起来(连不上/EKF超时/arm被拒)才非零退出
+    except Exception as exc:  # noqa: BLE001 — 跑不起来(连不上/EKF超时/等不到解锁)才非零退出
         node.get_logger().error(f'interface arm test 无法完成: {exc}')
         exit_code = 1
     finally:

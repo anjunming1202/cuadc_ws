@@ -40,7 +40,9 @@ WAIT_VEHICLE_READY     — 心跳 + EKF/GPS 正常 + PreArm 通过（订阅接�
   ↓
 WAIT_TASK_START        — 等任务开始开关的 GPIO 信号
   ↓
-ARM_AND_TAKEOFF        — 依次调 Arm、Takeoff service，确认爬升到目标高度
+WAIT_PILOT_ARM         — 等飞手 RC 解锁（本状态内先看到未解锁、再看到解锁；解锁时须为 STABILIZE），Pi 不发 arm
+  ↓
+TAKEOFF                — 切 GUIDED、调 Takeoff service，确认爬升到目标高度；离地前飞手上锁/改模式 → 回 WAIT_PILOT_ARM
   ↓
 NAVIGATE_TO_DROP_ZONE  — goto_location 飞到投放区扫描路径的第一个点（区域位置固定，筒的位置随机，需要边飞边找）
   ↓
@@ -55,7 +57,13 @@ NAVIGATE_TO_RECON_ZONE — goto_location 飞到侦察区
 SURVEY_RECON_ZONE      — 飞扫描路径覆盖侦察区，把检测到的每个筒带入摄像头视野给图传看清，按位置去重记录"已覆盖"列表，直到 5 个都覆盖或超时
   ↓
 RTL_OR_LAND            — 切 RTL/LAND，等落在 H 点内、螺旋桨停止、disarm
+
+PILOT_TAKEOVER         — 终态（跨状态守卫进入）：Pi 接管后出现 Pi 不会设的模式或空中被上锁，
+                         = 飞手/飞控已接手，Pi 不再发任何指令、不再切模式
 ```
+
+解锁归飞手、飞手夺控即停手的依据见 [ADR-0010](adr/0010-pilot-arm-takeoff-point-frame.md)。
+`PILOT_TAKEOVER` 检查排在所有强制打断之前，否则电量/failsafe 守卫会再切 RTL 把控制权抢回来。
 
 > `working-notes.md` 里此前拍板过一版更粗的状态机：`INIT →
 > WAIT_VEHICLE_READY → WAIT_TASK_START → ARM_AND_TAKEOFF →

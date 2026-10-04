@@ -3,13 +3,12 @@
 （cuadc_groundstation）实时看位置/高度/速度，并开 onboard_record 录制回看——
 但那两者是解耦的独立组件，本节点只驱动飞行，不启停它们。飞手 RC 全程待命。
 
-坐标系：local_position 是 EKF 原点系的绝对局部 NED（x=北 y=东 z=下）。实机 EKF 原点不在
-起飞点，故水平以起飞后的 home_x/home_y 为参考、高度以起飞前地面基线算 AGL。全程 yaw 固定=
-起飞朝向：位置指令走 `~/cmd/position_target_local`（绝对局部坐标，interface_node
+坐标系：local_position 是相对起飞点（解锁点）的绝对局部 NED（x=北 y=东 z=下，接口层已换算），
+高度用 -z；水平以起飞后的 home_x/home_y 为方框/速度段中心。全程 yaw 固定=起飞朝向：位置指令走 `~/cmd/position_target_local`（绝对局部坐标，interface_node
 已锁 yaw、不触发 ArduCopter 自动朝向）。
 
 阶段（takeoff/land 恒有；中间段由 `phases` 参数选，逗号分隔，默认全开）：
-  takeoff  STABILIZE 解锁 → 切 GUIDED → 起飞到 takeoff_altitude_m（默认 3m；1m 地效实机发飘）
+  takeoff  飞手 RC 解锁 → Pi 切 GUIDED → 起飞到 takeoff_altitude_m（默认 3m；1m 地效实机发飘）
   box      定 yaw 方框（**以起飞点为中心**，±L/2 绕 NE→NW→SW→SE 再回中心）：yaw 不变
            却全向平移=定yaw全向移动，每角量单次到位误差、闭环量累计误差、并断言机头没转
   altitude 高度扫描（1→2→3→5→回起飞高度）：垂直位置控制，1m 贴近地效谨慎
@@ -18,12 +17,12 @@
   land     RTL 回 home 降落 + 自动上锁，量返航误差
 
 最后打目标/实测/误差汇总表——sim 跑一遍给基线、real 跑一遍量精度，同格式对比。
-yaw/漂移超容差只记录告警不中断；起飞后任一步失败先切 RTL 再退出。
-sim/real 同一节点，连接目标由 run_flight_suite_sim/real.sh 各自写死。
+yaw/漂移超容差只记录告警不中断。sim/real 同一节点，连接目标由 run_flight_suite_sim/real.sh 写死。
 
-放行闸门：起来后停在 arm **之前**（桨不转）、等放行，另一 SSH 发
-`ros2 topic pub -1 /cuadc_flight_test/start std_msgs/msg/Empty "{}"` 才 arm+起飞。
-sim 快速迭代可 `-p wait_for_start:=false` 跳过。
+起飞条件（固定顺序，同 interface_takeoff_land_test）：放行信号 → 放行后看到一次飞手 RC 解锁
+（未解锁→解锁）→ 解锁时模式是 STABILIZE → Pi 切 GUIDED 起飞。Pi 不发 arm；sim 用
+`-p emulate_pilot_arm:=true` 代飞手解锁。Pi 接管后飞手拨模式/上锁 = 夺控：Pi 立即停发指令、
+不再切模式、打 ABORTED 退出；只有 Pi 自己的步骤失败才兜底切 RTL。
 
 不在 launch 里，单独手动跑：
   ros2 launch cuadc_interface interface_bringup.launch.py   # 另一个终端
@@ -41,11 +40,16 @@ from cuadc_interface_msgs.msg import EkfStatus, PositionTarget
 from cuadc_interface_msgs.srv import Arm, SetMode, Takeoff
 from geometry_msgs.msg import PoseStamped, TwistStamped
 from sensor_msgs.msg import Imu
-from std_msgs.msg import Bool, Empty
+from std_msgs.msg import Bool, Empty, String
 
-# arm+takeoff 前的显式放行闸门话题（两个飞行测试节点共用），同最终任务的
-# task_start_trigger 套路：节点起来先停这里、桨不转，人在另一 SSH 发信号才 arm+起飞。
+# 放行信号话题（飞行测试节点共用），同最终任务的 task_start_trigger 套路。
 START_TOPIC = '/cuadc_flight_test/start'
+_ARM_MODE = 'STABILIZE'                  # 飞手解锁时必须在的模式（开关不在此挡会顶掉 GUIDED）
+_IN_AIR_DISARM_ALT_M = 1.0               # 上锁时离起飞点高于此 = 不是正常落地
+
+
+class PilotIntervention(Exception):
+    """Pi 接管后飞手/飞控改了模式或上锁：Pi 必须立即停手，不能再发任何指令。"""
 
 
 def _yaw_from_quaternion(x, y, z, w):
@@ -70,9 +74,11 @@ class InterfaceFlightSuiteTest(Node):
         self.declare_parameter('service_timeout_sec', 10.0)
         self.declare_parameter('ekf_ready_timeout_sec', 60.0)
         self.declare_parameter('ekf_settle_sec', 5.0)  # healthy 须持续此秒数再放行(抗瞬态)
-        # arm+takeoff 放行闸门：默认开(现场安全)。sim 快速迭代可 -p wait_for_start:=false 直接飞。
+        # 放行信号：默认开(现场安全)。sim 快速迭代可 -p wait_for_start:=false。
         self.declare_parameter('wait_for_start', True)
         self.declare_parameter('start_timeout_sec', 600.0)
+        self.declare_parameter('pilot_arm_timeout_sec', 120.0)
+        self.declare_parameter('emulate_pilot_arm', False)  # 仅 sim：节点代飞手解锁
         self.declare_parameter('phases', 'box,altitude,velocity')
         self.declare_parameter('takeoff_altitude_m', 3.0)     # 起飞/方框/速度段基准高度(1m 地效太飘)
         self.declare_parameter('takeoff_timeout_sec', 30.0)
@@ -101,6 +107,8 @@ class InterfaceFlightSuiteTest(Node):
         self._ekf_settle_sec = g('ekf_settle_sec').value
         self._wait_for_start_enabled = g('wait_for_start').value
         self._start_timeout = g('start_timeout_sec').value
+        self._pilot_arm_timeout = g('pilot_arm_timeout_sec').value
+        self._emulate_pilot_arm = g('emulate_pilot_arm').value
         self._phases = [p.strip() for p in g('phases').value.split(',') if p.strip()]
         self._takeoff_altitude = g('takeoff_altitude_m').value
         self._takeoff_timeout = g('takeoff_timeout_sec').value
@@ -129,12 +137,14 @@ class InterfaceFlightSuiteTest(Node):
             TwistStamped, '/cuadc_interface/cmd/velocity', 10)
 
         self._latest_armed = None
+        self._latest_mode = None
         self._latest_ekf = None
         self._latest_local_pose = None
         self._latest_velocity = None
         self._latest_yaw = None
         self._start_triggered = False
         self.create_subscription(Bool, '/cuadc_interface/status/armed', self._on_armed, 10)
+        self.create_subscription(String, '/cuadc_interface/status/mode', self._on_mode, 10)
         self.create_subscription(
             EkfStatus, '/cuadc_interface/telemetry/ekf_status', self._on_ekf, 10)
         self.create_subscription(
@@ -149,17 +159,19 @@ class InterfaceFlightSuiteTest(Node):
         self._home_x = 0.0
         self._home_y = 0.0
         self._takeoff_yaw = 0.0
-        self._z0 = 0.0  # 起飞前地面基线(EKF 原点系的 -z);高度一律按相对它的 AGL 算
+        # 接管/夺控状态：Pi 切 GUIDED 并确认后才算接管；接管后只允许 Pi 自己设过的模式。
+        self._pi_in_control = False
+        self._allowed_modes = set()
+        self._expect_disarm = False      # Pi 发了 RTL 后的上锁是预期的
+        self._disarm_alt = None
+        self._intervention = None
 
     def run(self):
         self._wait_for_services()
         self._wait_for_ekf_ready()
         self._wait_for_start()
-        # 本机飞控在 GUIDED 下直接 arm 会被 PreArm 拒;先在 STABILIZE 解锁,再切 GUIDED 起飞。
-        self._set_mode('STABILIZE')
-        self._check_arm()
-        self._set_mode('GUIDED')
-        # 发了 takeoff 之后任何失败都不能直接退出(否则飞机在 GUIDED 里无人指挥地悬停):先尽力 RTL。
+        self._wait_for_pilot_arm()
+        self._take_control()
         try:
             self._check_takeoff()
             if 'box' in self._phases:
@@ -168,7 +180,10 @@ class InterfaceFlightSuiteTest(Node):
                 self._run_altitude_sweep()
             if 'velocity' in self._phases:
                 self._run_velocity_sweep()
+        except PilotIntervention:
+            raise
         except Exception:
+            # Pi 自己的步骤失败(飞手没介入)：不能直接退出让飞机在 GUIDED 里无人指挥，先尽力 RTL。
             self._failsafe_rtl()
             raise
 
@@ -187,7 +202,18 @@ class InterfaceFlightSuiteTest(Node):
     # -- 遥测回调 --
 
     def _on_armed(self, msg):
+        was_armed = self._latest_armed
         self._latest_armed = msg.data
+        if was_armed and not msg.data:
+            if self._latest_local_pose is not None:
+                self._disarm_alt = self._relative_altitude()
+            if self._pi_in_control and not self._expect_disarm:
+                self._intervention = 'vehicle DISARMED in flight (pilot RC kill or FC)'
+
+    def _on_mode(self, msg):
+        self._latest_mode = msg.data
+        if self._pi_in_control and msg.data not in self._allowed_modes:
+            self._intervention = f'mode changed to {msg.data or "?"} (pilot switch or FC failsafe)'
 
     def _on_ekf(self, msg):
         self._latest_ekf = msg
@@ -209,11 +235,6 @@ class InterfaceFlightSuiteTest(Node):
 
     def _relative_altitude(self):
         return -self._latest_local_pose.pose.position.z
-
-    def _agl(self):
-        # 相对起飞地面的高度(above ground level):减去起飞前基线,抵消 EKF 原点与地面的垂直偏置
-        # (飞控气压零点在开机时定、不一定等于起飞地面,直接用 -z 会偏一个常量)。
-        return self._relative_altitude() - self._z0
 
     def _local_xy(self):
         p = self._latest_local_pose.pose.position
@@ -244,7 +265,7 @@ class InterfaceFlightSuiteTest(Node):
         deadline = time.monotonic() + timeout
         settled_since = None
         while time.monotonic() < deadline:
-            rclpy.spin_once(self, timeout_sec=0.5)
+            self._spin(0.5)
             if predicate():
                 if settled_since is None:
                     settled_since = time.monotonic()
@@ -254,26 +275,38 @@ class InterfaceFlightSuiteTest(Node):
                 settled_since = None
         raise RuntimeError(f'{description} did not happen within {timeout:.0f}s')
 
+    def _spin(self, timeout_sec):
+        # 所有等待都经这里：每处理一次回调就查一次夺控，飞手一介入立刻中断当前步骤。
+        rclpy.spin_once(self, timeout_sec=timeout_sec)
+        if self._intervention:
+            raise PilotIntervention(self._intervention)
+
+    def _spin_for(self, duration_sec):
+        end = time.monotonic() + duration_sec
+        while time.monotonic() < end:
+            self._spin(0.1)
+
     def _call(self, client, request, name):
         future = client.call_async(request)
         rclpy.spin_until_future_complete(self, future, timeout_sec=self._service_timeout)
+        if self._intervention:
+            raise PilotIntervention(self._intervention)
         if not future.done():
             raise RuntimeError(f'{name} call timed out')
         return future.result()
 
     def _wait_for_services(self):
-        for name, client in (
-            ('arm', self._arm_client),
-            ('set_mode', self._set_mode_client),
-            ('takeoff', self._takeoff_client),
-        ):
+        clients = [('set_mode', self._set_mode_client), ('takeoff', self._takeoff_client)]
+        if self._emulate_pilot_arm:
+            clients.append(('arm', self._arm_client))
+        for name, client in clients:
             if not client.wait_for_service(timeout_sec=self._service_timeout):
                 raise RuntimeError(
                     f'{name} service not available -- is cuadc_interface running and connected?')
 
     def _wait_for_ekf_ready(self):
         # 要求 healthy 持续 settle 秒再放行:GPS 刚锁/EKF 刚收敛时 healthy 会抖,
-        # 瞬态 true 就放行会导致随后 GUIDED/arm 被飞控拒(位置估计未稳)。
+        # 瞬态 true 就放行会导致随后 GUIDED 被飞控拒(位置估计未稳)。
         self._wait_for_condition(
             lambda: self._latest_ekf is not None and self._latest_ekf.healthy,
             'EKF/GPS becoming healthy', self._ekf_ready_timeout,
@@ -281,20 +314,20 @@ class InterfaceFlightSuiteTest(Node):
         self.get_logger().info(f'EKF/GPS ready (healthy sustained {self._ekf_settle_sec:.0f}s)')
 
     def _wait_for_start(self):
-        # 放行闸门:停在 arm 之前(桨不转),等另一 SSH 发 start。桨转前必须有人显式放行。
         if not self._wait_for_start_enabled:
             return
         self.get_logger().warn(
-            'READY — EKF ok, NOT armed. arm+takeoff 已挡住,从另一个 SSH 发放行:\n'
+            'READY — EKF ok. 从另一个 SSH 发放行(之后由飞手 RC 解锁才起飞):\n'
             f'    ros2 topic pub -1 {START_TOPIC} std_msgs/msg/Empty "{{}}"')
         self._wait_for_condition(
             lambda: self._start_triggered, 'flight start trigger', self._start_timeout)
-        self.get_logger().info('start trigger received -> arming + taking off')
+        self.get_logger().info('start trigger received')
 
-    # -- takeoff --
+    # -- 起飞前：等飞手解锁 → Pi 接管 --
 
     def _set_mode(self, mode, attempts=3, retry_delay_sec=1.5):
-        # 本机飞控解锁后切 GUIDED 偶发性被拒(状态未 settle),重试几次抹平瞬态。
+        if self._pi_in_control:
+            self._allowed_modes.add(mode)  # 先放行再发，免得新模式的遥测先到被误判成夺控
         for i in range(1, attempts + 1):
             result = self._call(self._set_mode_client, SetMode.Request(mode=mode), 'set_mode')
             if result.success:
@@ -304,61 +337,82 @@ class InterfaceFlightSuiteTest(Node):
                 self.get_logger().warn(
                     f'set_mode({mode}) rejected (attempt {i}/{attempts}), retrying in '
                     f'{retry_delay_sec:.1f}s ...')
-                end = time.monotonic() + retry_delay_sec
-                while time.monotonic() < end:
-                    rclpy.spin_once(self, timeout_sec=0.2)
+                self._spin_for(retry_delay_sec)
         raise RuntimeError(f'set_mode({mode}) returned success=False after {attempts} attempts')
 
-    def _check_arm(self):
-        result = self._call(self._arm_client, Arm.Request(arm=True), 'arm')
-        if not result.success:
-            raise RuntimeError(f'arm(True) returned success=False: {result.message}')
+    def _wait_for_pilot_arm(self):
+        # 必须是放行之后的一次「未解锁→解锁」：放行前就解锁的不算，最后一个动作永远是飞手解锁。
         self._wait_for_condition(
-            lambda: self._latest_armed is True, 'armed telemetry confirming True', 10.0)
-        self.get_logger().info('arm(True) confirmed')
+            lambda: self._latest_armed is not None, 'armed telemetry', self._service_timeout)
+        if self._latest_armed:
+            self.get_logger().warn('vehicle ALREADY ARMED before start — pilot: disarm with RC, '
+                                   'then re-arm when ready (Pi only takes off on a fresh arm)')
+        self._wait_for_condition(
+            lambda: self._latest_armed is False, 'vehicle disarmed', self._pilot_arm_timeout)
+        if self._emulate_pilot_arm:
+            self.get_logger().info(f'SIM: emulating pilot RC arm ({_ARM_MODE} + arm)')
+            self._set_mode(_ARM_MODE)
+            if not self._call(self._arm_client, Arm.Request(arm=True), 'arm').success:
+                raise RuntimeError('SIM: emulated pilot arm rejected (see PreArm)')
+        else:
+            self.get_logger().warn(
+                f'WAITING FOR PILOT ARM — mode switch on {_ARM_MODE}, then arm with RC. '
+                'Pi takes off ~1s after arm.')
+        self._wait_for_condition(
+            lambda: self._latest_armed is True, 'pilot RC arm', self._pilot_arm_timeout)
+        self._spin_for(0.3)  # 同一心跳的 mode 消息排在 armed 之后，等它到再判模式
+        if self._latest_mode != _ARM_MODE:
+            raise RuntimeError(
+                f'armed in {self._latest_mode}, expected {_ARM_MODE} — NOT taking off. Pilot: '
+                f'disarm, put the mode switch on {_ARM_MODE}, rerun')
+        self.get_logger().info(f'pilot armed in {_ARM_MODE} -> Pi taking control')
+
+    def _take_control(self):
+        self._set_mode('GUIDED')
+        # 等 GUIDED 的遥测真到了再算接管：之前排队的旧模式消息不能被误判成夺控。
+        self._wait_for_condition(
+            lambda: self._latest_mode == 'GUIDED', 'GUIDED mode telemetry', 5.0)
+        if not self._latest_armed:
+            raise RuntimeError('pilot disarmed before takeoff — aborting (nothing to land)')
+        self._allowed_modes = {'GUIDED'}
+        self._pi_in_control = True
 
     def _check_takeoff(self):
         self._wait_for_condition(
             lambda: self._latest_local_pose is not None and self._latest_yaw is not None,
             'local_position/attitude samples', 10.0)
-        # 起飞前抓地面基线:之后所有高度都相对它算 AGL(takeoff 相对起飞点爬,local_position
-        # 相对 EKF 原点报,两者差一个常量偏置,不锚基线会让高度判据整体偏移)。
-        self._z0 = self._relative_altitude()
-        self.get_logger().info(
-            f'ground baseline z0={self._z0:+.2f}m (EKF-origin frame); altitudes below are AGL')
         self.get_logger().info(f'calling takeoff(alt={self._takeoff_altitude}) ...')
         result = self._call(
             self._takeoff_client, Takeoff.Request(alt=self._takeoff_altitude), 'takeoff')
         if not result.success:
             raise RuntimeError('takeoff returned success=False')
         self._wait_for_condition(
-            lambda: self._agl() >= self._takeoff_altitude * 0.8,
+            lambda: self._relative_altitude() >= self._takeoff_altitude * 0.8,
             'altitude telemetry confirming climb', self._takeoff_timeout, settle_sec=1.0)
         self._home_x, self._home_y = self._local_xy()
         self._takeoff_yaw = self._latest_yaw
-        climb_err = self._agl() - self._takeoff_altitude
+        climb_err = self._relative_altitude() - self._takeoff_altitude
         self._record_result('Takeoff', f'{self._takeoff_altitude:.1f}m',
-                            f'{self._agl():.2f}m', f'{climb_err:+.2f}m')
+                            f'{self._relative_altitude():.2f}m', f'{climb_err:+.2f}m')
         self.get_logger().info(
-            f'takeoff confirmed (AGL={self._agl():.2f}m, '
+            f'takeoff confirmed (alt={self._relative_altitude():.2f}m, '
             f'home=({self._home_x:.2f},{self._home_y:.2f}), yaw={math.degrees(self._takeoff_yaw):.0f}deg)')
 
     # -- 位置指令：绝对局部坐标，等到收敛 --
 
     def _goto_local(self, north, east, alt, label):
         """飞到相对起飞点 (north,east) 高度 alt（米），yaw 不变。收敛后记录到位误差。"""
-        # alt 是相对起飞地面的 AGL;位置指令走 EKF 原点系的绝对 LOCAL_NED,故目标 z 要加回基线 z0。
-        tx, ty, tz = self._home_x + north, self._home_y + east, -(self._z0 + alt)
+        tx, ty, tz = self._home_x + north, self._home_y + east, -alt
         self.get_logger().info(f'{label}: -> N={north:+.1f} E={east:+.1f} alt={alt:.1f} ...')
         self._position_target_local_pub.publish(PositionTarget(x=tx, y=ty, z=tz))
         # 收敛要同时满足水平到位 + 高度到位:高度扫描段 N/E 不变、水平距离一开始就≈0,
         # 只查水平会在垂直还没走完时就误判"到位"(alt_err 很大),必须把高度也纳入判据。
         self._wait_for_condition(
             lambda: self._distance_xy(tx, ty) <= self._pos_tolerance
-            and abs(self._agl() - alt) <= self._pos_tolerance,
+            and abs(self._relative_altitude() - alt) <= self._pos_tolerance,
             f'{label} reaching target', self._leg_timeout, settle_sec=self._pos_settle)
         pos_err = self._distance_xy(tx, ty)
-        alt_err = self._agl() - alt
+        alt_err = self._relative_altitude() - alt
         self._record_result(label, f'N={north:+.1f} E={east:+.1f} alt={alt:.1f}m',
                             f'pos_err={pos_err:.2f}m', f'{pos_err:.2f}m (alt_err={alt_err:+.2f}m)')
         self.get_logger().info(f'{label}: reached (pos_err={pos_err:.2f}m, alt_err={alt_err:+.2f}m)')
@@ -409,7 +463,7 @@ class InterfaceFlightSuiteTest(Node):
         peak = 0.0
         while time.monotonic() < deadline:
             self._velocity_pub.publish(twist)
-            rclpy.spin_once(self, timeout_sec=0.1)
+            self._spin(0.1)
             if time.monotonic() >= t_accel_done and self._latest_velocity is not None:
                 peak = max(peak, self._horizontal_speed())
         self.get_logger().info(f'{label}: stop sending, waiting for hover settle ...')
@@ -434,7 +488,7 @@ class InterfaceFlightSuiteTest(Node):
         deadline = time.monotonic() + self._post_stop_drift_window
         max_drift = 0.0
         while time.monotonic() < deadline:
-            rclpy.spin_once(self, timeout_sec=0.2)
+            self._spin(0.2)
             max_drift = max(max_drift, self._distance_xy(sx, sy))
         self._record_result('Velocity stop-hover drift', f'<{self._drift_tolerance:.1f}m',
                             f'max_drift={max_drift:.2f}m', f'{max_drift:.2f}m')
@@ -446,6 +500,8 @@ class InterfaceFlightSuiteTest(Node):
     # -- 返航降落 --
 
     def _failsafe_rtl(self):
+        if self._intervention:
+            return
         self.get_logger().error('flight step failed while airborne -> commanding RTL before exit')
         try:
             self._set_mode('RTL')
@@ -454,12 +510,14 @@ class InterfaceFlightSuiteTest(Node):
 
     def _check_rtl_and_disarm(self):
         self.get_logger().info('calling set_mode(RTL) to return home and land ...')
-        result = self._call(self._set_mode_client, SetMode.Request(mode='RTL'), 'set_mode')
-        if not result.success:
-            raise RuntimeError('set_mode(RTL) returned success=False')
+        self._expect_disarm = True
+        self._set_mode('RTL')
         self._wait_for_condition(
             lambda: self._latest_armed is False,
             'armed telemetry confirming auto-disarm after RTL landing', self._land_timeout)
+        if self._disarm_alt is not None and self._disarm_alt > _IN_AIR_DISARM_ALT_M:
+            raise RuntimeError(f'disarmed at {self._disarm_alt:.1f}m above takeoff point — '
+                               'not a landing (pilot RC kill?)')
         home_err = self._distance_xy(self._home_x, self._home_y)
         self._record_result('RTL return + land', 'back to takeoff point',
                             f'home_err={home_err:.2f}m', f'{home_err:.2f}m')
@@ -472,6 +530,10 @@ def main(args=None):
     exit_code = 0
     try:
         node.run()
+    except PilotIntervention as exc:
+        node.get_logger().warn(f'interface flight-suite test ABORTED — {exc}; '
+                               'Pi stopped commanding, pilot has control')
+        exit_code = 1
     except Exception as exc:  # noqa: BLE001 — 测试失败要非零退出，脚本据此判成败
         node.get_logger().error(f'interface flight-suite test FAILED: {exc}')
         exit_code = 1
