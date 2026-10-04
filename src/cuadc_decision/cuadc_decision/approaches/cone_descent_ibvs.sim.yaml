@@ -12,7 +12,7 @@ handoff_alt_tol_m: 0.3         # 先到 approach_alt_m 再交接末端(从搜索
 kp: 1.2
 ki: 0.4
 kd: 0.3
-v_max_mps: 1.0
+v_max_mps: 0.6                  # 末端水平限速
 brake_decel_mps2: 0.8           # 抛物线刹车:v≤√(2·a·herr),0.4m 误差→0.8m/s、4cm→0.25m/s
 i_zone_m: 0.4
 aim_trims_m: [[0.0, 0.0], [0.0, 0.0]]           # 经验瞄准修正(前,右)米/每口:实测落点偏差均值反填;[DROP_AIM] 日志是标定输入

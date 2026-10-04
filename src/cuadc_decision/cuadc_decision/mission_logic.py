@@ -74,6 +74,8 @@ class FsmTuning:
     battery_critical_fraction: float = 0.20   # sensor_msgs/BatteryState.percentage 是 0~1
     gps_fix_ok_threshold: int = 3             # MAVLink GPS_FIX_TYPE：3 = 3D fix
     emulate_pilot_arm: bool = False           # 仅 sim：没有飞手，WAIT_PILOT_ARM 里替飞手切 STABILIZE+解锁
+    transit_speed_mps: float = 5.0            # 飞往投放区/侦察区的水平限速
+    search_speed_mps: float = 3.0             # 搜索/侦察航点之间、接近粗对准的水平限速；飞控 WP_SPD 设同值兜底
 
 
 def load_tuning(profile: str) -> FsmTuning:
@@ -151,6 +153,7 @@ class TickResult:
     next_state: Optional[str] = None
     position_target: Optional[Tuple[float, float, float]] = None  # (x, y, z)，同 telemetry/local_position 坐标系
     velocity_target: Optional[Tuple[float, float, float]] = None  # (前,右,下) 机体系速度 m/s，末端 IBVS 用，见 04-interfaces.md cmd/velocity
+    speed_target_mps: Optional[float] = None  # 位置类移动的水平限速，见 04-interfaces.md cmd/speed
     service_call: Optional[ServiceCallRequest] = None
     notice: Optional[str] = None  # 给现场操作员看的提示（decision_node 打 WARN），只在状况变化时给
 
@@ -366,7 +369,8 @@ def _tick_navigate_to_drop_zone(ctx):
     if _arrived(ctx.local_position_xy, first_waypoint, _TUNING.position_tolerance_m):
         ctx.drop_task.phase_entered_monotonic = time.monotonic()
         return TickResult(next_state=State.SEARCH_DROP_TARGETS)
-    return TickResult(position_target=(first_waypoint[0], first_waypoint[1], -_WORLD.cruise_alt_m))
+    return TickResult(position_target=(first_waypoint[0], first_waypoint[1], -_WORLD.cruise_alt_m),
+                      speed_target_mps=_TUNING.transit_speed_mps)
 
 
 def _tick_search_drop_targets(ctx):
@@ -394,7 +398,8 @@ def _tick_search_drop_targets(ctx):
         _ACTIVE_APPROACH.enter(ctx)  # 以选定目标为锁定种子，清接近内部状态
         return TickResult(next_state=State.APPROACH_DROP_TARGET)
 
-    return TickResult(position_target=(waypoint[0], waypoint[1], -_WORLD.search_alt_m))
+    return TickResult(position_target=(waypoint[0], waypoint[1], -_WORLD.search_alt_m),
+                      speed_target_mps=_TUNING.search_speed_mps)
 
 
 def _tick_approach_drop_target(ctx):
@@ -404,7 +409,8 @@ def _tick_approach_drop_target(ctx):
     out = _ACTIVE_APPROACH.loop(ctx)
     if out.drop_ready:
         return TickResult(next_state=State.DROP_PAYLOAD)
-    return TickResult(position_target=out.position_target, velocity_target=out.velocity_target)
+    return TickResult(position_target=out.position_target, velocity_target=out.velocity_target,
+                      speed_target_mps=_TUNING.search_speed_mps if out.position_target is not None else None)
 
 
 def _tick_drop_payload(ctx):
@@ -434,7 +440,8 @@ def _tick_navigate_to_recon_zone(ctx):
     if _arrived(ctx.local_position_xy, first_waypoint, _TUNING.position_tolerance_m):
         ctx.recon_task.phase_entered_monotonic = time.monotonic()
         return TickResult(next_state=State.SURVEY_RECON_ZONE)
-    return TickResult(position_target=(first_waypoint[0], first_waypoint[1], -_WORLD.cruise_alt_m))
+    return TickResult(position_target=(first_waypoint[0], first_waypoint[1], -_WORLD.cruise_alt_m),
+                      speed_target_mps=_TUNING.transit_speed_mps)
 
 
 def _tick_survey_recon_zone(ctx):
@@ -453,7 +460,8 @@ def _tick_survey_recon_zone(ctx):
         if index < len(_RECON_SCAN_WAYPOINTS) - 1:
             ctx.recon_task.waypoint_index = index + 1
             waypoint = _RECON_SCAN_WAYPOINTS[ctx.recon_task.waypoint_index]
-    return TickResult(position_target=(waypoint[0], waypoint[1], -_WORLD.search_alt_m))
+    return TickResult(position_target=(waypoint[0], waypoint[1], -_WORLD.search_alt_m),
+                      speed_target_mps=_TUNING.search_speed_mps)
 
 
 def _tick_rtl_or_land(ctx):

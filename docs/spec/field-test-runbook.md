@@ -130,6 +130,8 @@ settle）→RTL 降落。基准 3m 是因为 1m 地效下实机明显发飘。ya
 `vel_leg_distance_m`（默认 3.5m）都要在场地内，必要时 `-p` 调小；起飞点四周及上方净空。
 ⚠ **RTL 返航高度 `RTL_ALT_M`**：合集结尾、任务结尾和兜底都用 RTL，飞控会先爬到 `RTL_ALT_M` 再返航。
 默认 15m；本项目定 5m（同 sim `mission_defaults.parm`），首飞前在 Mission Planner 核对（本固件单位是米）。
+⚠ **速度参数**（同 sim `mission_defaults.parm`）：`WP_SPD` 3（搜索/粗对准，也是兜底）、`RTL_SPEED_MS` 5、
+`WP_SPD_UP` 1.5、`WP_SPD_DN` 1.0。转场 5 m/s 由任务按阶段下发 `cmd/speed`，不靠参数。
 sim 侧对应 `run_flight_check_sim.sh` / `run_flight_suite_sim.sh`（连 SITL，先在仿真验逻辑；sim
 没有飞手，由节点代飞手切 STABILIZE+解锁）。
 

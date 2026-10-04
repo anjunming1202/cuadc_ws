@@ -7,6 +7,12 @@
 # RTL 返航前爬升到的目标高度（米），默认 15m。真机同值（field-test-runbook.md）。
 RTL_ALT_M	5
 
+# 速度：真机同值（field-test-runbook.md）。WP_SPD = 搜索/粗对准限速，决策只在转场时用 cmd/speed 提到 5。
+WP_SPD	3
+RTL_SPEED_MS	5
+WP_SPD_UP	1.5
+WP_SPD_DN	1.0
+
 # 机体质量提到满载 3.5kg 后(见 ADR-0010 簇③)悬停油门变高:让飞控在线学习悬停油门,
 # 高度环前馈才准。有真机 MOT_THST_HOVER 后可改为直接写死该值。
 MOT_HOVER_LEARN	2

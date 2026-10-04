@@ -7,3 +7,5 @@ recon_phase_timeout_s: 90.0
 battery_critical_fraction: 0.20
 gps_fix_ok_threshold: 3
 emulate_pilot_arm: true          # sim 没有飞手：WAIT_PILOT_ARM 里替飞手切 STABILIZE+解锁
+transit_speed_mps: 5.0           # 飞往投放区/侦察区
+search_speed_mps: 3.0            # 搜索航点之间 + 粗对准；= 飞控 WP_SPD（飞控重进位置控制会退回它）

@@ -24,7 +24,7 @@ import rclpy
 from geometry_msgs.msg import PoseStamped, TwistStamped
 from rclpy.node import Node
 from sensor_msgs.msg import BatteryState, Imu
-from std_msgs.msg import Bool, Empty, String
+from std_msgs.msg import Bool, Empty, Float64, String
 
 from cuadc_interface_msgs.msg import FailsafeState, GpsStatus, EkfStatus, PositionTarget
 from cuadc_interface_msgs.srv import Arm, SetMode, Takeoff, ReleasePayload
@@ -89,6 +89,8 @@ class DecisionNode(Node):
         self._velocity_pub = self.create_publisher(
             TwistStamped, f'{_INTERFACE_NS}/cmd/velocity', 10)
         self._status_pub = self.create_publisher(String, '~/mission_state', 10)
+        self._speed_pub = self.create_publisher(Float64, f'{_INTERFACE_NS}/cmd/speed', 10)
+        self._speed_sent = (None, 0.0)  # (m/s, monotonic)
 
         self.create_subscription(Bool, f'{_INTERFACE_NS}/status/connected', self._on_connected, 10)
         self.create_subscription(Bool, f'{_INTERFACE_NS}/status/armed', self._on_armed, 10)
@@ -240,6 +242,13 @@ class DecisionNode(Node):
             target_msg.y = y
             target_msg.z = z
             self._position_target_pub.publish(target_msg)
+
+        if result.speed_target_mps is not None:
+            # 飞控重新进入位置控制会退回 WP_SPD，1Hz 重发保证本阶段限速生效
+            now = time.monotonic()
+            if result.speed_target_mps != self._speed_sent[0] or now - self._speed_sent[1] >= 1.0:
+                self._speed_pub.publish(Float64(data=result.speed_target_mps))
+                self._speed_sent = (result.speed_target_mps, now)
 
         if result.velocity_target is not None:
             vx, vy, vz = result.velocity_target
