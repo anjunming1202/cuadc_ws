@@ -227,7 +227,7 @@ class InterfaceManeuverTest(Node):
             return
         self.get_logger().warn(
             'READY \u2014 EKF ok, NOT armed. arm+takeoff \u5df2\u6321\u4f4f,\u4ece\u53e6\u4e00\u4e2a SSH \u53d1\u653e\u884c:\n'
-            f'    ros2 topic pub -1 {START_TOPIC} std_msgs/msg/Empty "{{}}"')
+            f'    ros2 topic pub -t 5 -r 2 {START_TOPIC} std_msgs/msg/Empty "{{}}"')
         self._wait_for_condition(
             lambda: self._start_triggered, 'flight start trigger', self._start_timeout)
         self.get_logger().info('start trigger received -> arming + taking off')

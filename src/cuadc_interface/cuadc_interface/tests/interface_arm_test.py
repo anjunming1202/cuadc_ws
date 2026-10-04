@@ -162,7 +162,7 @@ class InterfaceArmTest(Node):
         self.get_logger().warn(
             'READY — 链路活着, NOT armed。确认现场安全(按 SOP 决定是否拆桨)、RC 在手后,'
             '从另一个 SSH 发放行(之后由飞手 RC 解锁):\n'
-            f'    ros2 topic pub -1 {START_TOPIC} std_msgs/msg/Empty "{{}}"')
+            f'    ros2 topic pub -t 5 -r 2 {START_TOPIC} std_msgs/msg/Empty "{{}}"')
         self._wait_for_condition(
             lambda: self._start_triggered, 'arm-test start trigger', self._start_timeout)
 

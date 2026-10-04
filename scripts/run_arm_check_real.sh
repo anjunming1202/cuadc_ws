@@ -13,7 +13,7 @@
 # Usage: ./scripts/run_arm_check_real.sh [extra ros2 run args]
 #
 # 节点起来停在 READY(桨不转),确认安全后另一 SSH 发放行,之后飞手 RC 解锁:
-#   ros2 topic pub -1 /cuadc_flight_test/start std_msgs/msg/Empty "{}"
+#   ros2 topic pub -t 5 -r 2 /cuadc_flight_test/start std_msgs/msg/Empty "{}"
 
 set -eo pipefail
 

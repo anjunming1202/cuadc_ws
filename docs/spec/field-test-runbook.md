@@ -70,9 +70,11 @@ ros2 service call /cuadc_interface/release_payload cuadc_interface_msgs/srv/Rele
 > 1. 飞手：**模式开关拨到 STABILIZE 挡**，arm 开关在 disarm 挡；
 > 2. 脚本起来后停在 `READY`（桨不转）。**确认现场安全后**，从另一个 SSH 发放行：
 >    ```
->    ros2 topic pub -1 /cuadc_flight_test/start std_msgs/msg/Empty "{}"      # 测试节点
->    ros2 topic pub -1 /cuadc_decision/sim/task_start_trigger std_msgs/msg/Empty "{}"  # 任务/投放单点
+>    ros2 topic pub -t 5 -r 2 /cuadc_flight_test/start std_msgs/msg/Empty "{}"      # 测试节点
+>    ros2 topic pub -t 5 -r 2 /cuadc_decision/sim/task_start_trigger std_msgs/msg/Empty "{}"  # 任务/投放单点
 >    ```
+>    连发 5 次是必要的：`-1` 只发一条，订阅端还没完成连接就会丢（话题是 volatile，不补发），
+>    节点就一直停在 READY（2026-10-04 手机热点下实测）。重复收到无副作用。
 > 3. 日志出现 `WAITING FOR PILOT ARM` 后，**飞手用 RC 解锁**；Pi 看到解锁后 1s 内切 GUIDED 起飞。
 >    **Pi 不发 arm**，arm 开关挡位始终和飞机状态一致，任何时刻拨一下就停桨。
 > 4. 结束后（RTL/LAND 落地自动上锁）飞手把 arm 开关拨回 disarm 挡。RTL 落地后飞控停在 RTL 模式，
@@ -133,7 +135,7 @@ sim 侧对应 `run_flight_check_sim.sh` / `run_flight_suite_sim.sh`（连 SITL�
 ```
 ./scripts/run_drop_zone_real.sh          # = run_mission_real.sh scenario:=drop_zone_bench
 # 栈停在 WAIT_TASK_START，另一个终端放行（之后飞手 RC 解锁才起飞）：
-ros2 topic pub -1 /cuadc_decision/sim/task_start_trigger std_msgs/msg/Empty "{}"
+ros2 topic pub -t 5 -r 2 /cuadc_decision/sim/task_start_trigger std_msgs/msg/Empty "{}"
 ```
 ⚠ **首飞前核对 `mission.real.yaml`**：投放区中心/扫描航点是**场地坐标**，换算基准是
 `takeoff_point`（起飞/解锁点的场地坐标，现为 `[0, 0]`，即区中心按“相对解锁点”实测）。当天按场地复测

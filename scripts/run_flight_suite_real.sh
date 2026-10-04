@@ -16,7 +16,7 @@
 # Usage: ./scripts/run_flight_suite_real.sh [extra ros2 run args]
 #
 # 起飞条件(固定顺序):节点起来停在 READY → 另一 SSH 发放行
-#   ros2 topic pub -1 /cuadc_flight_test/start std_msgs/msg/Empty "{}"
+#   ros2 topic pub -t 5 -r 2 /cuadc_flight_test/start std_msgs/msg/Empty "{}"
 # → 飞手模式开关在 STABILIZE 挡、用 RC 解锁 → Pi 1s 内切 GUIDED 起飞。Pi 不发 arm。
 # 飞行中飞手拨模式开关/RC 上锁 = 夺控,Pi 立即停发指令退出。
 

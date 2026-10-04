@@ -9,7 +9,7 @@
 # Usage: ./scripts/run_arm_check_sim.sh [extra ros2 run args]
 #
 # 放行信号:节点起来停在 READY,另一 SSH 发
-#   ros2 topic pub -1 /cuadc_flight_test/start std_msgs/msg/Empty "{}"
+#   ros2 topic pub -t 5 -r 2 /cuadc_flight_test/start std_msgs/msg/Empty "{}"
 # 之后(sim 由节点代飞手)解锁(sim 可 -p wait_for_start:=false 跳过放行)。
 
 set -eo pipefail

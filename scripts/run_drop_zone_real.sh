@@ -11,7 +11,7 @@
 #   投放区坐标/高度**，确认从解锁点飞过去的航线安全。详见 docs/spec/field-test-runbook.md。
 #
 # 触发任务开始（另一个终端，栈停在 WAIT_TASK_START 后）：
-#   ros2 topic pub -1 /cuadc_decision/sim/task_start_trigger std_msgs/msg/Empty "{}"
+#   ros2 topic pub -t 5 -r 2 /cuadc_decision/sim/task_start_trigger std_msgs/msg/Empty "{}"
 #
 # Usage: ./scripts/run_drop_zone_real.sh [extra ros2 launch args]
 

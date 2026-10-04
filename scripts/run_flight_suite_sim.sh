@@ -10,7 +10,7 @@
 # Usage: ./scripts/run_flight_suite_sim.sh [extra ros2 run args]
 #
 # 放行信号:节点起来停在 READY(桨不转),另一 SSH 发
-#   ros2 topic pub -1 /cuadc_flight_test/start std_msgs/msg/Empty "{}"
+#   ros2 topic pub -t 5 -r 2 /cuadc_flight_test/start std_msgs/msg/Empty "{}"
 # 之后飞手解锁才起飞——sim 无飞手,emulate_pilot_arm 由节点代飞手切 STABILIZE+解锁
 # (sim 可 -p wait_for_start:=false 跳过放行)。
 

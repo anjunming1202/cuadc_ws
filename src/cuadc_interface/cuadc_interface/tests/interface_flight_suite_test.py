@@ -318,7 +318,7 @@ class InterfaceFlightSuiteTest(Node):
             return
         self.get_logger().warn(
             'READY — EKF ok. 从另一个 SSH 发放行(之后由飞手 RC 解锁才起飞):\n'
-            f'    ros2 topic pub -1 {START_TOPIC} std_msgs/msg/Empty "{{}}"')
+            f'    ros2 topic pub -t 5 -r 2 {START_TOPIC} std_msgs/msg/Empty "{{}}"')
         self._wait_for_condition(
             lambda: self._start_triggered, 'flight start trigger', self._start_timeout)
         self.get_logger().info('start trigger received')
