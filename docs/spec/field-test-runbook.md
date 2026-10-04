@@ -20,6 +20,8 @@
 - **遥测/图传（`cuadc_groundstation`）+ recording（`onboard_record`）是解耦的独立组件**：
   飞行测试脚本只驱动飞行，不启停它们——飞前各自单独开好（地面站看实时位置/高度/速度、
   录制供回看），飞行脚本照跑。
+  机载录制（飞前开、落地桨停后 Ctrl-C；视频 + 全部话题含 `fault_events`，落到 `~/flight_recordings/`）：
+  `python3 src/cuadc_onboard/scripts/onboard_record.py --label <标签>`
 - 推 master 到 origin 需**用户明确确认**（安全策略默认分支门）。
 
 ## 1. Pi 部署前置
@@ -141,6 +143,9 @@ sim 侧对应 `run_flight_check_sim.sh` / `run_flight_suite_sim.sh`（连 SITL�
 # 栈停在 WAIT_TASK_START，另一个终端放行（之后飞手 RC 解锁才起飞）：
 ros2 topic pub -t 5 -r 2 /cuadc_decision/sim/task_start_trigger std_msgs/msg/Empty "{}"
 ```
+投放区中心在起飞时机头前方 2m（`drop_zone_bench.real.yaml`），投 1 次、看到第一个可信筒就去投。
+现场看失效处理：日志里的 `[FAULT]` 行，或另开终端
+`ros2 topic echo /cuadc_decision/fault_events`（代码表见 [failure-handling.md](failure-handling.md)）。
 ⚠ **首飞前核对 `mission.real.yaml`**：投放区中心/扫描航点是**场地坐标**（+x = 起飞时机头方向，+y = 右），
 现按规则书填写，`takeoff_point` = 起降点圆心 `[0, 0]`。飞机放在起降点、**机头对准投放区**（摆偏 1° ≈ 32.5m 处
 横偏 0.57m）；场地不同时按实测改区中心。
