@@ -76,6 +76,8 @@ class FsmTuning:
     emulate_pilot_arm: bool = False           # 仅 sim：没有飞手，WAIT_PILOT_ARM 里替飞手切 STABILIZE+解锁
     transit_speed_mps: float = 5.0            # 飞往投放区/侦察区的水平限速
     search_speed_mps: float = 3.0             # 搜索/侦察航点之间、接近粗对准的水平限速；飞控 WP_SPD 设同值兜底
+    zone_climb_mps: float = 0.0               # 投放/侦察区内爬升限速复写；0 = 用飞控 WP_SPD_UP
+    zone_descent_mps: float = 0.0             # 投放/侦察区内下降限速复写；0 = 用飞控 WP_SPD_DN
 
 
 def load_tuning(profile: str) -> FsmTuning:
@@ -154,6 +156,8 @@ class TickResult:
     position_target: Optional[Tuple[float, float, float]] = None  # (x, y, z)，同 telemetry/local_position 坐标系
     velocity_target: Optional[Tuple[float, float, float]] = None  # (前,右,下) 机体系速度 m/s，末端 IBVS 用，见 04-interfaces.md cmd/velocity
     speed_target_mps: Optional[float] = None  # 位置类移动的水平限速，见 04-interfaces.md cmd/speed
+    climb_speed_mps: Optional[float] = None   # 爬升限速复写（与 descent 至多一个），见 cmd/climb_speed
+    descent_speed_mps: Optional[float] = None  # 下降限速复写，见 cmd/descent_speed
     service_call: Optional[ServiceCallRequest] = None
     notice: Optional[str] = None  # 给现场操作员看的提示（decision_node 打 WARN），只在状况变化时给
 
@@ -229,6 +233,17 @@ def _at_scan_waypoint(ctx, waypoint):
     return (_arrived(ctx.local_position_xy, waypoint, _TUNING.position_tolerance_m)
             and ctx.local_position_z is not None
             and abs(-ctx.local_position_z - _WORLD.search_alt_m) <= _TUNING.altitude_tolerance_m)
+
+
+def _zone_speeds(ctx, target_z):
+    """投放/侦察区内位置类移动的限速。飞控一次只认一个竖直复写（设爬升会把下降打回默认），只发当前升降方向那个。"""
+    speeds = {'speed_target_mps': _TUNING.search_speed_mps}
+    if ctx.local_position_z is not None:
+        if target_z < ctx.local_position_z - 0.05 and _TUNING.zone_climb_mps > 0.0:
+            speeds['climb_speed_mps'] = _TUNING.zone_climb_mps
+        elif target_z > ctx.local_position_z + 0.05 and _TUNING.zone_descent_mps > 0.0:
+            speeds['descent_speed_mps'] = _TUNING.zone_descent_mps
+    return speeds
 
 
 def _is_near_any(x, y, points, threshold):
@@ -399,7 +414,7 @@ def _tick_search_drop_targets(ctx):
         return TickResult(next_state=State.APPROACH_DROP_TARGET)
 
     return TickResult(position_target=(waypoint[0], waypoint[1], -_WORLD.search_alt_m),
-                      speed_target_mps=_TUNING.search_speed_mps)
+                      **_zone_speeds(ctx, -_WORLD.search_alt_m))
 
 
 def _tick_approach_drop_target(ctx):
@@ -409,8 +424,8 @@ def _tick_approach_drop_target(ctx):
     out = _ACTIVE_APPROACH.loop(ctx)
     if out.drop_ready:
         return TickResult(next_state=State.DROP_PAYLOAD)
-    return TickResult(position_target=out.position_target, velocity_target=out.velocity_target,
-                      speed_target_mps=_TUNING.search_speed_mps if out.position_target is not None else None)
+    speeds = _zone_speeds(ctx, out.position_target[2]) if out.position_target is not None else {}
+    return TickResult(position_target=out.position_target, velocity_target=out.velocity_target, **speeds)
 
 
 def _tick_drop_payload(ctx):
@@ -461,7 +476,7 @@ def _tick_survey_recon_zone(ctx):
             ctx.recon_task.waypoint_index = index + 1
             waypoint = _RECON_SCAN_WAYPOINTS[ctx.recon_task.waypoint_index]
     return TickResult(position_target=(waypoint[0], waypoint[1], -_WORLD.search_alt_m),
-                      speed_target_mps=_TUNING.search_speed_mps)
+                      **_zone_speeds(ctx, -_WORLD.search_alt_m))
 
 
 def _tick_rtl_or_land(ctx):

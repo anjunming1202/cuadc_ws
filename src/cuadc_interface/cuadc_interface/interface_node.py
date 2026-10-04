@@ -121,7 +121,7 @@ class InterfaceNode(Node):
         # io 线程独占读写的连接 + 派生状态；服务/订阅回调只读 _mode_ids /
         # _mode_names（连接建立后不再变）和 _state（配合 _state_lock）。
         self._master = None
-        self._last_speed_cmd = None  # 只在限速值变化时打日志
+        self._last_speed_cmd = {}  # 按限速类型记上次值，只在变化时打日志
         self._mode_ids = {}
         self._mode_names = {}
         self._state_lock = threading.Lock()
@@ -166,7 +166,9 @@ class InterfaceNode(Node):
             PositionTarget, '~/cmd/position_target_local', self._on_position_target_local, 10)
         self.create_subscription(TwistStamped, '~/cmd/velocity', self._on_velocity, 10)
         self.create_subscription(Float64, '~/cmd/yaw', self._on_yaw, 10)
-        self.create_subscription(Float64, '~/cmd/speed', self._on_speed, 10)
+        for topic, speed_type in (('speed', 1), ('climb_speed', 2), ('descent_speed', 3)):
+            self.create_subscription(
+                Float64, f'~/cmd/{topic}', lambda msg, t=speed_type: self._on_speed(msg, t), 10)
 
     def _create_publishers(self):
         """飞控接口层 -> 决策，单向、不等回应：遥测广播。"""
@@ -613,20 +615,20 @@ class InterfaceNode(Node):
             mavutil.mavlink.MAV_CMD_CONDITION_YAW, 0,
             yaw_deg, 0, 0, 0, 0, 0, 0)
 
-
-    def _on_speed(self, msg):
-        # GUIDED 位置类移动的水平限速（MAV_CMD_DO_CHANGE_SPEED，地速）。飞控每次重新进入位置控制
-        # 都会退回 WP_SPD，所以决策在位置类阶段按 1Hz 重发，不等 ack。
+    def _on_speed(self, msg, speed_type):
+        # GUIDED 位置类移动的限速（MAV_CMD_DO_CHANGE_SPEED：1 水平地速 / 2 爬升 / 3 下降）。飞控每次
+        # 重新进入位置控制都会退回 WP_SPD / WP_SPD_UP / WP_SPD_DN，所以决策在对应阶段按 1Hz 重发，不等 ack。
         master = self._master
         if master is None or msg.data <= 0.0:
             return
-        if msg.data != self._last_speed_cmd:
-            self._last_speed_cmd = msg.data
-            self.get_logger().info(f'cmd/speed -> {msg.data:.1f} m/s')
+        if self._last_speed_cmd.get(speed_type) != msg.data:
+            self._last_speed_cmd[speed_type] = msg.data
+            name = {1: 'speed', 2: 'climb_speed', 3: 'descent_speed'}[speed_type]
+            self.get_logger().info(f'cmd/{name} -> {msg.data:.1f} m/s')
         master.mav.command_long_send(
             master.target_system, master.target_component,
             mavutil.mavlink.MAV_CMD_DO_CHANGE_SPEED, 0,
-            1, msg.data, -1, 0, 0, 0, 0)
+            speed_type, msg.data, -1, 0, 0, 0, 0)
 
 def main(args=None):
     rclpy.init(args=args)
