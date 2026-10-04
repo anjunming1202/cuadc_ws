@@ -131,6 +131,7 @@ class InterfaceNode(Node):
         # 本节点内部出现。最近一次解锁时冻结（上锁后保持，落地后读数仍相对起飞点），从未解锁过时跟随当前。
         self._origin_ned = None   # 起飞点在飞控 EKF NED 里的位置
         self._origin_yaw = None   # 起飞时机头在飞控 NED 里的航向（rad）
+        self._yaw_hold = None     # 位置目标锁定的航向（飞控 NED，rad）：解锁时 = 起飞航向，只由 ~/cmd/yaw 改
         self._raw_ned = None
         self._armed_once = False
         self._seen_heartbeat = False
@@ -302,6 +303,7 @@ class InterfaceNode(Node):
                 self._armed_once = True
                 self._origin_ned = self._raw_ned  # None 时由下一条 LOCAL_POSITION_NED 补上
                 self._origin_yaw = self._state['yaw']
+                self._yaw_hold = self._origin_yaw
                 if first:
                     # 起来时已在解锁状态（空中重启接口层）：拿不到真正的起飞点，退化为当前位置。
                     self.get_logger().warn(
@@ -562,11 +564,11 @@ class InterfaceNode(Node):
         if master is None:
             return
         # 入参是起飞坐标系（前/右/下）的绝对坐标，下发前转回飞控 MAV_FRAME_LOCAL_NED（转航向 + 加回
-        # 起飞点原点）。跟 _on_position_target 的机身相对偏移是两回事——这个 frame 下 yaw
-        # 字段是绝对量，锁定当前朝向要显式回填当前角度（不能像
-        # BODY_OFFSET_NED 那样发 0），不然会落回默认的 WP_YAW_BEHAVIOR。
+        # 起飞点原点）。这个 frame 下 yaw 字段是绝对量：填固定的锁定航向 _yaw_hold（不填则落回
+        # WP_YAW_BEHAVIOR）。不能填"当前航向"——每个目标都追当前值等于没有航向回拉，真机偏航扭矩
+        # 下会一路漂走。
         with self._state_lock:
-            yaw = self._state['yaw']
+            yaw = self._yaw_hold if self._yaw_hold is not None else self._state['yaw']
             origin = self._origin_ned
             yaw0 = self._origin_yaw
         if origin is None or yaw0 is None:
@@ -609,6 +611,7 @@ class InterfaceNode(Node):
         # param1>=0），不归一化的话负角度目标会被飞控静默丢弃。
         with self._state_lock:
             yaw0 = self._origin_yaw or 0.0
+            self._yaw_hold = msg.data + yaw0  # 之后的位置目标锁这个航向
         yaw_deg = math.degrees(msg.data + yaw0) % 360.0  # 契约里是起飞坐标系航向，转回飞控 NED
         master.mav.command_long_send(
             master.target_system, master.target_component,
