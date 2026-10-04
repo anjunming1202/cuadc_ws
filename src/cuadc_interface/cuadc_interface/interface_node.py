@@ -13,6 +13,7 @@ import math
 import threading
 import time
 
+import cuadc_physical
 import rclpy
 from rclpy.node import Node
 from pymavlink import mavutil
@@ -105,10 +106,11 @@ class InterfaceNode(Node):
         # 投放执行器参数（属接口层，见 docs/spec/adr/0007）。投放经 DO_SET_SERVO 直接驱动
         # 舵机输出口（飞控该口须 SERVO*_FUNCTION=0）。默认 = 硬件子队台架验证值；
         # drop_run_s 必须按验证的投放动作时长设置（真机）。
-        self.declare_parameter('drop_servo', 9)            # 投放舵机输出口 SERVO<n>（9=AUX1）
-        self.declare_parameter('drop_forward_us', 1100)    # 投放（放料）方向 PWM
-        self.declare_parameter('drop_neutral_us', 1500)    # 连续舵机停止/中立 PWM
-        self.declare_parameter('drop_run_s', 2.0)          # 投放方向持续时长（真机按验证值设）
+        servo = cuadc_physical.load_airframe().drop_servo  # 默认值的单一真源：cuadc_physical/airframe.yaml
+        self.declare_parameter('drop_servo', servo.output)          # 投放舵机输出口 SERVO<n>（9=AUX1）
+        self.declare_parameter('drop_forward_us', servo.forward_us)  # 投放（放料）方向 PWM
+        self.declare_parameter('drop_neutral_us', servo.neutral_us)  # 连续舵机停止/中立 PWM
+        self.declare_parameter('drop_run_s', servo.run_s)            # 投放方向持续时长
         self.declare_parameter('allow_disarmed_drop', False)  # 仅台架：未解锁也允许软件投放，默认关
         self._drop_servo = int(self.get_parameter('drop_servo').value)
         self._drop_forward_us = int(self.get_parameter('drop_forward_us').value)

@@ -14,7 +14,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import Imu
 from std_msgs.msg import Header
 
-import cuadc_airframe
+import cuadc_physical
 from cuadc_perception import geometry
 from cuadc_perception_msgs.msg import Detection, DetectionArray
 
@@ -49,9 +49,10 @@ _ATTITUDE_TOPIC = '/cuadc_interface/telemetry/attitude'
 
 # 桩也要发 bearing（末端 IBVS 用，见 05 契约）。前向投影用：内参对方位方向
 # 无影响（方位=射线在相机系的比值），只需默认 nadir 挂载；圆筒顶面在地面（起飞坐标系
-# down = 飞控离地高）之上 0.3m，跟真实感知反投影到筒顶平面一致。
+# down = 飞控离地高）之上一个筒高，跟真实感知反投影到筒顶平面一致。
 _CAM_MOUNT = geometry.CameraParams(fx=1.0, fy=1.0, cx=0.0, cy=0.0)
-_CYLINDER_TOP_DOWN_M = cuadc_airframe.load().fc_rest_clearance_m - 0.3
+_CYLINDER_TOP_DOWN_M = (cuadc_physical.load_airframe().fc_rest_clearance_m
+                        - cuadc_physical.load_targets().drop_cylinder_height_m)
 
 
 def _world_xy_to_takeoff(world_x, world_y):

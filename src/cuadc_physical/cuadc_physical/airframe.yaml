@@ -1,0 +1,22 @@
+# 机体固定物理配置的单一真源：部件相对飞控（EKF 参考点）的位置（机体 前/右/下，米）+ 投放舵机接线与时序。
+# 真机实测（几何见 ADR-0010 簇①②，舵机见 ADR-0007）；真机与仿真共用这一份。仿真模型
+# cuadc_sim/models/cuadc_iris/model.sdf 须与几何一致（改了这里就改 SDF，再跑 src/cuadc_sim/field/check_airframe.py）。
+# 读它的：感知反投影（相机位姿、地面高度）、决策接近（相机深度、投放口杠杆臂）、接口层投放（舵机）、仿真投放桥（次序）。
+
+fc_rest_clearance_m: 0.31          # 停在地面时飞控离地高（起落架底在飞控下方这么多）
+
+camera:
+  position_m: [0.11, 0.0, 0.20]    # 相机光心（前/右/下）
+  mount_rad: [0.0, 1.5708, 0.0]    # roll/pitch/yaw：pitch=+π/2 正下视，yaw=0 图像上方朝机头
+
+drop_ports:                        # 按投放次序排列（= 舵机放料 / 仿真脱钩次序）
+  - name: left
+    position_m: [0.0, -0.04]       # 前/右
+  - name: right
+    position_m: [0.0, 0.04]
+
+drop_servo:                        # 连续旋转舵机，一次 release_payload = forward 持续 run_s 再回 neutral 停
+  output: 9                        # 飞控舵机输出口 SERVO<n>（9 = AUX1），飞控侧 SERVO9_FUNCTION=0
+  forward_us: 1100                 # 放料方向 PWM
+  neutral_us: 1500                 # 停止 PWM
+  run_s: 2.0                       # 放料持续时长；台架记录 1.9–3.33s，按实测改（现场可用 drop_run_s:=… 临时覆盖）

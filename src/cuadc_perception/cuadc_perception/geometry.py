@@ -16,7 +16,7 @@ from typing import Tuple
 
 import numpy as np
 import yaml
-import cuadc_airframe
+import cuadc_physical
 
 
 @dataclass
@@ -39,11 +39,11 @@ class CameraParams:
 
 def load_camera_params(profile: str) -> CameraParams:
     """内参从 camera.<profile>.yaml 读（各自 CV 处理分辨率：sim/real 不同，换相机/重标定只改它）；
-    相机安装位置/角度与飞控离地高是机体固定几何，从 cuadc_airframe 的单一真源读。"""
+    相机安装位置/角度与飞控离地高是机体固定几何，从 cuadc_physical 的单一真源读。"""
     path = Path(__file__).parent / f'camera.{profile}.yaml'
     with open(path, encoding='utf-8') as fh:
         data = yaml.safe_load(fh) or {}
-    af = cuadc_airframe.load()
+    af = cuadc_physical.load_airframe()
     (data['t_forward_m'], data['t_right_m'], data['t_down_m']) = af.camera_position_m
     (data['mount_roll_rad'], data['mount_pitch_rad'], data['mount_yaw_rad']) = af.camera_mount_rad
     data['fc_rest_clearance_m'] = af.fc_rest_clearance_m

@@ -5,7 +5,7 @@ lever_arm 左/右对应。只随 mission_bringup(profile=sim) 起——触发源
 import os
 import subprocess
 
-import cuadc_airframe
+import cuadc_physical
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
@@ -20,7 +20,7 @@ class DropBottleBridge(Node):
         self.declare_parameter('state_topic', '/cuadc_decision/mission_state')
         # 脱钩次序 = 投放次序; 与 approach lever_arm 左/右对应(见 ADR-0010 簇②)
         # 脱钩次序 = 机体配置里投放口的投放次序（与决策杠杆臂表同序），模型里的瓶名与口名一致。
-        self.declare_parameter('bottles', [p.name for p in cuadc_airframe.load().drop_ports])
+        self.declare_parameter('bottles', [p.name for p in cuadc_physical.load_airframe().drop_ports])
         self._model = self.get_parameter('model').value
         self._bottles = list(self.get_parameter('bottles').value)
         self._idx = 0

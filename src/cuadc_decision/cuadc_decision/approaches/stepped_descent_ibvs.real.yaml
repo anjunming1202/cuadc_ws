@@ -2,9 +2,8 @@
 # 真实动力学/延迟重调、按实测填。真机上真正会跟 sim 分叉的:
 #   - kp/ki/kd、handoff_speed_mps：真机速度环延迟更大,增益通常要降、交接更保守;
 #   - drop_tol_m/speed_tol_mps：按真机定位/风况放宽。
-cruise_alt_m: 2.0
+approach_alt_m: 2.0              # 粗接近飞行高度（≠ mission 的 cruise_alt_m）
 drop_alt_m: 1.0
-cylinder_height_m: 0.3
 dt_s: 0.1
 min_conf: 0.5
 min_conf_terminal: 0.25       # 末端放低:近距圆盘残缺置信度塌落;硬锁关联门挡垃圾(见 ApproachConfig 注释)
@@ -30,4 +29,4 @@ drop_tol_m: 0.04
 speed_tol_mps: 0.15
 level_tol_rad: 0.1
 stable_hold_s: 1.0
-# 飞控离地高/相机下移/投放口杠杆臂是机体固定几何，由 load_config 从 cuadc_airframe 注入。
+# 飞控离地高/相机下移/投放口杠杆臂/筒高是固定物理量，由 load_config 从 cuadc_physical 注入。

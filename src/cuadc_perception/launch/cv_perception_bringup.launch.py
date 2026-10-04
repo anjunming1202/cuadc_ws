@@ -2,6 +2,7 @@
 发布同一份契约（见 docs/spec/05-perception-decision-interface.md），
 决策层不需要区分对面是哪一个。"""
 
+import cuadc_physical
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
@@ -11,7 +12,9 @@ from launch_ros.actions import Node
 def generate_launch_description():
     # 相机内参 + 挂载角不在这里声明:按 profile 从 camera.<profile>.yaml 读(见 geometry.load_camera_params)。
     cylinder_height_arg = DeclareLaunchArgument(
-        'cylinder_height_m', default_value='0.3', description='圆筒高度（米），反投影用')
+        'cylinder_height_m',
+        default_value=str(cuadc_physical.load_targets().drop_cylinder_height_m),
+        description='圆筒高度（米），反投影用；默认取 cuadc_physical/targets.yaml')
     min_radius_arg = DeclareLaunchArgument(
         'min_radius_m', default_value='0.05', description='候选物理半径下限（米），过滤明显不合理的检测')
     max_radius_arg = DeclareLaunchArgument(

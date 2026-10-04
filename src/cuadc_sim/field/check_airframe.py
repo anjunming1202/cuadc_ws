@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""仿真机型 model.sdf 与机体几何单一真源 cuadc_airframe/airframe.yaml 的一致性校验。
+"""仿真机型 model.sdf 与机体几何单一真源 cuadc_physical/airframe.yaml 的一致性校验。
 SDF 不能读 yaml，几何只能写两遍，这里把两遍对齐：改了 airframe.yaml 就改 SDF 再跑本脚本。
 SDF 机体系是 前/左/上，airframe 是 前/右/下。退出码 0 = 一致。
 
@@ -10,8 +10,8 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent.parent / 'cuadc_airframe'))
-import cuadc_airframe  # noqa: E402
+sys.path.insert(0, str(HERE.parent.parent / 'cuadc_physical'))
+import cuadc_physical  # noqa: E402
 
 SDF = HERE.parent / 'models' / 'cuadc_iris' / 'model.sdf'
 TOL = 1e-3
@@ -22,7 +22,7 @@ def _pose(el):
 
 
 def main():
-    af = cuadc_airframe.load()
+    af = cuadc_physical.load_airframe()
     model = ET.parse(SDF).getroot().find('model')
     fails = []
 

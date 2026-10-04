@@ -1,0 +1,5 @@
+# 比赛目标物尺寸（规则书 / docs/spec/field-layout.md），感知反投影与决策接近共用。
+# 仿真场地建图（cuadc_sim/field/config.py）按设计单独维护同一组数值。
+
+drop_cylinder_height_m: 0.30       # 投放区圆筒高（反投影平面 = 筒顶）
+recon_cylinder_height_m: 0.15      # 侦察区圆筒高（感知目前一律按投放筒高反投影，侦察筒定位会有偏差）

@@ -5,4 +5,4 @@ fx: 869.37
 fy: 869.37
 cx: 480.0
 cy: 270.0
-# 安装位置/角度、飞控离地高是机体固定几何，在 cuadc_airframe/airframe.yaml（单一真源）。
+# 安装位置/角度、飞控离地高是机体固定几何，在 cuadc_physical/airframe.yaml（单一真源）。

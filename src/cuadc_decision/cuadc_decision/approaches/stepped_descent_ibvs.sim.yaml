@@ -1,9 +1,8 @@
 # stepped_descent_ibvs —— sim 档。字段 = ApproachConfig 字段。
 # 注意:"两次投放成功"的旧验证状态是宽视场云台相机时代的;真机化窄相机(57.8°)
 # 后末端降高会丢筒(FOV 几何,算法阶段修复中),当前 bench 尚不能全通。
-cruise_alt_m: 2.0
+approach_alt_m: 2.0              # 粗接近飞行高度（≠ mission 的 cruise_alt_m）
 drop_alt_m: 1.0
-cylinder_height_m: 0.3
 dt_s: 0.1
 min_conf: 0.5
 min_conf_terminal: 0.25       # 末端放低:近距圆盘残缺置信度塌落;硬锁关联门挡垃圾(见 ApproachConfig 注释)
@@ -29,4 +28,4 @@ drop_tol_m: 0.04
 speed_tol_mps: 0.15
 level_tol_rad: 0.1
 stable_hold_s: 1.0
-# 飞控离地高/相机下移/投放口杠杆臂是机体固定几何，由 load_config 从 cuadc_airframe 注入。
+# 飞控离地高/相机下移/投放口杠杆臂/筒高是固定物理量，由 load_config 从 cuadc_physical 注入。

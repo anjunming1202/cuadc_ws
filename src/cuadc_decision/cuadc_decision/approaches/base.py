@@ -7,7 +7,7 @@ import math
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-import cuadc_airframe
+import cuadc_physical
 
 
 @dataclass
@@ -17,12 +17,14 @@ class ApproachOutput:
     drop_ready: bool = False
 
 
-def airframe_fields():
-    """approach 配置里属于机体固定几何的字段，统一取自 cuadc_airframe（单一真源），不在 yaml 里重复。"""
-    af = cuadc_airframe.load()
+def physical_fields():
+    """approach 配置里属于固定物理量的字段（机体几何、筒高），统一取自 cuadc_physical（单一真源），
+    不在 yaml 里重复。"""
+    af = cuadc_physical.load_airframe()
     return {'fc_rest_clearance_m': af.fc_rest_clearance_m,
             'camera_below_fc_m': af.camera_below_fc_m,
-            'lever_arms_m': af.lever_arms_from_camera()}
+            'lever_arms_m': af.lever_arms_from_camera(),
+            'cylinder_height_m': cuadc_physical.load_targets().drop_cylinder_height_m}
 
 
 def clip(v, lim):

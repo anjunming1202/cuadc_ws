@@ -24,7 +24,7 @@ from typing import Optional, Tuple
 import yaml
 
 from cuadc_decision.approaches.base import (
-    ApproachOutput, airframe_fields, bearing_to_ground_offset, clip as _clip, nearest_within as _nearest_within)
+    ApproachOutput, physical_fields, bearing_to_ground_offset, clip as _clip, nearest_within as _nearest_within)
 from cuadc_decision.drop_strategy import Candidate
 
 NAME = 'cone_descent_ibvs'
@@ -36,10 +36,10 @@ _SERVO_LP = 2    # 伺服误差取近 2 帧均值:压检测噪声,等效滞后 ~
 @dataclass
 class ApproachConfig:
     """字段名 = yaml 键。默认值只是兜底(纯单测/import 用),正常从 yaml 读。"""
-    cruise_alt_m: float = 2.0
-    drop_alt_m: float = 1.0               # 停降高度,h(EKF 解锁点参照)计
-    cylinder_height_m: float = 0.3
-    fc_rest_clearance_m: float = 0.0      # 飞控静止离地高，load_config 从 cuadc_airframe 注入
+    approach_alt_m: float = 2.0           # 粗接近飞行高度（≠ 任务的 cruise_alt_m：飞往各区/搜索的高度）
+    drop_alt_m: float = 1.0               # 停降高度,h(起飞坐标系高度)计
+    cylinder_height_m: float = 0.3        # 投放筒高，load_config 从 cuadc_physical 注入
+    fc_rest_clearance_m: float = 0.0      # 飞控静止离地高，load_config 从 cuadc_physical 注入
     camera_below_fc_m: float = 0.0        # 相机在飞控下方，同上注入
     dt_s: float = 0.1
     min_conf: float = 0.5                 # 粗段/锁定置信度门
@@ -81,7 +81,7 @@ def load_config(profile: str) -> ApproachConfig:
     path = Path(__file__).parent / f'{NAME}.{profile}.yaml'
     with open(path) as fh:
         data = yaml.safe_load(fh) or {}
-    data.update(airframe_fields())
+    data.update(physical_fields())
     return ApproachConfig(**data)
 
 
@@ -124,7 +124,7 @@ class ConeDescentIbvs:
 
     def loop(self, ctx, now: Optional[float] = None) -> ApproachOutput:
         now = now if now is not None else time.monotonic()
-        h = -ctx.local_position_z if ctx.local_position_z is not None else self.cfg.cruise_alt_m
+        h = -ctx.local_position_z if ctx.local_position_z is not None else self.cfg.approach_alt_m
         conf_gate = self.cfg.min_conf if self.state.phase == 'coarse' else self.cfg.min_conf_terminal
         dets = [d for d in ctx.detections
                 if getattr(d, 'target_type', 'cylinder') == 'cylinder' and d.confidence >= conf_gate]
@@ -171,7 +171,7 @@ class ConeDescentIbvs:
         if best is not None:
             st.locked = Candidate(best.position.x, best.position.y, best.apparent_size)
             target = st.locked
-        aim = (target.x, target.y, -cfg.cruise_alt_m)
+        aim = (target.x, target.y, -cfg.approach_alt_m)
         arrived = (ctx.local_position_xy is not None and
                    math.hypot(ctx.local_position_xy[0] - target.x,
                               ctx.local_position_xy[1] - target.y) <= cfg.coarse_radius_m)

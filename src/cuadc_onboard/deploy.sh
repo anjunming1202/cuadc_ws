@@ -24,7 +24,7 @@ install -m 0755 "$SRC_DIR/scripts/telem_ground.py"   "$OPT/telem_ground.py"
 install -m 0755 "$SRC_DIR/scripts/camera_service.py" "$OPT/camera_service.py"
 install -m 0755 "$SRC_DIR/scripts/cv_preview_ctl.py" "$OPT/cv_preview_ctl.py"
 install -m 0755 "$SRC_DIR/systemd/apply-profile.sh"  "$OPT/apply-profile.sh"
-# CV 检测/预览的代码在 cuadc_perception + cuadc_airframe(cv_preview_ctl 按 PYTHONPATH 引用,
+# CV 检测/预览的代码在 cuadc_perception + cuadc_physical(cv_preview_ctl 按 PYTHONPATH 引用,
 # 见 ADR-0008),不拷到 /opt。
 
 for u in "$SRC_DIR"/systemd/*.service; do

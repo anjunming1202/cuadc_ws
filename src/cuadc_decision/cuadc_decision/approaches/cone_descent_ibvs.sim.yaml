@@ -1,7 +1,6 @@
 # cone_descent_ibvs —— sim 档。字段 = ApproachConfig 字段。
-cruise_alt_m: 2.0
+approach_alt_m: 2.0              # 粗接近飞行高度（≠ mission 的 cruise_alt_m）
 drop_alt_m: 1.0
-cylinder_height_m: 0.3
 dt_s: 0.1
 min_conf: 0.5
 min_conf_terminal: 0.25       # 末端放低:近距圆盘残缺置信度塌落;硬锁关联门挡垃圾(见 ApproachConfig 注释)
@@ -33,4 +32,4 @@ aim_migrate_top_m: 1.8          # 以上瞄画面中心
 aim_migrate_bot_m: 1.15         # 以下全量杆臂
 climb_rate_mps: 0.3             # 持续丢失原地爬升重捕获
 reacquire_ceiling_m: 1.9        # 爬到此高度仍未重见 -> 退回粗段
-# 飞控离地高/相机下移/投放口杠杆臂是机体固定几何，由 load_config 从 cuadc_airframe 注入。
+# 飞控离地高/相机下移/投放口杠杆臂/筒高是固定物理量，由 load_config 从 cuadc_physical 注入。

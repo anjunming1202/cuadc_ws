@@ -17,6 +17,7 @@ import threading
 from collections import deque
 
 import cv2
+import cuadc_physical
 import rclpy
 from cv_bridge import CvBridge
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
@@ -94,7 +95,8 @@ class CvPerceptionNode(Node):
         super().__init__('cuadc_perception_cv')
 
         # 相机内参 + 挂载角按 profile 从 camera.<profile>.yaml 读(见 geometry.load_camera_params)。
-        self.declare_parameter('cylinder_height_m', 0.3)
+        # 默认取规则书投放筒高（cuadc_physical/targets.yaml）；仍可用参数临时覆盖。
+        self.declare_parameter('cylinder_height_m', cuadc_physical.load_targets().drop_cylinder_height_m)
         self.declare_parameter('min_radius_m', 0.05)
         self.declare_parameter('max_radius_m', 0.18)
         self.declare_parameter('detector', detectors.ACTIVE_DEFAULT)

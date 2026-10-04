@@ -17,7 +17,7 @@ docs/spec/05-perception-decision-interface.md。
 （区中心、扫描航点、一般巡航高度、要投几次、跑哪些阶段…）是新的**单一真源配置层**
 `mission/`（sim/real 分文件），由 decision_node 载入后经 `configure_mission()` 注入这里；
 本 FSM 本体的通用调参（到点容差/阶段超时/安全守卫）在挨着本文件的
-`mission_logic.{sim,real}.yaml`（`FsmTuning`/`load_tuning`）；SEARCH 的聚类/选目标算法
+`fsm_tuning.{sim,real}.yaml`（`FsmTuning`/`load_tuning`）；SEARCH 的聚类/选目标算法
 及其参数在 `search_strategy.py`（+ 同名 yaml）；投放目标选哪个在 `drop_strategy.py`；
 接近算法在 `approaches/`。本文件不再持有这些为模块级常量。
 """
@@ -64,7 +64,7 @@ _PI_MODES = frozenset({'GUIDED', 'RTL'})
 @dataclass
 class FsmTuning:
     """顶层任务 FSM 本体的通用调参（B′）——不属于任何可替换算法，是这个唯一的状态机
-    自己的机制。字段名 = `mission_logic.<profile>.yaml` 的键。默认值只是兜底（纯单测/
+    自己的机制。字段名 = `fsm_tuning.<profile>.yaml` 的键。默认值只是兜底（纯单测/
     import 期不读文件），正常由 decision_node `load_tuning(profile)` 读入后注入。"""
     position_tolerance_m: float = 0.5
     altitude_tolerance_m: float = 0.5
@@ -77,8 +77,8 @@ class FsmTuning:
 
 
 def load_tuning(profile: str) -> FsmTuning:
-    """从挨着本文件的 `mission_logic.<profile>.yaml` 读 FSM 本体调参。"""
-    path = Path(__file__).parent / f'mission_logic.{profile}.yaml'
+    """从挨着本文件的 `fsm_tuning.<profile>.yaml` 读 FSM 本体调参。"""
+    path = Path(__file__).parent / f'fsm_tuning.{profile}.yaml'
     with open(path) as fh:
         data = yaml.safe_load(fh) or {}
     return FsmTuning(**data)

@@ -106,7 +106,7 @@ ros2 launch cuadc_decision decision_bringup.launch.py scenario:=drop_zone_bench
   （增益/门限/降高/投放容差/杆臂…，及**投放区作业高度**——与投放算法绑定）、
   `search_strategy.{sim,real}.yaml`（SEARCH 聚类/选目标门）；检测器同理在
   `cuadc_perception/detectors/`。
-- **B′ 顶层 FSM 本体通用参数**（到点容差/阶段超时/安全守卫）→ `mission_logic.{sim,real}.yaml`。
+- **B′ 顶层 FSM 本体通用参数**（到点容差/阶段超时/安全守卫）→ `fsm_tuning.{sim,real}.yaml`。
 
 **sim/real 与 scenario 选择**沿用 `connection` 那套：不靠一个参数默认值二选一，而是
 **场景启动脚本**把 `profile`/`scenario` 写死（`run_mission_sim.sh`=sim+full_mission /

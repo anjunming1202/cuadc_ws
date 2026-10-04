@@ -1,9 +1,9 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>cuadc_airframe</name>
+  <name>cuadc_physical</name>
   <version>0.0.0</version>
-  <description>机体固定几何（相机/投放口/起落架相对飞控的偏置）的单一真源，感知、决策、仿真共用</description>
+  <description>固定物理配置的单一真源：机体几何与投放舵机（airframe.yaml）、规则书目标尺寸（targets.yaml），感知/决策/接口/仿真共用</description>
   <maintainer email="anjunming0819@outlook.com">Junming An</maintainer>
   <license>MIT</license>
 

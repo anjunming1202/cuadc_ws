@@ -24,8 +24,9 @@
 | 类别 | 内容 | 属主 / 位置 |
 |---|---|---|
 | **A. 世界 / 任务 / 场景**（非算法参数） | 起飞点场地坐标 `takeoff_point`（场地坐标轴 = 起飞坐标系 前/右，换算只做平移，见 [coordinate-frames.md](coordinate-frames.md)）、区中心与扫描航点样式、**一般巡航/过渡高度**、投放/侦察检测分界、要投几次、跑哪些阶段、要找几个筒、`initial_state`、投放 relay 通道 | **新的 mission-config 层**（独立成 `mission/`） |
-| **B. 各可替换算法内部** | 检测器 HSV（`detectors/*`）；approach 的 PID/门/交接/降高/投放门 + **投放区作业高度** `cruise_alt_m`/`drop_alt_m`（`approaches/*`，与投放算法绑定，见 Q2）；投放目标选择（`drop_strategy.py`）；**SEARCH 的聚类/选目标算法**（新 `search_strategy.py`，见 Q6） | **各自算法源码旁**、用**算法名**命名的 `<算法>.{sim,real}.yaml` |
-| **B′. 顶层任务 FSM 自身通用参数** | 到点容差、阶段超时、电量/GPS 守卫阈值、`emulate_pilot_arm`（仅 sim 替飞手解锁）——不属于任何可替换算法，是唯一那个顶层 FSM 本体的机制 | **跟 `mission_logic.py` 放一起**：单一 `mission_logic.{sim,real}.yaml`（见 Q5/Q7） |
+| **B. 各可替换算法内部** | 检测器 HSV（`detectors/*`）；approach 的 PID/门/交接/降高/投放门 + **投放区作业高度** `approach_alt_m`/`drop_alt_m`（`approaches/*`，与投放算法绑定，见 Q2）；投放目标选择（`drop_strategy.py`）；**SEARCH 的聚类/选目标算法**（新 `search_strategy.py`，见 Q6） | **各自算法源码旁**、用**算法名**命名的 `<算法>.{sim,real}.yaml` |
+| **B′. 顶层任务 FSM 自身通用参数** | 到点容差、阶段超时、电量/GPS 守卫阈值、`emulate_pilot_arm`（仅 sim 替飞手解锁）——不属于任何可替换算法，是唯一那个顶层 FSM 本体的机制 | **跟 `mission_logic.py` 放一起**：单一 `fsm_tuning.{sim,real}.yaml`（见 Q5/Q7） |
+| **C. 固定物理量**（不属于任何算法、sim/real 共用） | 机体几何（相机位置/安装角、飞控离地、投放口位置与投放次序）、投放舵机接线与时序；规则书目标尺寸（投放/侦察筒高） | **`cuadc_physical` 包**：`airframe.yaml`、`targets.yaml`（单一真源；仿真 SDF 由 `cuadc_sim/field/check_airframe.py` 校验一致） |
 
 **关键原则（Q5）**：**算法相关参数与算法代码放在一起**、且**用算法自己的名字命名参数表**
 （换算法时整套参数跟着走、一目了然，如 `stepped_descent_ibvs.*.yaml`）。算法是
@@ -67,7 +68,7 @@ FSM 自己的名字（`mission_logic`）单一一份。只有 A（本就不是�
 - 新增 `min_candidates_before_select`：从 `len(candidates) >= _DROP_CYLINDER_COUNT` 门里
   拆出的独立旋钮（默认=筒数 3），让场景放宽「看到几个候选就选」而不谎报筒数（见 §5.2）
 
-**归 B′（进 `mission_logic.{sim,real}.yaml`，挨着顶层 FSM，见 Q7）**
+**归 B′（进 `fsm_tuning.{sim,real}.yaml`，挨着顶层 FSM，见 Q7）**
 - `_POSITION_TOLERANCE_M`、`_ALTITUDE_TOLERANCE_M`、`_DROP_PHASE_TIMEOUT_S`、
   `_RECON_PHASE_TIMEOUT_S`、`_BATTERY_CRITICAL_FRACTION`、`_GPS_FIX_OK_THRESHOLD`
 
@@ -86,8 +87,8 @@ mission-config 层是**任务逻辑**、要**上真机**（`cuadc_decision` 随�
 ```
 src/cuadc_decision/cuadc_decision/
   mission_logic.py
-  mission_logic.sim.yaml       # B′：顶层 FSM 通用参数 sim（挨着 FSM 本体，Q7）
-  mission_logic.real.yaml      # B′：顶层 FSM 通用参数 real
+  fsm_tuning.sim.yaml       # B′：顶层 FSM 通用参数 sim（挨着 FSM 本体，Q7）
+  fsm_tuning.real.yaml      # B′：顶层 FSM 通用参数 real
   search_strategy.py           # B：抽出的 SEARCH 聚类/选目标算法（仿 drop_strategy.py，Q6）
   search_strategy.sim.yaml     # B：SEARCH 算法参数 sim（按算法名命名、挨着算法）
   search_strategy.real.yaml    # B：SEARCH 算法参数 real
@@ -111,7 +112,7 @@ approach 的 `load_config` 完全同构（dataclass 默认兜底、yaml 覆盖�
   以后有第二个再照 `approaches/` 提升成子文件夹按方法分 yaml）。SEARCH 状态从
   `mission_logic` 抽到这里：聚类归并 + 候选提取 + 「够不够选目标」的门。
 - **B′（FSM 本体）**：`mission_logic.py` 提供 `FsmTuning` + `load_tuning(profile)` 读挨着它的
-  `mission_logic.<profile>.yaml`（单一一份，不套算法名）。
+  `fsm_tuning.<profile>.yaml`（单一一份，不套算法名）。
 - **A**：`mission/config.py` 提供 `MissionConfig` + `load(profile, scenario)`。
 
 ### 4.3 场景 = 覆盖组合，绝不复制（照 SITL `--add-param-file` 分层）
@@ -194,7 +195,7 @@ decision_node.__init__:
    `ACTIVE`，把 SEARCH 的聚类归并/候选提取/选目标门从 `mission_logic._tick_search_drop_targets`
    搬进来；建挨着它的 `search_strategy.{sim,real}.yaml`（§3 归 B 常量 + 拆出
    `min_candidates_before_select`）。
-2. `mission_logic.py`：加 `FsmTuning` + `load_tuning(profile)`；建 `mission_logic.{sim,real}.yaml`，
+2. `mission_logic.py`：加 `FsmTuning` + `load_tuning(profile)`；建 `fsm_tuning.{sim,real}.yaml`，
    把 §3 归 B′ 常量搬进去。
 3. 建 `mission/`：`config.py`（`MissionConfig` + `load`）+ `mission.{sim,real}.yaml` +
    `scenarios/*.yaml`；把 §3 归 A 常量搬进 `mission.*.yaml`。
@@ -227,5 +228,5 @@ decision_node.__init__:
 - **Q6 SEARCH 参数**：把内联在 `mission_logic` 里的 SEARCH 聚类/选目标**抽成轻量命名模块**
   `search_strategy.py`（仿 `drop_strategy.py`）+ 算法名参数表 `search_strategy.{sim,real}.yaml`。
 - **Q7「FSM 内部」= 哪个 FSM**：只有一个——`mission_logic.py` 的**顶层扁平任务状态机**（无子 FSM）。
-  它本体的通用参数（到点容差/阶段超时/安全守卫）放**单一** `mission_logic.{sim,real}.yaml`
+  它本体的通用参数（到点容差/阶段超时/安全守卫）放**单一** `fsm_tuning.{sim,real}.yaml`
   （FSM 不可替换，用自己的名字、不套算法名）；A 层保持纯粹（世界/任务/场景）。

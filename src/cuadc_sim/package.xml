@@ -8,7 +8,7 @@
   <license>MIT</license>
 
   <depend>rclpy</depend>
-  <depend>cuadc_airframe</depend>
+  <depend>cuadc_physical</depend>
   <depend>launch</depend>
   <depend>launch_ros</depend>
 

@@ -19,7 +19,7 @@ from typing import Optional, Tuple
 import yaml
 
 from cuadc_decision.approaches.base import (
-    ApproachOutput, airframe_fields, bearing_to_ground_offset, clip as _clip, nearest_within as _nearest_within)
+    ApproachOutput, physical_fields, bearing_to_ground_offset, clip as _clip, nearest_within as _nearest_within)
 from cuadc_decision.drop_strategy import Candidate
 
 NAME = 'stepped_descent_ibvs'
@@ -33,12 +33,12 @@ class ApproachConfig:
     """approach 的可调参数。字段名 = yaml 键。默认值只是兜底(纯单测/import 用),
     正常从 <NAME>.<profile>.yaml 读:sim 是 Gazebo 验证值,real 上真机按真实
     延迟/动力学重调。"""
-    cruise_alt_m: float = 2.0
-    drop_alt_m: float = 1.0               # 停降高度,h(EKF 解锁点参照)计;飞控离地=此值+fc_rest_clearance_m
-    cylinder_height_m: float = 0.3        # 圆筒高;相机到筒顶深度见 _bearing_to_off
-    # h 是飞控相对解锁点(EKF 原点)的高度,不是离地高:解锁时飞控已离地 fc_rest_clearance_m。
+    approach_alt_m: float = 2.0           # 粗接近飞行高度（≠ 任务的 cruise_alt_m：飞往各区/搜索的高度）
+    drop_alt_m: float = 1.0               # 停降高度,h(起飞坐标系高度)计;飞控离地=此值+fc_rest_clearance_m
+    cylinder_height_m: float = 0.3        # 投放筒高，load_config 从 cuadc_physical 注入
+    # h 是飞控在起飞坐标系的高度(相对解锁时飞控位置),不是离地高:解锁时飞控已离地 fc_rest_clearance_m。
     # 相机又在飞控下方 camera_below_fc_m。二者都为 0 时退化为"h=相机离地"(纯单测兜底)。
-    fc_rest_clearance_m: float = 0.0      # 飞控静止离地高，load_config 从 cuadc_airframe 注入
+    fc_rest_clearance_m: float = 0.0      # 飞控静止离地高，load_config 从 cuadc_physical 注入
     camera_below_fc_m: float = 0.0        # 相机在飞控下方，同上注入
     dt_s: float = 0.1                     # tick 周期(对应 decision tick_rate_hz=10),积分/微分用
     min_conf: float = 0.5                 # 粗段/锁定:只对置信度够的检测伺服
@@ -61,7 +61,7 @@ class ApproachConfig:
     brake_decel_mps2: float = 0.0
     i_zone_m: float = 0.4                 # 只在近端积分,防大接近段积分饱和回弹
     # 投放口杆臂表,机体系(前,右)米=投放口相对相机,按投放次序排:第 N 次投放用第 N 项。
-    # load_config 从 cuadc_airframe 注入(投放口位置 − 相机位置)。enter 时按
+    # load_config 从 cuadc_physical 注入(投放口位置 − 相机位置)。enter 时按
     # ctx.drop_task.drop_count 选定本次杆臂,超出表长用最后一项。
     lever_arms_m: Tuple[Tuple[float, float], ...] = ((0.0, 0.0),)
     # 经验瞄准修正,机体系(前,右)米,按投放次序与 lever_arms_m 并行(超表长用最后一项)。
@@ -97,7 +97,7 @@ def load_config(profile: str) -> ApproachConfig:
     path = Path(__file__).parent / f'{NAME}.{profile}.yaml'
     with open(path) as fh:
         data = yaml.safe_load(fh) or {}
-    data.update(airframe_fields())
+    data.update(physical_fields())
     return ApproachConfig(**data)
 
 
@@ -143,7 +143,7 @@ class SteppedDescentIbvs:
 
     def loop(self, ctx, now: Optional[float] = None) -> ApproachOutput:
         now = now if now is not None else time.monotonic()
-        h = -ctx.local_position_z if ctx.local_position_z is not None else self.cfg.cruise_alt_m
+        h = -ctx.local_position_z if ctx.local_position_z is not None else self.cfg.approach_alt_m
         conf_gate = self.cfg.min_conf if self.state.phase == 'coarse' else self.cfg.min_conf_terminal
         dets = [d for d in ctx.detections
                 if getattr(d, 'target_type', 'cylinder') == 'cylinder' and d.confidence >= conf_gate]
@@ -162,7 +162,7 @@ class SteppedDescentIbvs:
         if best is not None:
             st.locked = Candidate(best.position.x, best.position.y, best.apparent_size)
             target = st.locked
-        aim = (target.x, target.y, -cfg.cruise_alt_m)
+        aim = (target.x, target.y, -cfg.approach_alt_m)
         arrived = (ctx.local_position_xy is not None and
                    math.hypot(ctx.local_position_xy[0] - target.x,
                               ctx.local_position_xy[1] - target.y) <= cfg.coarse_radius_m)
