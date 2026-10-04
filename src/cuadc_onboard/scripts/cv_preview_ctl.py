@@ -111,7 +111,8 @@ def main() -> None:
 
     env = os.environ.copy()
     env.setdefault("GST_PLUGIN_PATH", "/usr/local/lib/aarch64-linux-gnu/gstreamer-1.0")
-    env.setdefault("PYTHONPATH", "/home/wly/cuadc_ws/src/cuadc_perception")
+    # 感知依赖机体几何单一真源 cuadc_airframe，两个包都要在路径上。
+    env.setdefault("PYTHONPATH", "/home/wly/cuadc_ws/src/cuadc_perception:/home/wly/cuadc_ws/src/cuadc_airframe")
     worker_args = [
         "--from-rtp-port", "5602",
         "--src-fps", "10",

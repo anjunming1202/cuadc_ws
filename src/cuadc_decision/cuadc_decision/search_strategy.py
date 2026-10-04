@@ -64,16 +64,16 @@ def _update_clusters(clusters, points, match_threshold):
             best.append((x, y, size))
 
 
-def observe(ctx, cfg, split_y):
-    """把本帧筒检测（按置信度过滤、只看投放区那一侧 position.y < split_y）归并进
-    ctx.drop_task.clusters。split_y 是投放/侦察检测分界（世界/任务参数，由 mission_logic 传
-    入；Detection 本身不带区域信息，用中点粗分即可）。"""
+def observe(ctx, cfg, in_drop_zone):
+    """把本帧筒检测（按置信度过滤、只看投放区那一侧）归并进 ctx.drop_task.clusters。
+    in_drop_zone(x, y)（起飞坐标系）判定检测点是否在投放区一侧（场地坐标与分界由 mission_logic
+    给；Detection 本身不带区域信息，用中点粗分即可）。"""
     points = [
         (d.position.x, d.position.y, d.apparent_size)
         for d in ctx.detections
         if d.target_type == 'cylinder'
         and d.confidence >= cfg.min_detection_confidence
-        and d.position.y < split_y
+        and in_drop_zone(d.position.x, d.position.y)
     ]
     _update_clusters(ctx.drop_task.clusters, points, cfg.cluster_match_threshold_m)
 

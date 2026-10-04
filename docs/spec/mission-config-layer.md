@@ -23,7 +23,7 @@
 
 | 类别 | 内容 | 属主 / 位置 |
 |---|---|---|
-| **A. 世界 / 任务 / 场景**（非算法参数） | 起飞点场地坐标 `takeoff_point`（= local_position 原点，ADR-0011）、区中心与扫描航点样式、**一般巡航/过渡高度**、投放/侦察检测分界、要投几次、跑哪些阶段、要找几个筒、`initial_state`、投放 relay 通道 | **新的 mission-config 层**（独立成 `mission/`） |
+| **A. 世界 / 任务 / 场景**（非算法参数） | 起飞点场地坐标 `takeoff_point`（场地坐标轴 = 起飞坐标系 前/右，换算只做平移，见 [coordinate-frames.md](coordinate-frames.md)）、区中心与扫描航点样式、**一般巡航/过渡高度**、投放/侦察检测分界、要投几次、跑哪些阶段、要找几个筒、`initial_state`、投放 relay 通道 | **新的 mission-config 层**（独立成 `mission/`） |
 | **B. 各可替换算法内部** | 检测器 HSV（`detectors/*`）；approach 的 PID/门/交接/降高/投放门 + **投放区作业高度** `cruise_alt_m`/`drop_alt_m`（`approaches/*`，与投放算法绑定，见 Q2）；投放目标选择（`drop_strategy.py`）；**SEARCH 的聚类/选目标算法**（新 `search_strategy.py`，见 Q6） | **各自算法源码旁**、用**算法名**命名的 `<算法>.{sim,real}.yaml` |
 | **B′. 顶层任务 FSM 自身通用参数** | 到点容差、阶段超时、电量/GPS 守卫阈值、`emulate_pilot_arm`（仅 sim 替飞手解锁）——不属于任何可替换算法，是唯一那个顶层 FSM 本体的机制 | **跟 `mission_logic.py` 放一起**：单一 `mission_logic.{sim,real}.yaml`（见 Q5/Q7） |
 

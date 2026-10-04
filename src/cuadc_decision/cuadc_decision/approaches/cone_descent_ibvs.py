@@ -24,7 +24,7 @@ from typing import Optional, Tuple
 import yaml
 
 from cuadc_decision.approaches.base import (
-    ApproachOutput, bearing_to_ground_offset, clip as _clip, nearest_within as _nearest_within)
+    ApproachOutput, airframe_fields, bearing_to_ground_offset, clip as _clip, nearest_within as _nearest_within)
 from cuadc_decision.drop_strategy import Candidate
 
 NAME = 'cone_descent_ibvs'
@@ -39,8 +39,8 @@ class ApproachConfig:
     cruise_alt_m: float = 2.0
     drop_alt_m: float = 1.0               # 停降高度,h(EKF 解锁点参照)计
     cylinder_height_m: float = 0.3
-    fc_rest_clearance_m: float = 0.0      # 飞控静止离地高(ADR-0010 簇①: 0.31)
-    camera_below_fc_m: float = 0.0        # 相机在飞控下方(ADR-0010 簇①: 0.20)
+    fc_rest_clearance_m: float = 0.0      # 飞控静止离地高，load_config 从 cuadc_airframe 注入
+    camera_below_fc_m: float = 0.0        # 相机在飞控下方，同上注入
     dt_s: float = 0.1
     min_conf: float = 0.5                 # 粗段/锁定置信度门
     min_conf_terminal: float = 0.5        # 末端放低(近距残盘置信度塌落),关联门挡垃圾
@@ -54,7 +54,7 @@ class ApproachConfig:
     v_max_mps: float = 1.0
     brake_decel_mps2: float = 0.0         # 抛物线刹车 √(2·a·herr);0=关
     i_zone_m: float = 0.4
-    lever_arms_m: Tuple[Tuple[float, float], ...] = ((0.0, 0.0),)  # 按投放次序,同 stepped
+    lever_arms_m: Tuple[Tuple[float, float], ...] = ((0.0, 0.0),)  # 投放口相对相机(前,右)，按投放次序；同上注入
     aim_trims_m: Tuple[Tuple[float, float], ...] = ((0.0, 0.0),)   # 经验修正,同 stepped
     max_coast_ticks: int = 4
     endgame_alt_band_m: float = 0.0       # 收口锁带宽(同 stepped);0=关
@@ -81,6 +81,7 @@ def load_config(profile: str) -> ApproachConfig:
     path = Path(__file__).parent / f'{NAME}.{profile}.yaml'
     with open(path) as fh:
         data = yaml.safe_load(fh) or {}
+    data.update(airframe_fields())
     return ApproachConfig(**data)
 
 

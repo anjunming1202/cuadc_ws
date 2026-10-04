@@ -8,7 +8,7 @@ Wants=cuadc-onboard-camera.service
 Type=simple
 User=wly
 Environment=GST_PLUGIN_PATH=/usr/local/lib/aarch64-linux-gnu/gstreamer-1.0
-Environment=PYTHONPATH=/home/wly/cuadc_ws/src/cuadc_perception
+Environment=PYTHONPATH=/home/wly/cuadc_ws/src/cuadc_perception:/home/wly/cuadc_ws/src/cuadc_airframe
 ExecStart=/usr/bin/python3 /opt/cuadc-onboard/cv_preview_ctl.py
 Restart=always
 RestartSec=3

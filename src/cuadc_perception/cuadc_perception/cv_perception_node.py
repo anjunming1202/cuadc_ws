@@ -145,7 +145,7 @@ class CvPerceptionNode(Node):
         self._pose_at_latest = self.get_parameter('pose_at').value == 'latest'
         if self._pose_at_latest:
             self.get_logger().warn('pose_at=latest: TEST ONLY -- capture-time alignment disabled')
-        self._latest_position_ned = None
+        self._latest_position = None
         self._latest_orientation_xyzw = None
         self._recon_zone_active = False
         self._frame_idx = 0
@@ -207,7 +207,7 @@ class CvPerceptionNode(Node):
 
     def _on_local_position(self, msg):
         p = msg.pose.position
-        self._latest_position_ned = (p.x, p.y, p.z)
+        self._latest_position = (p.x, p.y, p.z)
         self._pos_buf.append((_stamp_sec(msg.header.stamp), (p.x, p.y, p.z)))
 
     def _on_attitude(self, msg):
@@ -221,9 +221,9 @@ class CvPerceptionNode(Node):
         时钟域失配守卫: 拍照戳与最新遥测戳差 >5s = 图像/遥测不在同一时钟(sim 忘开
         use_sim_time 之类) -> 告警一次并退化用最新位姿,绝不静默钳到远古位姿。"""
         if self._pose_at_latest:  # 证据链 A/B 对照旋钮,见参数声明
-            if self._latest_position_ned is None or self._latest_orientation_xyzw is None:
+            if self._latest_position is None or self._latest_orientation_xyzw is None:
                 return None
-            return geometry.VehiclePose(position_ned=self._latest_position_ned,
+            return geometry.VehiclePose(position=self._latest_position,
                                         orientation_xyzw=self._latest_orientation_xyzw)
         if self._att_buf and abs(t_capture - self._att_buf[-1][0]) > 5.0:
             if not self._clock_mismatch_warned:
@@ -232,18 +232,18 @@ class CvPerceptionNode(Node):
                     f'image stamp {t_capture:.1f} vs telemetry {self._att_buf[-1][0]:.1f}: '
                     'clock domains differ (sim without use_sim_time?) -- falling back to '
                     'latest pose, capture-time alignment DISABLED')
-            if self._latest_position_ned is None or self._latest_orientation_xyzw is None:
+            if self._latest_position is None or self._latest_orientation_xyzw is None:
                 return None
-            return geometry.VehiclePose(position_ned=self._latest_position_ned,
+            return geometry.VehiclePose(position=self._latest_position,
                                         orientation_xyzw=self._latest_orientation_xyzw)
         pos = _interp_vec(self._pos_buf, t_capture)
         quat = _interp_quat(self._att_buf, t_capture)
         if pos is None or quat is None:
-            if self._latest_position_ned is None or self._latest_orientation_xyzw is None:
+            if self._latest_position is None or self._latest_orientation_xyzw is None:
                 return None
-            return geometry.VehiclePose(position_ned=self._latest_position_ned,
+            return geometry.VehiclePose(position=self._latest_position,
                                         orientation_xyzw=self._latest_orientation_xyzw)
-        return geometry.VehiclePose(position_ned=pos, orientation_xyzw=quat)
+        return geometry.VehiclePose(position=pos, orientation_xyzw=quat)
 
     # ---- 主处理:检测一次,结果扇出 ----
     def _process_frame(self, frame_bgr, header, ros_image_msg=None):
@@ -260,9 +260,9 @@ class CvPerceptionNode(Node):
         out = DetectionArray()
         out.header = Header()
         out.header.stamp = header.stamp
-        out.vehicle_pose.position.x = pose.position_ned[0]
-        out.vehicle_pose.position.y = pose.position_ned[1]
-        out.vehicle_pose.position.z = pose.position_ned[2]
+        out.vehicle_pose.position.x = pose.position[0]
+        out.vehicle_pose.position.y = pose.position[1]
+        out.vehicle_pose.position.z = pose.position[2]
         (out.vehicle_pose.orientation.x, out.vehicle_pose.orientation.y,
          out.vehicle_pose.orientation.z, out.vehicle_pose.orientation.w) = pose.orientation_xyzw
         out.detections = [self._to_msg(d) for d in result.detections]

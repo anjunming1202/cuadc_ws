@@ -55,6 +55,21 @@ _NON_VEHICLE_TYPES = frozenset({
 })
 
 
+def _ned_to_takeoff(north, east, yaw0):
+    """飞控 NED 水平量 -> 起飞坐标系 (前, 右)：按起飞时机头航向 yaw0 旋转（见 coordinate-frames.md）。"""
+    c, s = math.cos(yaw0), math.sin(yaw0)
+    return (north * c + east * s, -north * s + east * c)
+
+
+def _takeoff_to_ned(fwd, right, yaw0):
+    c, s = math.cos(yaw0), math.sin(yaw0)
+    return (fwd * c - right * s, fwd * s + right * c)
+
+
+def _wrap_pi(a):
+    return math.atan2(math.sin(a), math.cos(a))
+
+
 def _is_vehicle_heartbeat(msg):
     return (msg.type not in _NON_VEHICLE_TYPES
             and msg.autopilot != mavutil.mavlink.MAV_AUTOPILOT_INVALID
@@ -108,11 +123,11 @@ class InterfaceNode(Node):
         self._mode_names = {}
         self._state_lock = threading.Lock()
         self._state = {'connected': False, 'armed': False, 'mode': '', 'yaw': 0.0}
-        # 起飞点原点（EKF 原点系 NED）：local_position 发布前减它、position_target_local 下发前加它，
-        # 使对外坐标都相对起飞点。飞控 EKF 原点不在起飞点（实机实测 z 偏 0.9–2.1m、xy 偏数米）。
-        # 原点 = 最近一次解锁瞬间的位置（同 ArduPilot 在解锁时设 home），上锁后保持（落地后读数仍
-        # 相对起飞点，返航误差可量）；从未解锁过时跟随当前位置。
-        self._origin_ned = None
+        # 对外的位置/速度/航向都在**起飞坐标系**（docs/spec/coordinate-frames.md）：原点 = 解锁瞬间的
+        # 飞控位置，x = 解锁时机头方向、y = 其右侧、z = 下。飞控自己的 NED（EKF 原点、东南西北）只在
+        # 本节点内部出现。最近一次解锁时冻结（上锁后保持，落地后读数仍相对起飞点），从未解锁过时跟随当前。
+        self._origin_ned = None   # 起飞点在飞控 EKF NED 里的位置
+        self._origin_yaw = None   # 起飞时机头在飞控 NED 里的航向（rad）
         self._raw_ned = None
         self._armed_once = False
         self._seen_heartbeat = False
@@ -280,6 +295,7 @@ class InterfaceNode(Node):
             if armed and not was_armed:
                 self._armed_once = True
                 self._origin_ned = self._raw_ned  # None 时由下一条 LOCAL_POSITION_NED 补上
+                self._origin_yaw = self._state['yaw']
                 if first:
                     # 起来时已在解锁状态（空中重启接口层）：拿不到真正的起飞点，退化为当前位置。
                     self.get_logger().warn(
@@ -287,9 +303,10 @@ class InterfaceNode(Node):
                         'position -- local_position is NOT relative to the takeoff point')
                 elif self._origin_ned is not None:
                     self.get_logger().info(
-                        'armed: takeoff origin frozen at EKF-frame '
+                        'armed: takeoff frame frozen — origin at EKF NED '
                         f'({self._origin_ned[0]:+.2f}, {self._origin_ned[1]:+.2f}, '
-                        f'{self._origin_ned[2]:+.2f})')
+                        f'{self._origin_ned[2]:+.2f}), +x = nose heading '
+                        f'{math.degrees(self._origin_yaw) % 360:.1f}deg')
         self._safe_publish(self.armed_pub, Bool(data=armed))
         self._safe_publish(self.mode_pub, String(data=mode))
 
@@ -310,18 +327,19 @@ class InterfaceNode(Node):
             self._raw_ned = (msg.x, msg.y, msg.z)
             if not self._armed_once or self._origin_ned is None:
                 self._origin_ned = self._raw_ned
+            if self._origin_yaw is None or not self._armed_once:
+                self._origin_yaw = self._state['yaw']
             ox, oy, oz = self._origin_ned
+            yaw0 = self._origin_yaw
         pose = PoseStamped()
         pose.header.stamp = self.get_clock().now().to_msg()
-        pose.pose.position.x = msg.x - ox
-        pose.pose.position.y = msg.y - oy
+        pose.pose.position.x, pose.pose.position.y = _ned_to_takeoff(msg.x - ox, msg.y - oy, yaw0)
         pose.pose.position.z = msg.z - oz
         self._safe_publish(self.local_position_pub, pose)
 
         twist = TwistStamped()
         twist.header.stamp = pose.header.stamp
-        twist.twist.linear.x = msg.vx
-        twist.twist.linear.y = msg.vy
+        twist.twist.linear.x, twist.twist.linear.y = _ned_to_takeoff(msg.vx, msg.vy, yaw0)
         twist.twist.linear.z = msg.vz
         self._safe_publish(self.velocity_pub, twist)
 
@@ -330,7 +348,10 @@ class InterfaceNode(Node):
         # 锁定当前朝向时需要拿这个值回填——不是给 BODY_OFFSET_NED 用的
         # （那个 frame 下发 0 就够了，不需要读这个）。
         with self._state_lock:
-            self._state['yaw'] = msg.yaw
+            self._state['yaw'] = msg.yaw  # 飞控 NED 航向，position_target_local 锁朝向时回填用
+            if self._origin_yaw is None or not self._armed_once:
+                self._origin_yaw = msg.yaw
+            yaw_takeoff = _wrap_pi(msg.yaw - self._origin_yaw)  # 对外：相对起飞时机头
         imu = Imu()
         imu.header.stamp = self.get_clock().now().to_msg()
         imu.angular_velocity.x = msg.rollspeed
@@ -338,7 +359,7 @@ class InterfaceNode(Node):
         imu.angular_velocity.z = msg.yawspeed
         (imu.orientation.x, imu.orientation.y,
          imu.orientation.z, imu.orientation.w) = _quaternion_from_euler(
-            msg.roll, msg.pitch, msg.yaw)
+            msg.roll, msg.pitch, yaw_takeoff)
         # 加速度计原始数据不在这条消息里，不适用，用 -1 标成"未提供"
         # （sensor_msgs/Imu 的约定写法）。
         imu.linear_acceleration_covariance[0] = -1.0
@@ -534,21 +555,23 @@ class InterfaceNode(Node):
         master = self._master
         if master is None:
             return
-        # MAV_FRAME_LOCAL_NED：x/y/z 是相对起飞点的绝对局部坐标，下发前加回起飞点原点换成
-        # 飞控的 EKF 原点系。跟 _on_position_target 的机身相对偏移是两回事——这个 frame 下 yaw
+        # 入参是起飞坐标系（前/右/下）的绝对坐标，下发前转回飞控 MAV_FRAME_LOCAL_NED（转航向 + 加回
+        # 起飞点原点）。跟 _on_position_target 的机身相对偏移是两回事——这个 frame 下 yaw
         # 字段是绝对量，锁定当前朝向要显式回填当前角度（不能像
         # BODY_OFFSET_NED 那样发 0），不然会落回默认的 WP_YAW_BEHAVIOR。
         with self._state_lock:
             yaw = self._state['yaw']
             origin = self._origin_ned
-        if origin is None:
-            self.get_logger().warn('position_target_local dropped: no local position yet')
+            yaw0 = self._origin_yaw
+        if origin is None or yaw0 is None:
+            self.get_logger().warn('position_target_local dropped: no local position/attitude yet')
             return
+        north, east = _takeoff_to_ned(msg.x, msg.y, yaw0)
         master.mav.set_position_target_local_ned_send(
             0, master.target_system, master.target_component,
             mavutil.mavlink.MAV_FRAME_LOCAL_NED,
             0b0000101111111000,
-            msg.x + origin[0], msg.y + origin[1], msg.z + origin[2],
+            north + origin[0], east + origin[1], msg.z + origin[2],
             0, 0, 0, 0, 0, 0, yaw, 0)
 
     def _on_velocity(self, msg):
@@ -578,7 +601,9 @@ class InterfaceNode(Node):
         # 弧度（ROS 惯例），这里要转一次单位；还要归一化到 [0,360)——
         # ArduCopter 收到负数 param1 会直接拒绝该指令（源码校验
         # param1>=0），不归一化的话负角度目标会被飞控静默丢弃。
-        yaw_deg = math.degrees(msg.data) % 360.0
+        with self._state_lock:
+            yaw0 = self._origin_yaw or 0.0
+        yaw_deg = math.degrees(msg.data + yaw0) % 360.0  # 契约里是起飞坐标系航向，转回飞控 NED
         master.mav.command_long_send(
             master.target_system, master.target_component,
             mavutil.mavlink.MAV_CMD_CONDITION_YAW, 0,

@@ -84,22 +84,15 @@ def load_tuning(profile: str) -> FsmTuning:
     return FsmTuning(**data)
 
 
-def _world_xy_to_ned(world_x, world_y, takeoff_point):
-    """场地坐标（cuadc_sim/field/config.py 的 x=飞行前进方向、y=侧向）
-    转成接口层 telemetry/local_position 用的 NED (north, east)。local_position 原点是
-    起飞（解锁）点，先减去起飞点的场地坐标 `takeoff_point`；再 X/Y 对调，换算依据同
-    cuadc_perception/stub_perception_node.py 里的同名函数（仿真机型
-    cuadc_iris 的 `gazeboXYZToNED` 插件参数）。2026-07-19 实机
-    测试（SITL+Gazebo）发现飞机往侧边飞，就是这里之前没做这个换算、
-    直接把场地坐标当 NED 坐标用导致的。
-    """
-    return (world_y - takeoff_point[1], world_x - takeoff_point[0])
+def _field_to_takeoff(field_x, field_y, takeoff_point):
+    """任务配置的场地坐标 -> 起飞坐标系 (前, 右)：只减起飞点。场地坐标轴与起飞坐标系一致（+x = 起飞时
+    机头方向，+y = 其右侧），所以不旋转——东南西北不参与（见 docs/spec/coordinate-frames.md）。"""
+    return (field_x - takeoff_point[0], field_y - takeoff_point[1])
 
 
-def _scan_waypoints_ned(center, offsets, takeoff_point):
-    """场景配置里的区中心 + 相对 offsets（场地坐标）算成 NED 扫描航点列表。"""
-    return [_world_xy_to_ned(center[0] + dx, center[1] + dy, takeoff_point)
-            for dx, dy in offsets]
+def _scan_waypoints(center, offsets, takeoff_point):
+    """场景配置里的区中心 + 相对 offsets（场地坐标）算成起飞坐标系扫描航点列表。"""
+    return [_field_to_takeoff(center[0] + dx, center[1] + dy, takeoff_point) for dx, dy in offsets]
 
 
 _DROP_STATES = frozenset({State.SEARCH_DROP_TARGETS, State.APPROACH_DROP_TARGET, State.DROP_PAYLOAD})
@@ -110,10 +103,10 @@ _RECON_STATES = frozenset({State.SURVEY_RECON_ZONE})
 _WORLD = mission_config.MissionWorld()          # A：世界/任务/场景
 _TUNING = FsmTuning()                            # B′：FSM 本体调参
 _SEARCH = search_strategy.SearchConfig()         # B：SEARCH 算法参数
-_DROP_SCAN_WAYPOINTS = _scan_waypoints_ned(
-    _WORLD.drop_zone_center, _WORLD.drop_scan_offsets, _WORLD.takeoff_point)
-_RECON_SCAN_WAYPOINTS = _scan_waypoints_ned(
-    _WORLD.recon_zone_center, _WORLD.recon_scan_offsets, _WORLD.takeoff_point)
+_DROP_SCAN_WAYPOINTS = _scan_waypoints(_WORLD.drop_zone_center, _WORLD.drop_scan_offsets,
+                                       _WORLD.takeoff_point)
+_RECON_SCAN_WAYPOINTS = _scan_waypoints(_WORLD.recon_zone_center, _WORLD.recon_scan_offsets,
+                                        _WORLD.takeoff_point)
 
 # 可替换的接近阶段策略实例（粗 PBVS -> 末端 IBVS 等，见 approaches/）。持有跨 tick 的接近
 # 内部状态（锁定目标）;进入 APPROACH 时 _tick_search 调 .enter() 重置。换算法改
@@ -130,12 +123,12 @@ def configure_approach(profile):
 
 def configure_mission(world, tuning, search):
     """注入世界/任务配置(A)、FSM 本体调参(B′)、SEARCH 算法配置(B)，并按 world 里的区中心/
-    offsets 重算 NED 扫描航点。decision_node 在 __init__ 里调一次。"""
+    offsets 重算起飞坐标系扫描航点。decision_node 在 __init__ 里调一次。"""
     global _WORLD, _TUNING, _SEARCH, _DROP_SCAN_WAYPOINTS, _RECON_SCAN_WAYPOINTS
     _WORLD, _TUNING, _SEARCH = world, tuning, search
-    _DROP_SCAN_WAYPOINTS = _scan_waypoints_ned(
+    _DROP_SCAN_WAYPOINTS = _scan_waypoints(
         world.drop_zone_center, world.drop_scan_offsets, world.takeoff_point)
-    _RECON_SCAN_WAYPOINTS = _scan_waypoints_ned(
+    _RECON_SCAN_WAYPOINTS = _scan_waypoints(
         world.recon_zone_center, world.recon_scan_offsets, world.takeoff_point)
 
 
@@ -202,11 +195,12 @@ class MissionContext:
     battery_fraction: Optional[float] = None
     failsafe_active: bool = False
     local_position_xy: Optional[Tuple[float, float]] = None
-    local_position_z: Optional[float] = None  # NED，向下为正
+    local_position_z: Optional[float] = None  # 起飞坐标系 z，向下为正（高度 = -z）
     horizontal_speed: Optional[float] = None  # 水平合速度，米/秒
-    vertical_speed: Optional[float] = None  # NED vz，向下为正，米/秒
+    vertical_speed: Optional[float] = None  # 起飞坐标系 vz，向下为正，米/秒
     roll_rad: Optional[float] = None
     pitch_rad: Optional[float] = None
+    yaw_rad: Optional[float] = None          # 起飞坐标系航向（0=起飞时机头方向，向右转为正）
     detections: list = field(default_factory=list)  # 元素需要有 .target_type/.position.x/.position.y/.apparent_size
     # 当前 detections 那帧图像**拍照时刻**的姿态/离地高(来自 DetectionArray.vehicle_pose)。
     # IBVS 姿态补偿/米换算必须用它(与 bearing 同刻)；投放门等"当下状态"判断仍用实时遥测。
@@ -371,10 +365,11 @@ def _tick_navigate_to_drop_zone(ctx):
 def _tick_search_drop_targets(ctx):
     # 逐帧检测的过滤/时序聚类/候选提取/选目标门都在 search_strategy（可替换的 SEARCH
     # 算法）。这里只管：喂本帧检测、按扫描航点飞、把选中的目标交给接近阶段。只看投放区
-    # 那一侧的检测由 _WORLD.drop_recon_split_y_m 分界（field-layout.md：投放区/侦察区中
-    # 间隔 20m 空档，用中点粗分即可；判断的是 position.y=NED east，场地 x/y 转 NED 对调，
-    # 见 `_world_xy_to_ned`）。
-    search_strategy.observe(ctx, _SEARCH, _WORLD.drop_recon_split_y_m - _WORLD.takeoff_point[0])
+    # 那一侧的检测：检测点换算到场地 x，小于 drop_recon_split_x_m（field-layout.md：投放区/
+    # 侦察区中间隔 20m 过渡区，取中点粗分即可）。
+    search_strategy.observe(
+        ctx, _SEARCH,
+        lambda x, _y: x + _WORLD.takeoff_point[0] < _WORLD.drop_recon_split_x_m)
 
     # 候选还不够/还没扫完，按扫描航点继续飞，攒更多样本
     index = min(ctx.drop_task.waypoint_index, len(_DROP_SCAN_WAYPOINTS) - 1)

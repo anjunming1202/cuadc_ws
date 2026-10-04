@@ -7,12 +7,22 @@ import math
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
+import cuadc_airframe
+
 
 @dataclass
 class ApproachOutput:
-    position_target: Optional[Tuple[float, float, float]] = None  # (x,y,z) 局部 NED,粗段
+    position_target: Optional[Tuple[float, float, float]] = None  # (x,y,z) 起飞坐标系(前/右/下),粗段
     velocity_target: Optional[Tuple[float, float, float]] = None  # (前,右,下) 机体系速度,末端
     drop_ready: bool = False
+
+
+def airframe_fields():
+    """approach 配置里属于机体固定几何的字段，统一取自 cuadc_airframe（单一真源），不在 yaml 里重复。"""
+    af = cuadc_airframe.load()
+    return {'fc_rest_clearance_m': af.fc_rest_clearance_m,
+            'camera_below_fc_m': af.camera_below_fc_m,
+            'lever_arms_m': af.lever_arms_from_camera()}
 
 
 def clip(v, lim):

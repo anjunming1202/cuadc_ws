@@ -4,8 +4,9 @@
 Detection 发布。相机内参/挂载/姿态换算只维护这一份（见
 cuadc_perception/README.md 的检测器库约定）。
 
-契约（Detection 的 position/bearing 语义）唯一权威版本见
-docs/spec/05-perception-decision-interface.md。
+本模块的“世界”一律指**起飞坐标系**（原点 = 解锁时飞控位置，x = 起飞时机头方向、y = 右、z = 下，
+与东南西北无关），定义见 docs/spec/coordinate-frames.md。契约（Detection 的 position/bearing 语义）
+唯一权威版本见 docs/spec/05-perception-decision-interface.md。
 """
 
 import math
@@ -15,6 +16,7 @@ from typing import Tuple
 
 import numpy as np
 import yaml
+import cuadc_airframe
 
 
 @dataclass
@@ -31,23 +33,26 @@ class CameraParams:
     t_forward_m: float = 0.0
     t_right_m: float = 0.0
     t_down_m: float = 0.0
-    # 飞控停在地面时离地高。位姿原点 = 解锁时的飞控位置（接口层换算，ADR-0011），地面在其下方
-    # 这么多；与 approaches/*.yaml 的同名值是同一个机体实测量。
+    # 飞控停在地面时离地高。位姿原点 = 解锁时的飞控位置（接口层换算，ADR-0011），地面在其下方这么多。
     fc_rest_clearance_m: float = 0.0
 
 
 def load_camera_params(profile: str) -> CameraParams:
-    """从 camera.<profile>.yaml 读相机内参 + 挂载角。内参对应各自 CV 处理分辨率
-    （sim 640×480 / real 960×540），换相机 / 重标定只改 yaml。"""
+    """内参从 camera.<profile>.yaml 读（各自 CV 处理分辨率：sim/real 不同，换相机/重标定只改它）；
+    相机安装位置/角度与飞控离地高是机体固定几何，从 cuadc_airframe 的单一真源读。"""
     path = Path(__file__).parent / f'camera.{profile}.yaml'
     with open(path, encoding='utf-8') as fh:
         data = yaml.safe_load(fh) or {}
+    af = cuadc_airframe.load()
+    (data['t_forward_m'], data['t_right_m'], data['t_down_m']) = af.camera_position_m
+    (data['mount_roll_rad'], data['mount_pitch_rad'], data['mount_yaw_rad']) = af.camera_mount_rad
+    data['fc_rest_clearance_m'] = af.fc_rest_clearance_m
     return CameraParams(**data)
 
 
 @dataclass
 class VehiclePose:
-    position_ned: Tuple[float, float, float]  # (north, east, down)
+    position: Tuple[float, float, float]  # 起飞坐标系 (前, 右, 下)，见 docs/spec/coordinate-frames.md
     orientation_xyzw: Tuple[float, float, float, float]  # 机体->世界四元数
 
 
@@ -62,13 +67,13 @@ def cam_to_world_matrix(camera: CameraParams, pose: VehiclePose):
     return body_to_world @ cam_to_body
 
 
-def camera_origin_ned(camera: CameraParams, pose: VehiclePose):
-    """相机光心在世界(NED)的位置 = 机体原点(pose.position_ned，即 EKF/FC 位置)
+def camera_origin(camera: CameraParams, pose: VehiclePose):
+    """相机光心在起飞坐标系的位置 = 飞控位置(pose.position)
     + 机体系相机平移转到世界。反投影射线从这里出发，抵消相机相对 FC 的安装偏置
     带来的系统性定位偏差（见 ADR-0010 簇①）。每帧算一次、传给逐个检测复用。"""
     body_to_world = _quaternion_to_matrix(*pose.orientation_xyzw)
     t_body = np.array([camera.t_forward_m, camera.t_right_m, camera.t_down_m])
-    return np.array(pose.position_ned, dtype=float) + body_to_world @ t_body
+    return np.array(pose.position, dtype=float) + body_to_world @ t_body
 
 
 def normalize_bearing(u, v, camera: CameraParams) -> Tuple[float, float]:
@@ -79,27 +84,27 @@ def normalize_bearing(u, v, camera: CameraParams) -> Tuple[float, float]:
     return ((u - camera.cx) / camera.fx, (v - camera.cy) / camera.fy)
 
 
-def reproject_to_cylinder_top(u, v, camera: CameraParams, origin_ned,
+def reproject_to_cylinder_top(u, v, camera: CameraParams, cam_origin,
                                cam_to_world, cylinder_height_m):
     """像素 -> 世界坐标：像素反投影成相机系射线，转到世界系，跟筒顶所在平面
     （地面 down = fc_rest_clearance_m，筒顶在其上 cylinder_height_m）求交——检测到的色块主要
-    反映筒的顶面，跟地面求交会引入正比于视线倾角的系统性偏差。`origin_ned` 是
-    相机光心的世界位置（见 camera_origin_ned）。返回 (world_xy, 斜距)，射线太
+    反映筒的顶面，跟地面求交会引入正比于视线倾角的系统性偏差。`cam_origin` 是
+    相机光心在起飞坐标系的位置（见 camera_origin）。返回 (world_xy, 斜距)，射线太
     接近水平（姿态倾斜太大）时返回 (None, None)。"""
     d_cam = np.array([(u - camera.cx) / camera.fx, (v - camera.cy) / camera.fy, 1.0])
     d_world = cam_to_world @ d_cam
 
-    origin_down = origin_ned[2]
+    origin_down = cam_origin[2]
     if d_world[2] < _MIN_RAY_DOWN_COMPONENT:
         return None, None
     t = (camera.fc_rest_clearance_m - cylinder_height_m - origin_down) / d_world[2]
     if t <= 0:
         return None, None
 
-    world_north = origin_ned[0] + t * d_world[0]
-    world_east = origin_ned[1] + t * d_world[1]
+    world_x = cam_origin[0] + t * d_world[0]
+    world_y = cam_origin[1] + t * d_world[1]
     range_m = t * float(np.linalg.norm(d_cam))
-    return (world_north, world_east), range_m
+    return (world_x, world_y), range_m
 
 
 def _quaternion_to_matrix(x, y, z, w):

@@ -5,24 +5,24 @@ takeoff_point: [0.0, 0.0]            # 起飞点场地坐标 = 仿真出生点�
 cruise_alt_m: 2.0
 
 drop_zone_center: [32.5, 0.0]        # field-layout.md 投放区 x in [30,35] 中点
-drop_scan_offsets:                   # 相对中心的 (dx, dy)，占位间距，真实相机 FOV 定下来再调
-  - [-1.0, -2.0]
+drop_scan_offsets:                   # 相对中心的 (dx 向前, dy 向右)，占位间距，真实相机 FOV 定下来再调
   - [-1.0, 2.0]
-  - [0.0, 2.0]
+  - [-1.0, -2.0]
   - [0.0, -2.0]
-  - [1.0, -2.0]
+  - [0.0, 2.0]
   - [1.0, 2.0]
+  - [1.0, -2.0]
 
 recon_zone_center: [57.5, 0.0]       # 侦察区 x in [55,60] 中点
 recon_scan_offsets:
-  - [-1.5, -2.0]
   - [-1.5, 2.0]
-  - [0.0, 2.0]
+  - [-1.5, -2.0]
   - [0.0, -2.0]
-  - [1.5, -2.0]
+  - [0.0, 2.0]
   - [1.5, 2.0]
+  - [1.5, -2.0]
 
 recon_cylinder_count: 5
 drop_count_target: 2
-drop_recon_split_y_m: 45.0
+drop_recon_split_x_m: 45.0
 # 投放执行器参数（RC 通道/PWM/时长）属接口层，不在任务配置层，见 docs/spec/adr/0007

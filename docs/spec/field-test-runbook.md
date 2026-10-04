@@ -87,9 +87,10 @@ ros2 service call /cuadc_interface/release_payload cuadc_interface_msgs/srv/Rele
 > `ABORTED — mode changed to …` / `vehicle DISARMED in flight`（任务进 `PILOT_TAKEOVER`）。只有 Pi
 > 自己的步骤出错、飞手没介入时，才兜底切 RTL（合集/任务）或 LAND（起降）；兜底也失败打 `PILOT TAKE OVER`。
 >
-> **坐标**：`local_position` 由接口层换算成**相对起飞（解锁）点**，`-z` 就是离起飞地面的高度。飞控
-> EKF 原点不在起飞点（实测 z 偏 0.9–2.1m、xy 偏数米），解锁时接口层日志打
-> `armed: takeoff origin frozen at EKF-frame (...)`，那是被抵消的偏置，不为 0 正常。
+> **坐标**：测试、任务、感知都用**起飞坐标系**——原点 = 解锁时飞控位置，x = 解锁时机头方向，y = 右，
+> z = 下，与东南西北无关（定义见 [coordinate-frames.md](coordinate-frames.md)）。**飞机起飞前怎么摆，“前”就是哪
+> 个方向**：任务时机头对准投放区。解锁时接口层日志打 `armed: takeoff frame frozen — origin at EKF NED
+> (...), +x = nose heading ...deg`，那是被换算掉的飞控内部原点和航向，不为 0 正常。
 
 ### ARM + RC 接管检查（**每次飞行测试前必做**；比赛前给裁判演示 RC 夺控的必要环节）
 ```
@@ -120,7 +121,8 @@ fanout、跑完自动收尾。飞机只在起飞点正上方上下动。
 ./scripts/run_flight_suite_real.sh                          # 全阶段
 ./scripts/run_flight_suite_real.sh --ros-args -p phases:=box # 只跑某阶段（电量/时间）
 ```
-（放行 + 飞手解锁后）一次连续飞行走 起飞 3m→定 yaw 方框（3m，以起飞点为中心 ±2.5m，机头不转）→
+（放行 + 飞手解锁后）一次连续飞行走 起飞 3m→定 yaw 方框（3m，以起飞点为中心 ±2.5m，边沿起飞时的前/右方向，
+机头不转）→
 高度扫描（1→2→3→5m，回 3m）→速度扫描（3m，沿起飞时机头方向往返，0.25–2 m/s，每档停悬
 settle）→RTL 降落。基准 3m 是因为 1m 地效下实机明显发飘。yaw 漂移、停发漂移超容差只记录
 +告警、不中断；结尾有超差项打 `COMPLETED with N out-of-tolerance item(s)`，全达标才 `PASSED`。
@@ -137,9 +139,9 @@ sim 侧对应 `run_flight_check_sim.sh` / `run_flight_suite_sim.sh`（连 SITL�
 # 栈停在 WAIT_TASK_START，另一个终端放行（之后飞手 RC 解锁才起飞）：
 ros2 topic pub -t 5 -r 2 /cuadc_decision/sim/task_start_trigger std_msgs/msg/Empty "{}"
 ```
-⚠ **首飞前核对 `mission.real.yaml`**：投放区中心/扫描航点是**场地坐标**，换算基准是
-`takeoff_point`（起飞/解锁点的场地坐标，现为 `[0, 0]`，即区中心按“相对解锁点”实测）。当天按场地复测
-坐标/高度，确认航线安全。
+⚠ **首飞前核对 `mission.real.yaml`**：投放区中心/扫描航点是**场地坐标**（+x = 起飞时机头方向，+y = 右），
+现按规则书填写，`takeoff_point` = 起降点圆心 `[0, 0]`。飞机放在起降点、**机头对准投放区**（摆偏 1° ≈ 32.5m 处
+横偏 0.57m）；场地不同时按实测改区中心。
 
 ## 3. 旁路验证（机上端到端，不起 ROS 栈）
 

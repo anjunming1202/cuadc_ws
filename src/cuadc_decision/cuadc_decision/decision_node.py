@@ -78,7 +78,6 @@ class DecisionNode(Node):
         self._ctx = mission_logic.MissionContext(current_state=world.initial_state)
         self._pending_service_name = None
         self._pending_service_future = None
-        self._yaw_rad = 0.0  # 仅诊断用：确认全程锁 yaw（末端伺服时机头不转），不进 ctx
 
         self._service_clients = {
             name: self.create_client(request_cls, topic)
@@ -139,7 +138,7 @@ class DecisionNode(Node):
 
     def _on_attitude(self, msg):
         q = msg.orientation
-        self._ctx.roll_rad, self._ctx.pitch_rad, self._yaw_rad = _rpy_from_quaternion(q.x, q.y, q.z, q.w)
+        self._ctx.roll_rad, self._ctx.pitch_rad, self._ctx.yaw_rad = _rpy_from_quaternion(q.x, q.y, q.z, q.w)
 
     def _on_battery(self, msg):
         self._ctx.battery_fraction = msg.percentage
@@ -304,7 +303,7 @@ class DecisionNode(Node):
             hstr = f'{-self._ctx.local_position_z:.2f}' if self._ctx.local_position_z is not None else 'None'
             self.get_logger().info(
                 f'[APPROACH] phase={ast.phase} lever=({ast.lever[0]:.2f},{ast.lever[1]:.2f}) '
-                f'yaw={self._yaw_rad:.3f} v={vstr} '
+                f'yaw={self._ctx.yaw_rad or 0.0:.3f} v={vstr} '
                 f'off={offstr} miss={ast.miss} dist2lock={diststr} near_det={ndstr} h={hstr} '
                 f'hspeed={self._ctx.horizontal_speed}',
                 throttle_duration_sec=0.3)
