@@ -21,7 +21,8 @@ armed→false 到底是 RC 杀锁还是飞控自动 disarm，节点按时间戳�
 无起飞状态到期自动上锁，本节点不自己定超时，超时出口交给它；窗口设 ≥ DISARM_DELAY。
 
 安全：arm 会让电机转(有桨则桨转)。地面做本测试按队内 SOP 决定是否拆桨——只验 RC 信号
-链路用拆桨最安全。飞手 RC 全程在手。`mode` 默认 GUIDED；无 GPS 室内可 `-p mode:=STABILIZE`。
+链路用拆桨最安全。飞手 RC 全程在手。`mode` 默认 STABILIZE（无 GPS 也能 arm）、不等 EKF
+healthy；室外起飞前当预检用 → `-p mode:=GUIDED -p require_ekf_healthy:=true`。
 
 不在 launch 里，由 run_arm_check_{sim,real}.sh 起（自带接口层 + 放行提示）。
 """
@@ -47,7 +48,10 @@ class InterfaceArmTest(Node):
         self.declare_parameter('ekf_ready_timeout_sec', 60.0)
         self.declare_parameter('wait_for_start', True)
         self.declare_parameter('start_timeout_sec', 600.0)
-        self.declare_parameter('mode', 'GUIDED')
+        # 测 arm/RC 杀锁不需要位置估计：默认 STABILIZE(无 GPS 也能 arm)、不等 EKF healthy。
+        # 室外起飞前当预检用 → -p mode:=GUIDED -p require_ekf_healthy:=true。
+        self.declare_parameter('mode', 'STABILIZE')
+        self.declare_parameter('require_ekf_healthy', False)
         self.declare_parameter('observe_window_sec', 15.0)     # 观察窗口；≥ 飞控 DISARM_DELAY
         self.declare_parameter('countdown_tick_sec', 1.0)      # 倒计时打印间隔
         self.declare_parameter('post_window_grace_sec', 8.0)   # 窗口后等飞控自动 disarm 的宽限
@@ -58,6 +62,7 @@ class InterfaceArmTest(Node):
         self._wait_for_start_enabled = g('wait_for_start').value
         self._start_timeout = g('start_timeout_sec').value
         self._mode = g('mode').value
+        self._require_ekf = g('require_ekf_healthy').value
         self._observe_window = g('observe_window_sec').value
         self._tick_sec = g('countdown_tick_sec').value
         self._post_window_grace = g('post_window_grace_sec').value
@@ -139,11 +144,19 @@ class InterfaceArmTest(Node):
             'EKF/GPS becoming healthy', self._ekf_ready_timeout)
         self.get_logger().info('EKF/GPS ready')
 
+    def _wait_for_link(self):
+        # arm/RC 检查不需要位置估计,只确认 FC 遥测链路活着(有 mode/armed 心跳)即可——
+        # 室内无 GPS 时 EKF 永远不 healthy,不能拿它当门,否则卡死到不了 READY。
+        self._wait_for_condition(
+            lambda: self._latest_mode is not None or self._latest_armed is not None,
+            'FC telemetry/link alive', self._ekf_ready_timeout)
+        self.get_logger().info('FC link alive (EKF-healthy 不作要求; 室内无 GPS 正常)')
+
     def _wait_for_start(self):
         if not self._wait_for_start_enabled:
             return
         self.get_logger().warn(
-            'READY — EKF ok, NOT armed. ARM 已挡住。确认现场安全(按 SOP 决定是否拆桨)、'
+            'READY — 链路活着, NOT armed. ARM 已挡住。确认现场安全(按 SOP 决定是否拆桨)、'
             'RC 在手后,从另一个 SSH 发放行:\n'
             f'    ros2 topic pub -1 {START_TOPIC} std_msgs/msg/Empty "{{}}"')
         self._wait_for_condition(
@@ -153,7 +166,10 @@ class InterfaceArmTest(Node):
 
     def run(self):
         self._wait_for_services()
-        self._wait_for_ekf_ready()
+        if self._require_ekf:
+            self._wait_for_ekf_ready()
+        else:
+            self._wait_for_link()
         self._wait_for_start()
 
         # 1) Pi arm（最小控制打通）
