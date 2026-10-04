@@ -33,7 +33,7 @@ class ApproachConfig:
     """approach 的可调参数。字段名 = yaml 键。默认值只是兜底(纯单测/import 用),
     正常从 <NAME>.<profile>.yaml 读:sim 是 Gazebo 验证值,real 上真机按真实
     延迟/动力学重调。"""
-    approach_alt_m: float = 2.0           # 粗接近飞行高度（≠ 任务的 cruise_alt_m：飞往各区/搜索的高度）
+    approach_alt_m: float = 3.0           # 粗接近飞行高度（≠ 任务的 cruise_alt_m / search_alt_m）
     drop_alt_m: float = 1.0               # 停降高度,h(起飞坐标系高度)计;飞控离地=此值+fc_rest_clearance_m
     cylinder_height_m: float = 0.3        # 投放筒高，load_config 从 cuadc_physical 注入
     # h 是飞控在起飞坐标系的高度(相对解锁时飞控位置),不是离地高:解锁时飞控已离地 fc_rest_clearance_m。
@@ -51,6 +51,7 @@ class ApproachConfig:
     refine_gate_m: float = 0.4            # 硬锁世界坐标关联门:粗/末段都只认离锁定目标这么近的检测(筒间距~1.5m,足够区分)
     handoff_off_m: float = 0.6            # 末端交接:估计水平误差小于此且有检测才切
     handoff_speed_mps: float = 0.4        # 交接还要求对地速度降到此以下:粗段先在目标上方停稳再交接,否则带大动量冲进末端必过冲
+    handoff_alt_tol_m: float = 0.3        # 交接还要求已到粗接近高度 approach_alt_m(±此值)
     # 末端 IBVS PID(条件积分 + D on measurement)
     kp: float = 1.2
     ki: float = 0.4
@@ -171,7 +172,8 @@ class SteppedDescentIbvs:
             off = self._bearing_to_off(bearing, ctx, h)
             e = (off[0] - st.lever[0], off[1] - st.lever[1])
             settled = ctx.horizontal_speed is not None and ctx.horizontal_speed <= cfg.handoff_speed_mps
-            if math.hypot(*e) <= cfg.handoff_off_m and settled:
+            at_alt = abs(h - cfg.approach_alt_m) <= cfg.handoff_alt_tol_m
+            if math.hypot(*e) <= cfg.handoff_off_m and settled and at_alt:
                 st.phase = 'terminal'
                 st.miss, st.prev_off_meas, st.off_window = 0, off, [off]
                 st.integ, st.prev_off, st.stable_since = (0.0, 0.0), None, None

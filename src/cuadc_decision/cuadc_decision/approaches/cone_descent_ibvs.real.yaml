@@ -2,7 +2,7 @@
 # 真实动力学/延迟重调、按实测填。真机上真正会跟 sim 分叉的:
 #   - kp/ki/kd、handoff_speed_mps：真机速度环延迟更大,增益通常要降、交接更保守;
 #   - drop_tol_m/speed_tol_mps：按真机定位/风况放宽。
-approach_alt_m: 2.0              # 粗接近飞行高度（≠ mission 的 cruise_alt_m）
+approach_alt_m: 3.0              # 粗接近飞行高度，交接末端后锥面/阶梯降到 drop_alt_m
 drop_alt_m: 1.0
 dt_s: 0.1
 min_conf: 0.5
@@ -11,6 +11,7 @@ coarse_radius_m: 1.0
 refine_gate_m: 0.4
 handoff_off_m: 0.4             # 收紧:末端从更小初始误差起步,压交接过冲振荡
 handoff_speed_mps: 0.25        # 收紧:先停稳再交接(多等1-2s换无过冲)
+handoff_alt_tol_m: 0.3         # 先到 approach_alt_m 再交接末端(从搜索高度下来时不在半空直接交接)
 kp: 1.2
 ki: 0.4
 kd: 0.3

@@ -221,6 +221,13 @@ def _arrived(current_xy, target_xy, tolerance):
     return math.hypot(current_xy[0] - target_xy[0], current_xy[1] - target_xy[1]) <= tolerance
 
 
+def _at_scan_waypoint(ctx, waypoint):
+    """扫描航点要水平到点且到了搜索高度才算到：从过渡高度爬升途中不推进航点，保证按 search_alt_m 的覆盖扫。"""
+    return (_arrived(ctx.local_position_xy, waypoint, _TUNING.position_tolerance_m)
+            and ctx.local_position_z is not None
+            and abs(-ctx.local_position_z - _WORLD.search_alt_m) <= _TUNING.altitude_tolerance_m)
+
+
 def _is_near_any(x, y, points, threshold):
     return any(math.hypot(x - px, y - py) < threshold for px, py in points)
 
@@ -374,9 +381,8 @@ def _tick_search_drop_targets(ctx):
     # 候选还不够/还没扫完，按扫描航点继续飞，攒更多样本
     index = min(ctx.drop_task.waypoint_index, len(_DROP_SCAN_WAYPOINTS) - 1)
     waypoint = _DROP_SCAN_WAYPOINTS[index]
-    scan_complete = index == len(_DROP_SCAN_WAYPOINTS) - 1 and _arrived(
-        ctx.local_position_xy, waypoint, _TUNING.position_tolerance_m)
-    if _arrived(ctx.local_position_xy, waypoint, _TUNING.position_tolerance_m):
+    scan_complete = index == len(_DROP_SCAN_WAYPOINTS) - 1 and _at_scan_waypoint(ctx, waypoint)
+    if _at_scan_waypoint(ctx, waypoint):
         if index < len(_DROP_SCAN_WAYPOINTS) - 1:
             ctx.drop_task.waypoint_index = index + 1
             waypoint = _DROP_SCAN_WAYPOINTS[ctx.drop_task.waypoint_index]
@@ -388,7 +394,7 @@ def _tick_search_drop_targets(ctx):
         _ACTIVE_APPROACH.enter(ctx)  # 以选定目标为锁定种子，清接近内部状态
         return TickResult(next_state=State.APPROACH_DROP_TARGET)
 
-    return TickResult(position_target=(waypoint[0], waypoint[1], -_WORLD.cruise_alt_m))
+    return TickResult(position_target=(waypoint[0], waypoint[1], -_WORLD.search_alt_m))
 
 
 def _tick_approach_drop_target(ctx):
@@ -443,11 +449,11 @@ def _tick_survey_recon_zone(ctx):
 
     index = min(ctx.recon_task.waypoint_index, len(_RECON_SCAN_WAYPOINTS) - 1)
     waypoint = _RECON_SCAN_WAYPOINTS[index]
-    if _arrived(ctx.local_position_xy, waypoint, _TUNING.position_tolerance_m):
+    if _at_scan_waypoint(ctx, waypoint):
         if index < len(_RECON_SCAN_WAYPOINTS) - 1:
             ctx.recon_task.waypoint_index = index + 1
             waypoint = _RECON_SCAN_WAYPOINTS[ctx.recon_task.waypoint_index]
-    return TickResult(position_target=(waypoint[0], waypoint[1], -_WORLD.cruise_alt_m))
+    return TickResult(position_target=(waypoint[0], waypoint[1], -_WORLD.search_alt_m))
 
 
 def _tick_rtl_or_land(ctx):

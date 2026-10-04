@@ -1,7 +1,7 @@
 # stepped_descent_ibvs —— sim 档。字段 = ApproachConfig 字段。
 # 注意:"两次投放成功"的旧验证状态是宽视场云台相机时代的;真机化窄相机(57.8°)
 # 后末端降高会丢筒(FOV 几何,算法阶段修复中),当前 bench 尚不能全通。
-approach_alt_m: 2.0              # 粗接近飞行高度（≠ mission 的 cruise_alt_m）
+approach_alt_m: 3.0              # 粗接近飞行高度，交接末端后锥面/阶梯降到 drop_alt_m
 drop_alt_m: 1.0
 dt_s: 0.1
 min_conf: 0.5
@@ -10,6 +10,7 @@ coarse_radius_m: 1.0
 refine_gate_m: 0.65
 handoff_off_m: 0.4             # 收紧:末端从更小初始误差起步,压交接过冲振荡
 handoff_speed_mps: 0.25        # 收紧:先停稳再交接(多等1-2s换无过冲)
+handoff_alt_tol_m: 0.3         # 先到 approach_alt_m 再交接末端(从搜索高度下来时不在半空直接交接)
 kp: 1.2
 ki: 0.4
 kd: 0.3

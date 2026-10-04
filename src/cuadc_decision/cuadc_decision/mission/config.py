@@ -30,7 +30,8 @@ class MissionWorld:
     """一次任务的世界/任务/场景参数。字段名 = yaml 键。默认值 = 当前开发用固定场地的值
     （兜底，纯单测/import 期不读文件）；正常从 mission.<profile>.yaml + 场景覆盖构造。"""
     takeoff_point: Tuple[float, float] = (0.0, 0.0)  # 起飞(解锁)点的场地坐标 = local_position 原点
-    cruise_alt_m: float = 2.0                 # 起飞、飞往各区、搜索的巡航高度（粗接近高度是 approach 的 approach_alt_m）
+    cruise_alt_m: float = 3.0                 # 起飞、飞往各区的过渡高度（粗接近高度是 approach 的 approach_alt_m）
+    search_alt_m: float = 5.0                 # 投放区搜索、侦察区覆盖的高度：和扫描航点间距一起决定相机覆盖
     drop_zone_center: Tuple[float, float] = (32.5, 0.0)
     drop_scan_offsets: List[Tuple[float, float]] = field(default_factory=lambda: [
         (-1.0, -2.0), (-1.0, 2.0),

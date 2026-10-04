@@ -36,7 +36,7 @@ _SERVO_LP = 2    # 伺服误差取近 2 帧均值:压检测噪声,等效滞后 ~
 @dataclass
 class ApproachConfig:
     """字段名 = yaml 键。默认值只是兜底(纯单测/import 用),正常从 yaml 读。"""
-    approach_alt_m: float = 2.0           # 粗接近飞行高度（≠ 任务的 cruise_alt_m：飞往各区/搜索的高度）
+    approach_alt_m: float = 3.0           # 粗接近飞行高度（≠ 任务的 cruise_alt_m / search_alt_m）
     drop_alt_m: float = 1.0               # 停降高度,h(起飞坐标系高度)计
     cylinder_height_m: float = 0.3        # 投放筒高，load_config 从 cuadc_physical 注入
     fc_rest_clearance_m: float = 0.0      # 飞控静止离地高，load_config 从 cuadc_physical 注入
@@ -48,6 +48,7 @@ class ApproachConfig:
     refine_gate_m: float = 0.4            # 硬锁世界坐标关联门
     handoff_off_m: float = 0.4
     handoff_speed_mps: float = 0.25
+    handoff_alt_tol_m: float = 0.3        # 交接还要求已到粗接近高度 approach_alt_m(±此值)
     kp: float = 1.2
     ki: float = 0.4
     kd: float = 0.3
@@ -180,7 +181,8 @@ class ConeDescentIbvs:
             a = self._aim(h)
             e = (off[0] - a[0], off[1] - a[1])
             settled = ctx.horizontal_speed is not None and ctx.horizontal_speed <= cfg.handoff_speed_mps
-            if math.hypot(*e) <= cfg.handoff_off_m and settled:
+            at_alt = abs(h - cfg.approach_alt_m) <= cfg.handoff_alt_tol_m
+            if math.hypot(*e) <= cfg.handoff_off_m and settled and at_alt:
                 st.phase, st.mode = 'terminal', 'track'
                 st.miss, st.prev_off_meas, st.off_window = 0, off, [off]
                 st.integ, st.prev_off, st.stable_since = (0.0, 0.0), None, None

@@ -128,8 +128,8 @@ settle）→RTL 降落。基准 3m 是因为 1m 地效下实机明显发飘。ya
 +告警、不中断；结尾有超差项打 `COMPLETED with N out-of-tolerance item(s)`，全达标才 `PASSED`。
 ⚠ **首飞前按场地核对水平余量**：方框 `box_leg_m`（默认 5m）、速度段单向
 `vel_leg_distance_m`（默认 3.5m）都要在场地内，必要时 `-p` 调小；起飞点四周及上方净空。
-⚠ **RTL 返航高度 `RTL_ALT`**：合集结尾和兜底都用 RTL，飞控会先爬到 `RTL_ALT` 再返航。ArduCopter
-默认 15m，超过 1–5m 的测试高度范围；首飞前在 Mission Planner 核对（如改 500，单位 cm）。
+⚠ **RTL 返航高度 `RTL_ALT_M`**：合集结尾、任务结尾和兜底都用 RTL，飞控会先爬到 `RTL_ALT_M` 再返航。
+默认 15m；本项目定 5m（同 sim `mission_defaults.parm`），首飞前在 Mission Planner 核对（本固件单位是米）。
 sim 侧对应 `run_flight_check_sim.sh` / `run_flight_suite_sim.sh`（连 SITL，先在仿真验逻辑；sim
 没有飞手，由节点代飞手切 STABILIZE+解锁）。
 

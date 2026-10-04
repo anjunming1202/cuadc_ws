@@ -5,7 +5,8 @@
 # 起降点、机头朝投放区），+y = 其右侧。数值按规则书 field-layout.md（它的 y 取左侧，填这里时左侧取负）。
 # 摆放朝向偏 1° ≈ 32.5m 处横偏 0.57m。
 takeoff_point: [0.0, 0.0]            # 起飞(解锁)点 = 起降点圆心
-cruise_alt_m: 5.0
+cruise_alt_m: 3.0                    # 起飞、飞往投放区/侦察区
+search_alt_m: 5.0                    # 投放区搜索/侦察区覆盖：5m 时相机横向覆盖 ±2.6m，配扫描航点横向 ±2m
 
 drop_zone_center: [32.5, 0.0]        # 规则书：投放区 x∈[30,35]
 drop_scan_offsets:
@@ -26,6 +27,6 @@ recon_scan_offsets:
   - [1.5, -2.0]
 
 recon_cylinder_count: 5
-drop_count_target: 1
+drop_count_target: 2                 # 规则书：投放 2 次
 drop_recon_split_x_m: 45.0           # 规则书：过渡区 x∈[35,55] 中点
 # 投放执行器参数（RC 通道/PWM/时长）属接口层，不在任务配置层，见 docs/spec/adr/0007
