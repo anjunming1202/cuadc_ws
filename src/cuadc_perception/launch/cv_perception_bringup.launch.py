@@ -27,7 +27,7 @@ def generate_launch_description():
         'debug_mask_enabled', default_value='false', description='是否发布二值化 mask 调试图')
     max_concurrent_debug_arg = DeclareLaunchArgument(
         'max_concurrent_debug_views', default_value='4',
-        description='同时最多算/发几路调试图像——真机上的硬性保护，跟前端请求了几路无关，见 cuadc_viz/README.md',
+        description='同时最多算/发几路调试图像——真机上的硬性保护，跟前端请求了几路无关，见 src/viz/README.md',
     )
     # 取帧源 + 真机预览(见 docs/spec/adr/0008-perception-raw-frame-multi-sink.md)。
     # 默认 sim 友好:frame_source=ros(订阅 image_raw)、预览关。真机 launch 传

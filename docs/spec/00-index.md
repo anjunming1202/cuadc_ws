@@ -109,10 +109,10 @@ CV 全流程、以第二次投放成功率量化 SEARCH（及后续）算法改�
 具体约定待后续展开。
 
 **日志**：飞控日志、感知结果、规划状态机阶段、通信状态、任务事件都
-应该可记录，用于调试和赛后复盘。实时可视化这半边已经在做（`cuadc_viz`，
-纯订阅型地面站 dashboard，详见 `src/cuadc_viz/README.md`）；机上 `rosbag2`
-黑匣子录制 + 离线回放分析这半边还没实现，设计方向已经讨论过，留给以后
-的 `feature/viz-replay` 分支。
+应该可记录，用于调试和赛后复盘。实时可视化走 `cuadc_groundstation`（图传+遥测，非 ROS；早期仿真用的
+ROS dashboard `src/viz/` 已退役）；机上录制目前是手动起停的
+`onboard_record`（视频 + rosbag），离线分析见 [`recording-analysis.md`](recording-analysis.md)；
+与任务生命周期绑定的自动黑匣子录制、网页回放还没做。
 
 ## 开放问题
 

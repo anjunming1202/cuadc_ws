@@ -1,4 +1,8 @@
-# cuadc_viz
+# viz（已退役）
+
+> **已退役，不再维护**：仿真期的 ROS/rosbridge 实时 dashboard。现场图传+遥测用
+> [`cuadc_groundstation`](../cuadc_groundstation/README.md)，飞后复盘用
+> `scripts/analyze_recording.py`。下文保留为历史说明。
 
 地面站实时监测 dashboard。纯订阅型旁路工具，不发布任何指令、不参与任务
 闭环，符合 [ADR-0002](../../docs/spec/adr/0002-onboard-inference-only.md)/
@@ -41,7 +45,7 @@
 都在 `launch/viz_bringup.launch.py` 里组合起来：
 
 ```
-ros2 launch cuadc_viz viz_bringup.launch.py
+ros2 launch viz viz_bringup.launch.py
 ```
 
 浏览器打开 `http://<地面站或伴随计算机的地址>:8000`（默认端口，见下方
@@ -55,7 +59,7 @@ sudo apt-get install ros-humble-rosbridge-suite ros-humble-web-video-server
 
 ## 仿真/真机复用
 
-`cuadc_viz` 只订阅既有契约话题（`docs/spec/04-interfaces.md`、
+`viz` 只订阅既有契约话题（`docs/spec/04-interfaces.md`、
 `05-perception-decision-interface.md`），不区分发布者是仿真桥接还是真实
 驱动，本身不用改任何代码——跟任务节点（还要切一个 `connection` 参数）
 比，这里连参数都不用切。（**这是设计意图；目前只在仿真验证过，实机未跑过**

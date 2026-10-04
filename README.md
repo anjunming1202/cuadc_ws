@@ -20,8 +20,8 @@ Computer）软件，飞控为 Pixhawk + ArduPilot（ArduCopter）。本仓库仅
 `docs/spec/04-interfaces.md` 里的全部话题/服务并过 SITL 验证，详见
 `src/cuadc_interface/README.md`。感知（真实 CV 算法 + 地面真值桩两个
 实现）/决策（完整任务状态机）已在 SITL+Gazebo 里跑通全流程闭环，详见
-`src/cuadc_perception/README.md`、`src/cuadc_decision/README.md`。地面站
-实时监测 dashboard 见 `src/cuadc_viz/README.md`。
+`src/cuadc_perception/README.md`、`src/cuadc_decision/README.md`。现场
+地面站（图传+遥测）见 `src/cuadc_groundstation/README.md`。
 
 外部时间约束：飞控组 phase 1（人工飞行调姿态/悬停控制环）需要在
 2026-08-01 前完成，与软件组互不阻塞，详见 `docs/spec/working-notes.md`
@@ -51,8 +51,8 @@ Computer）软件，飞控为 Pixhawk + ArduPilot（ArduCopter）。本仓库仅
     详见 `src/cuadc_perception_msgs/README.md`
   - `src/cuadc_decision` —— 决策模块（任务状态机），详见
     `src/cuadc_decision/README.md`
-  - `src/cuadc_viz` —— 地面站实时监测 dashboard，详见
-    `src/cuadc_viz/README.md`
+  - `src/viz` —— 已退役的仿真期 ROS 实时 dashboard（无 `cuadc_` 前缀 = 退役），
+    仅作历史保留
 - `launch/` —— 组合多个包节点的顶层 launch 文件（不属于任何单个包），详见
   Quickstart
 - `scripts/` —— 工具/仿真脚本
@@ -150,9 +150,6 @@ ros2 topic pub -1 /cuadc_decision/sim/task_start_trigger std_msgs/msg/Empty "{}"
 ```
 
 看状态机走到哪一步：`ros2 topic echo /cuadc_decision/mission_state`
-
-地面站实时监测网页（可选，另开一个终端，跟上面任意组合并行跑都行）：
-`ros2 launch cuadc_viz viz_bringup.launch.py`，详见 `src/cuadc_viz/README.md`。
 
 各节点参数、话题/服务契约见对应包的 README 和 `docs/spec/`。
 

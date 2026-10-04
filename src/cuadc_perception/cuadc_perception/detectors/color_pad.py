@@ -117,7 +117,7 @@ def detect_cylinders_pixels(image_bgr, cfg: Optional[ColorPadConfig] = None,
                 observations.append(obs)
     t4 = time.monotonic()
 
-    # 阶段名跟其它检测器对齐(节点按固定 key 组装 ~/perf、cuadc_viz 网页解析)。
+    # 阶段名跟其它检测器对齐(节点按固定 key 组装 ~/perf、viz 网页解析)。
     if perf is not None:
         perf['segment_ms'] = (t1 - t0) * 1000.0
         perf['morphology_ms'] = (t2 - t1) * 1000.0

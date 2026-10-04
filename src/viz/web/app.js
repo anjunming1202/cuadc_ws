@@ -145,7 +145,7 @@ ros.subscribe('/cuadc_perception_cv/perf', 'diagnostic_msgs/DiagnosticArray', (m
 // 该不该播"（选择器），播放器本身不用关心这个。 ----
 
 // 原始画面：选择器是一个本地勾选框，不涉及机上参数，不发 SetParameters
-// ——相机本来就一直在发，不是可选的调试功能，见 cuadc_viz/README.md。
+// ——相机本来就一直在发，不是可选的调试功能，见 viz/README.md。
 const rawPlayer = createViewPlayer(document.getElementById('tile-raw'), '/camera/image_raw', videoSrc);
 document.getElementById('chk-raw').addEventListener('change', (e) => rawPlayer.setActive(e.target.checked));
 rawPlayer.setActive(true);

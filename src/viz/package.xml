@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>cuadc_viz</name>
+  <name>viz</name>
   <version>0.0.0</version>
   <description>地面站实时监测 dashboard：纯订阅型旁路工具，不参与任务闭环，契约见 docs/spec/04-interfaces.md、05-perception-decision-interface.md。设计文档见 README.md。</description>
   <maintainer email="anjunming0819@outlook.com">Junming An</maintainer>

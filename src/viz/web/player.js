@@ -17,7 +17,7 @@ export function createViewPlayer(tileEl, topic, videoSrc) {
   // MJPEG 是靠 <img> 直接拉 multipart 流，浏览器对这种流的 load 事件
   // 触发时机不完全一致（有的只在收到第一部分时触发一次）——这里只当
   // 它是"至少收到过一帧"的信号，不是持续的活体检测，够用，见
-  // cuadc_viz/README.md 的说明。
+  // viz/README.md 的说明。
   img.addEventListener('load', () => {
     if (!active) return;
     clearTimeout(timeoutHandle);

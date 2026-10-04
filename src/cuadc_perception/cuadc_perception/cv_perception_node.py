@@ -1,7 +1,7 @@
 """真实感知节点：**薄 ROS 壳**——选取帧源（sim=`/camera/image_raw`；real=相机
 服务的原始 NV12 shm，图像**不进 ROS**）、跑 rclpy-free 的 `PerceptionCore`、把结果
 扇出到多个 sink：DetectionArray（ROS，给决策，契约不变）、sim 的 debug Image（给
-cuadc_viz）、real 的 RTP 标注预览（给地面）。算法在 `detectors/`、编排在
+viz，已退役）、real 的 RTP 标注预览（给地面）。算法在 `detectors/`、编排在
 `perception_core`、取帧/预览在 `frame_sources`/`sinks`——都不依赖 rclpy。
 设计见 docs/spec/adr/0008-perception-raw-frame-multi-sink.md、契约见
 docs/spec/05-perception-decision-interface.md。
@@ -271,7 +271,7 @@ class CvPerceptionNode(Node):
         if self.get_parameter('detection_log_enabled').value:
             self._log_detection_chain(result)
 
-        # sink 2: sim 的 debug Image(给 cuadc_viz)
+        # sink 2: sim 的 debug Image(给已退役的 viz)
         for view in active_views:
             self._publish_debug_image(view, frame_bgr, result.debug, header)
         if self._recon_zone_active and ros_image_msg is not None:
