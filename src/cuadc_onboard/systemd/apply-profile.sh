@@ -16,8 +16,6 @@ echo "cuadc-onboard profile: ${profile:-none}"
 KNOWN_CONSUMERS=(
   cuadc-onboard-telem.service
   cuadc-onboard-video-forward.service
-  cuadc-onboard-cv-preview.service
-  cuadc-onboard-cv-forward.service
 )
 
 for u in "${KNOWN_CONSUMERS[@]}"; do

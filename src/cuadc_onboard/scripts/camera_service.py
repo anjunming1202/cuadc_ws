@@ -5,7 +5,7 @@
   - 一路 x264 → 本地 H.264/RTP 5602(兼容读帧) + 5603(video-forward→地面)
     + 5605(onboard_record 全质量录制;无人读则内核丢弃)
   - 一路 shmsink raw NV12（本机 OpenCV/cv-preview 直吃，无需再解码）
-- 自己不发地面——干净图传 video-forward(5603→5600),CV 预览 cv-preview+cv-forward。
+- 自己不发地面——干净图传 video-forward(5603→5600),CV 预览 cv-preview-ctl(按钮启停)。
 - 控制口(默认 udp:127.0.0.1:5610)收 JSON,PLAYING 态直接 g_object_set 到
   libcamerasrc,例如 {"ae":false,"exposure_us":1000,"gain":8.0,"af":"manual","lens":1.5}。
 """

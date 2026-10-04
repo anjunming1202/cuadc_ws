@@ -9,7 +9,7 @@ docs/spec/05-perception-decision-interface.md。
 按帧处理（收一帧算一帧）。取帧源:
 - `frame_source=ros`（仿真）:订阅 `/camera/image_raw`（Gazebo 发），图经 ROS。
 - `frame_source=shm`（真机）:从 `raw_shm` 直接取原始帧,零解码,**图不进 ROS**;
-  同时把标注预览编码推到本地 `preview_port`（cv-forward 转地面）。
+  同时把标注预览编码推到本地 `preview_port`（onboard 转发到地面）。
 """
 
 import math

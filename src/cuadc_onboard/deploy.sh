@@ -24,11 +24,17 @@ install -m 0755 "$SRC_DIR/scripts/telem_ground.py"   "$OPT/telem_ground.py"
 install -m 0755 "$SRC_DIR/scripts/camera_service.py" "$OPT/camera_service.py"
 install -m 0755 "$SRC_DIR/scripts/cv_preview_ctl.py" "$OPT/cv_preview_ctl.py"
 install -m 0755 "$SRC_DIR/systemd/apply-profile.sh"  "$OPT/apply-profile.sh"
-# CV 检测/预览的代码在 cuadc_perception(cv-preview 单元和 cv_preview_ctl 按
-# PYTHONPATH 引用它,见 ADR-0008),不拷到 /opt。
+# CV 检测/预览的代码在 cuadc_perception(cv_preview_ctl 按 PYTHONPATH 引用它,
+# 见 ADR-0008),不拷到 /opt。
 
 for u in "$SRC_DIR"/systemd/*.service; do
   install -m 0644 "$u" "$UNIT_DIR/$(basename "$u")"
+done
+
+# 已退役单元(被 cv-preview-ctl 的按钮路径取代):老 Pi 上可能还装着,收敛掉。
+for u in cuadc-onboard-cv-preview.service cuadc-onboard-cv-forward.service; do
+  systemctl disable --now "$u" 2>/dev/null || true
+  rm -f "$UNIT_DIR/$u"
 done
 
 if [ ! -f "$ETC/profile" ]; then

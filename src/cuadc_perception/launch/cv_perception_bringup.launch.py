@@ -41,7 +41,7 @@ def generate_launch_description():
     src_fps_arg = DeclareLaunchArgument('src_fps', default_value='10')
     cv_width_arg = DeclareLaunchArgument('cv_width', default_value='960', description='shm 源出帧/检测/预览分辨率;真机内参要对应这个分辨率')
     cv_height_arg = DeclareLaunchArgument('cv_height', default_value='540')
-    preview_enabled_arg = DeclareLaunchArgument('preview_enabled', default_value='false', description='真机把标注预览编码推本地 preview_port(cv-forward 转地面)')
+    preview_enabled_arg = DeclareLaunchArgument('preview_enabled', default_value='false', description='真机把标注预览编码推本地 preview_port(onboard 转发到地面)')
     preview_port_arg = DeclareLaunchArgument('preview_port', default_value='5604')
     preview_bitrate_arg = DeclareLaunchArgument('preview_bitrate', default_value='1000')
     # 仿真工具直接起本文件(不经 mission_bringup)时传 true(见 interface_bringup 同名参数)。

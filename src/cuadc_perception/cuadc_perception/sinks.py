@@ -1,6 +1,6 @@
 """结果出口（sink）：一次检测的结果扇出到多个出口。这里放**非-ROS** 的 RTP
 预览 sink（gi/GStreamer，不依赖 rclpy）——把标注画到帧上、H.264 编码推到本地
-udp（cv-forward 再转地面），供真机预览和无-ROS 预览模式复用。ROS 的
+udp（onboard 转发到地面），供真机预览和无-ROS 预览模式复用。ROS 的
 DetectionArray/debug-Image 出口是 ROS 原生的、留在节点里（用 self.create_publisher）。
 
 见 docs/spec/adr/0008-perception-raw-frame-multi-sink.md。

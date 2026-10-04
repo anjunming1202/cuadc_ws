@@ -13,13 +13,13 @@
 scripts/   通信程序（能手动跑，不依赖 systemd）
              mav_fanout.py    串口扇出（底座）
              telem_ground.py  数传发送：读扇出 → JSON 发地面 HUD（消费者）
+             cv_preview_ctl.py  CV 预览开关：UDP 5611 听地面按钮，起停检测 worker + 转发
 systemd/   自启薄壳
              cuadc-onboard-fanout.service   底座：串口扇出
              cuadc-onboard-camera.service   底座：相机 tee（本地 5602 + 5603）
              cuadc-onboard-telem.service    消费者：数传（ground-monitor profile 拉起）
              cuadc-onboard-video-forward.service  消费者：干净图传 5603→5600
-             cuadc-onboard-cv-preview.service     消费者：5602→标注→5604
-             cuadc-onboard-cv-forward.service     消费者：CV 预览 5604→5606
+             cuadc-onboard-cv-preview-ctl.service 常驻开关：默认关，按钮才起 5602→标注→5604→5606
              cuadc-onboard-profile.service  oneshot applier：按 profile 起消费者
              apply-profile.sh               applier 逻辑（读 /etc/cuadc-onboard/profile）
 deploy.sh  幂等安装到 Pi 系统路径并 enable 底座 + profile applier
@@ -33,9 +33,9 @@ deploy.sh  幂等安装到 Pi 系统路径并 enable 底座 + profile applier
 | 相机本地帧 | `udp:127.0.0.1:5602` | H.264/RTP（CV/采集/调参读帧） |
 | 相机控制口 | `udpin:127.0.0.1:5610` | JSON（`{ae,exposure_us,gain,af,lens,…}` 运行时改拍摄参数） |
 | 图传转发输入 | `udp:127.0.0.1:5603` | H.264/RTP（video-forward 读它转地面） |
-| CV 预览本地 | `udp:127.0.0.1:5604` | H.264/RTP（cv-preview 产出；cv-forward 转地面） |
+| CV 预览本地 | `udp:127.0.0.1:5604` | H.264/RTP（cv_preview_ctl 的检测 worker 产出并转地面） |
 | 图传→地面 | `192.168.50.2:5600` | H.264/RTP（video-forward） |
-| CV 预览→地面 | `192.168.50.2:5606` | H.264/RTP（cv-forward） |
+| CV 预览→地面 | `192.168.50.2:5606` | H.264/RTP（cv_preview_ctl 的转发） |
 | 地面数据总线 | `udp:127.0.0.1:5700` | JSON（含 `topic`） |
 | GCS | `192.168.50.2:14560` | MAVLink |
 
@@ -60,7 +60,8 @@ cv2.VideoCapture(
   gst 应用非静态 gst-launch）。
 - **消费者**（只连端点、不碰硬件）由 profile 选择性自启：`/etc/cuadc-onboard/profile`
   写 `none` / `ground-monitor` / `mission`，oneshot applier 按名拉起。`ground-monitor`
-  起 **数传 + video-forward（5603→5600）+ cv-preview/cv-forward（5602→5604→5606）**。改 profile 后
+  起 **数传 + video-forward（5603→5600）**；CV 预览不归 profile——常驻的
+  cv-preview-ctl 听地面按钮启停（默认关，省 CPU）。改 profile 后
   `systemctl restart cuadc-onboard-profile` 即时生效（applier 幂等:先停受管消费者再按
   profile 起）。`none` 时底座在跑、本地端点有数据，但地面什么都没有。
 
@@ -86,7 +87,7 @@ sudo systemctl disable --now dronelink-telemetry.service dronelink-video.service
 - **波特率**：单元 `--baud 57600`（`SERIAL*_BAUD=57`）。USB 的 115200 不是 TELEM 默认。
 - **物理口**：本架 TELEM2 无心跳；改插 **TELEM3** 后扇出出现 `heartbeat sys=1`。图传 UDP 与飞控串口无关。
 - **禁止 30s 重开串口**：心跳超时若 `close` 再 `open`，这块飞控 TELEM 会哑到断电。`mav_fanout.py` 改为一直持有 `/dev/ttyAMA0`，只打 `still no heartbeat; keeping serial open`。
-- **OpenCV 预览**：`cuadc-onboard-cv-preview-ctl` 开机默认关，地面 viewer 按钮经 UDP 5611 才起检测（省 CPU）。worker 就是 `cuadc_perception.cv_preview --from-rtp-port 5602`（5602 是 shmsrc 接不上时的回退取帧口）。`ground-monitor` profile 不再自动起 cv-preview/cv-forward。
+- **OpenCV 预览**：`cuadc-onboard-cv-preview-ctl` 开机默认关，地面 viewer 按钮经 UDP 5611 才起检测（省 CPU）。worker 就是 `cuadc_perception.cv_preview --from-rtp-port 5602`（5602 是 shmsrc 接不上时的回退取帧口）。原 cv-preview/cv-forward 自启单元已退役（deploy.sh 会把老 Pi 上装过的收敛掉）；手动 shm 模式调试直接跑 `python3 -m cuadc_perception.cv_preview`。
 
 > 状态：底座（扇出 + 相机 tee）与数传消费者、profile、deploy.sh 已就位；
 > 扇出多消费者共存已真机验证（2026-09-19）；2026-10-03 TELEM3@57600 地面 HUD 有飞控数据。
