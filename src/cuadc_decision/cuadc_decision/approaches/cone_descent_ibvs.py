@@ -46,6 +46,8 @@ class ApproachConfig:
     min_conf_terminal: float = 0.5        # 末端放低(近距残盘置信度塌落),关联门挡垃圾
     coarse_radius_m: float = 1.0
     refine_gate_m: float = 0.4            # 硬锁世界坐标关联门
+    relock_radius_m: float = 0.0          # 到点门内无检测时，此半径内持续可见的检测改锁过去；0=关
+    relock_ticks: int = 5                 # 改锁要求同一检测连续可见的 tick 数
     handoff_off_m: float = 0.4
     handoff_speed_mps: float = 0.25
     handoff_alt_tol_m: float = 0.3        # 交接还要求已到粗接近高度 approach_alt_m(±此值)
@@ -103,6 +105,8 @@ class ApproachState:
     off_window: list = field(default_factory=list)
     last_bearing: Optional[Tuple[float, float]] = None
     stable_since: Optional[float] = None
+    relock_seen: int = 0                  # 宽门改锁:同一候选连续可见 tick 数
+    relock_last: Optional[Tuple[float, float]] = None
 
 
 class ConeDescentIbvs:
@@ -172,21 +176,49 @@ class ConeDescentIbvs:
         if best is not None:
             st.locked = Candidate(best.position.x, best.position.y, best.apparent_size)
             target = st.locked
-        aim = (target.x, target.y, -cfg.approach_alt_m)
         arrived = (ctx.local_position_xy is not None and
                    math.hypot(ctx.local_position_xy[0] - target.x,
                               ctx.local_position_xy[1] - target.y) <= cfg.coarse_radius_m)
+        settled = ctx.horizontal_speed is not None and ctx.horizontal_speed <= cfg.handoff_speed_mps
+        at_alt = abs(h - cfg.approach_alt_m) <= cfg.handoff_alt_tol_m
+        if best is None and arrived and settled and at_alt and cfg.relock_radius_m > 0.0:
+            if self._wide_relock(ctx, dets, target):
+                target = st.locked
+        else:
+            st.relock_seen, st.relock_last = 0, None
+        aim = (target.x, target.y, -cfg.approach_alt_m)
         if arrived and best is not None:
             off = self._bearing_to_off((best.bearing_x, best.bearing_y), ctx, h)
             a = self._aim(h)
             e = (off[0] - a[0], off[1] - a[1])
-            settled = ctx.horizontal_speed is not None and ctx.horizontal_speed <= cfg.handoff_speed_mps
-            at_alt = abs(h - cfg.approach_alt_m) <= cfg.handoff_alt_tol_m
             if math.hypot(*e) <= cfg.handoff_off_m and settled and at_alt:
                 st.phase, st.mode = 'terminal', 'track'
                 st.miss, st.prev_off_meas, st.off_window = 0, off, [off]
                 st.integ, st.prev_off, st.stable_since = (0.0, 0.0), None, None
         return ApproachOutput(position_target=aim)
+
+    def _wide_relock(self, ctx, dets, target) -> bool:
+        """到点悬停、门内没检测时：SEARCH 机动中采样的世界坐标可偏 ~1m，悬停平视复看更可信——
+        relock_radius 内同一检测连续可见 relock_ticks 次就改锁过去。已投过的筒不认。"""
+        cfg, st = self.cfg, self.state
+        used = ctx.drop_task.used_positions
+        fresh = [d for d in dets
+                 if not any(math.hypot(d.position.x - ux, d.position.y - uy) < cfg.refine_gate_m
+                            for ux, uy in used)]
+        near = _nearest_within(fresh, target.x, target.y, cfg.relock_radius_m)
+        if near is None:
+            st.relock_seen, st.relock_last = 0, None
+            return False
+        pos = (near.position.x, near.position.y)
+        same = (st.relock_last is not None
+                and math.hypot(pos[0] - st.relock_last[0], pos[1] - st.relock_last[1]) <= cfg.refine_gate_m)
+        st.relock_seen = st.relock_seen + 1 if same else 1
+        st.relock_last = pos
+        if st.relock_seen < cfg.relock_ticks:
+            return False
+        st.locked = Candidate(pos[0], pos[1], near.apparent_size)
+        st.relock_seen, st.relock_last = 0, None
+        return True
 
     # ---- 末端(锥面连续降高) ----
 

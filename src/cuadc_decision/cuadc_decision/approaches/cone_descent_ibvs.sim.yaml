@@ -6,6 +6,8 @@ min_conf: 0.5
 min_conf_terminal: 0.25       # 末端放低:近距圆盘残缺置信度塌落;硬锁关联门挡垃圾(见 ApproachConfig 注释)
 coarse_radius_m: 1.0
 refine_gate_m: 0.65
+relock_radius_m: 1.5             # 到点门内无检测时，1.5m 内持续可见的检测改锁（SEARCH 机动采样可偏 ~1m）
+relock_ticks: 5                   # 同一检测连续可见 0.5s(@10Hz) 才改锁
 handoff_off_m: 0.4             # 收紧:末端从更小初始误差起步,压交接过冲振荡
 handoff_speed_mps: 0.25        # 收紧:先停稳再交接(多等1-2s换无过冲)
 handoff_alt_tol_m: 0.3         # 先到 approach_alt_m 再交接末端(从搜索高度下来时不在半空直接交接)
