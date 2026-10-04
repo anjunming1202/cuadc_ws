@@ -44,6 +44,23 @@ _FAILSAFE_SYSTEM_STATUS = (
     mavutil.mavlink.MAV_STATE_EMERGENCY,
 )
 
+# 不是飞控本体的心跳来源：地面站（Mission Planner 经数传连飞控时，飞控会把它的心跳转发到
+# 所有口，一样进 fanout）、云台等。只认飞控心跳——否则 armed/mode 会在飞控和地面站的
+# "未解锁/STABILIZE" 之间来回跳（2026-10-04 实测），模式确认、夺控判定、起飞点原点全会错。
+_NON_VEHICLE_TYPES = frozenset({
+    mavutil.mavlink.MAV_TYPE_GCS,
+    mavutil.mavlink.MAV_TYPE_GIMBAL,
+    mavutil.mavlink.MAV_TYPE_ADSB,
+    mavutil.mavlink.MAV_TYPE_ONBOARD_CONTROLLER,
+})
+
+
+def _is_vehicle_heartbeat(msg):
+    return (msg.type not in _NON_VEHICLE_TYPES
+            and msg.autopilot != mavutil.mavlink.MAV_AUTOPILOT_INVALID
+            and msg.get_srcComponent() != mavutil.mavlink.MAV_COMP_ID_GIMBAL)
+
+
 # RC_CHANNELS_OVERRIDE：65535 = 忽略该通道（不改其覆盖状态），0 = 释放该通道回遥控器。
 # 投放只碰投放那一个 RC 通道，其余全填忽略，绝不动飞控/飞行通道，见 docs/spec/adr/0007。
 _RC_OVERRIDE_IGNORE = 65535
@@ -106,6 +123,8 @@ class InterfaceNode(Node):
         self._raw_ned = None
         self._armed_once = False
         self._seen_heartbeat = False
+        self._vehicle_sysid = None
+        self._vehicle_compid = None
         self._ack_lock = threading.Lock()
         self._pending_acks = {}  # command id -> threading.Event
         self._ack_results = {}  # command id -> COMMAND_ACK.result
@@ -167,10 +186,16 @@ class InterfaceNode(Node):
             # （UDP 无连接握手，对方端口没人监听也一样能建出这个对象）
             # ——真正确认"连上了"必须等到第一条心跳，同 cuadc_sim 的验证
             # 脚本一致，不能只看 mavlink_connection() 有没有抛异常。
-            if master.wait_heartbeat(timeout=self._link_timeout) is None:
+            vehicle_hb = self._wait_vehicle_heartbeat(master)
+            if vehicle_hb is None:
                 self.get_logger().warn(
-                    f'no heartbeat from {self._connection_str}, retrying ...')
+                    f'no vehicle heartbeat from {self._connection_str}, retrying ...')
                 continue
+            # 只跟这个飞控说话、只收它的消息（见 _is_vehicle_heartbeat）。
+            self._vehicle_sysid = vehicle_hb.get_srcSystem()
+            self._vehicle_compid = vehicle_hb.get_srcComponent()
+            master.target_system = self._vehicle_sysid
+            master.target_component = self._vehicle_compid
 
             self._master = master
             self._mode_ids = master.mode_mapping() or {}
@@ -191,6 +216,16 @@ class InterfaceNode(Node):
             self._safe_publish(self.connected_pub, Bool(data=False))
             self.get_logger().warn('link lost, reconnecting ...')
             self._master = None
+
+    def _wait_vehicle_heartbeat(self, master):
+        # 不能用 master.wait_heartbeat()：它返回任意来源的第一条心跳，先到的若是地面站，
+        # 此时还不知道飞行器类型，mode_mapping() 为空，之后每次 set_mode 都直接失败。
+        deadline = time.monotonic() + self._link_timeout
+        while time.monotonic() < deadline and not self._shutdown.is_set():
+            msg = master.recv_match(type='HEARTBEAT', blocking=True, timeout=1.0)
+            if msg is not None and _is_vehicle_heartbeat(msg):
+                return msg
+        return None
 
     def _connect_with_retry(self, connection):
         # 跟 cuadc_sim 的一次性验证脚本不同：这是常驻桥接节点，连不上不该
@@ -215,6 +250,8 @@ class InterfaceNode(Node):
                 if time.monotonic() - last_msg_time > self._link_timeout:
                     return
                 continue
+            if msg.get_srcSystem() != self._vehicle_sysid:
+                continue  # 地面站等其它系统转发过来的消息
             last_msg_time = time.monotonic()
             handler = self._HANDLERS.get(msg.get_type())
             if handler is not None:
@@ -237,6 +274,8 @@ class InterfaceNode(Node):
     # -- MAVLink -> ROS2：逐个消息类型的处理 --
 
     def _handle_heartbeat(self, master, msg):
+        if msg.get_srcComponent() != self._vehicle_compid or not _is_vehicle_heartbeat(msg):
+            return
         armed = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
         mode = self._mode_names.get(msg.custom_mode, '')
         with self._state_lock:
