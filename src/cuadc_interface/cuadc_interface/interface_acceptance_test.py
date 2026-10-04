@@ -212,7 +212,7 @@ class InterfaceAcceptanceTest(Node):
             self.get_logger().info('skip_release_payload=true; not calling drop')
             return
         # 在空中、已解锁状态调用（release_payload 有 armed 守卫，见 ADR-0007）；服务会跑完
-        # 整段投放 RC override 时序才返回，这里会阻塞约 drop_run_s。
+        # 整段 DO_SET_SERVO 投放时序才返回，这里会阻塞约 drop_run_s。
         self.get_logger().info('calling release_payload() ...')
         result = self._call(self._drop_client, ReleasePayload.Request(), 'release_payload')
         if not result.success:

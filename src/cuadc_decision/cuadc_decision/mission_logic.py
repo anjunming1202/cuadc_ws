@@ -347,7 +347,7 @@ def _tick_drop_payload(ctx):
         ctx.drop_task.waypoint_index = 0
         return TickResult(next_state=State.SEARCH_DROP_TARGETS)
 
-    # 投放执行是接口层的 release_payload（RC override 定时序列，投放物理完成才返回；见
+    # 投放执行是接口层的 release_payload（DO_SET_SERVO 定时序列，投放物理完成才返回；见
     # docs/spec/adr/0007）。DROP_PAYLOAD 态不发运动指令=飞机悬停，等投放跑完才转下一阶段。
     return _dispatch_and_await(ctx, 'release_payload', {}, on_success)
 
