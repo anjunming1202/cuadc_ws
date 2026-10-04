@@ -23,7 +23,8 @@
   [ADR-0001](adr/0001-interface-layer-separate-module.md)）。对外
   话题/服务契约见 [`04-interfaces.md`](04-interfaces.md)。所有坐标系（起飞坐标系 / 机体坐标系 / 飞控内部坐标）的唯一
   定义见 [`coordinate-frames.md`](coordinate-frames.md)。
-- **日志**（横向能力，机制未定，见下方"横向关注点"）。
+- **日志**（横向能力，机制未定，见下方"横向关注点"）。失效处理路径与 `[FAULT]` 事件见
+  [`failure-handling.md`](failure-handling.md)。
 
 感知/视觉、规划/决策各自的详细设计文档还没有，两者之间的契约边界
 （消息格式、职责划分、通信模式）见

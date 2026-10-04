@@ -15,6 +15,8 @@ class ApproachOutput:
     position_target: Optional[Tuple[float, float, float]] = None  # (x,y,z) 起飞坐标系(前/右/下),粗段
     velocity_target: Optional[Tuple[float, float, float]] = None  # (前,右,下) 机体系速度,末端
     drop_ready: bool = False
+    give_up: Optional[Tuple[str, str]] = None  # (失效代码, 原因)：本目标对不上，任务 FSM 拉黑它换下一个
+    event: Optional[Tuple[str, str]] = None    # (代码, 原因)：值得记一条 FAULT 的处理（改锁、放宽投放门）
 
 
 def physical_fields():

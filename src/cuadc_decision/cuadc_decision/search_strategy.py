@@ -87,18 +87,20 @@ def observe(ctx, cfg, in_drop_zone):
     _update_clusters(ctx.drop_task.clusters, points, cfg.cluster_match_threshold_m)
 
 
-def select_target(ctx, cfg, scan_complete, now, choose):
-    """settle 后：把够样本的聚类做成候选，候选够多（min_candidates_before_select）或已飞完
-    整条扫描路径（scan_complete）才允许选目标——不能「随便凑够一个候选就选」，否则可能锁死在
-    第一眼看到的筒上、从没飞去比较其它候选（2026-09-11 SITL 实测踩过）。`choose` 是投放目标
-    选择策略（drop_strategy），返回选中的 Candidate 或 None。还没到选目标条件时返回 None。"""
+def candidates(ctx, cfg):
+    """够样本的聚类做成候选（选目标、投完找下一个都用这一份）。"""
+    return [Candidate(*_cluster_mean(c)) for c in ctx.drop_task.clusters
+            if len(c) >= cfg.min_cluster_samples]
+
+
+def select_target(ctx, cfg, scan_complete, now, choose, excluded):
+    """settle 后：候选够多（min_candidates_before_select）或已飞完整条扫描路径（scan_complete）
+    才允许选目标——不能「随便凑够一个候选就选」，否则可能锁死在第一眼看到的筒上、从没飞去比较
+    其它候选（2026-09-11 SITL 实测踩过）。`choose` 是投放目标选择策略（drop_strategy），
+    `excluded` 是已投/已放弃的位置，返回选中的 Candidate 或 None。"""
     if (now - ctx.state_entered_monotonic) < cfg.settle_seconds:
         return None
-    candidates = [
-        Candidate(*_cluster_mean(c))
-        for c in ctx.drop_task.clusters
-        if len(c) >= cfg.min_cluster_samples
-    ]
-    if len(candidates) >= cfg.min_candidates_before_select or scan_complete:
-        return choose(candidates, ctx.drop_task.used_positions, ctx.drop_task.drop_count)
+    cands = candidates(ctx, cfg)
+    if len(cands) >= cfg.min_candidates_before_select or scan_complete:
+        return choose(cands, excluded, ctx.drop_task.drop_count)
     return None

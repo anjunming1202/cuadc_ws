@@ -78,6 +78,12 @@ class ApproachConfig:
     speed_tol_mps: float = 0.15
     level_tol_rad: float = 0.1
     stable_hold_s: float = 1.0
+    # ---- 失效处理(放弃=任务 FSM 拉黑本目标换下一个,见 docs/spec/failure-handling.md) ----
+    coarse_confirm_timeout_s: float = 8.0  # 粗段到点后这么久还没交接末端 -> 放弃
+    max_reacquire: int = 3                 # 末端持续丢失退回粗段的次数上限,超了放弃
+    stable_timeout_s: float = 15.0         # 到投放高度后这么久没过投放门 -> 放宽到 relaxed_drop_tol_m
+    relaxed_drop_tol_m: float = 0.08
+    relaxed_timeout_s: float = 10.0        # 放宽后再这么久仍没过门 -> 放弃
 
 
 def load_config(profile: str) -> ApproachConfig:
@@ -106,6 +112,10 @@ class ApproachState:
     last_bearing: Optional[Tuple[float, float]] = None
     stable_since: Optional[float] = None
     relock_seen: int = 0                  # 宽门改锁:同一候选连续可见 tick 数
+    hover_since: Optional[float] = None   # 粗段到点(水平进 coarse_radius)时刻,交接/改锁/回退时清
+    reacquires: int = 0                   # 末端退回粗段次数
+    drop_alt_since: Optional[float] = None  # 首次到投放高度时刻
+    relaxed: bool = False                 # 投放门已放宽
     relock_last: Optional[Tuple[float, float]] = None
 
 
@@ -134,7 +144,7 @@ class ConeDescentIbvs:
         dets = [d for d in ctx.detections
                 if getattr(d, 'target_type', 'cylinder') == 'cylinder' and d.confidence >= conf_gate]
         if self.state.phase == 'coarse':
-            return self._coarse(ctx, dets, h)
+            return self._coarse(ctx, dets, h, now)
         return self._terminal(ctx, dets, h, now)
 
     # ---- 几何 ----
@@ -167,7 +177,7 @@ class ConeDescentIbvs:
 
     # ---- 粗接近(同 stepped) ----
 
-    def _coarse(self, ctx, dets, h) -> ApproachOutput:
+    def _coarse(self, ctx, dets, h, now) -> ApproachOutput:
         cfg, st = self.cfg, self.state
         target = st.locked
         if target is None:
@@ -181,27 +191,38 @@ class ConeDescentIbvs:
                               ctx.local_position_xy[1] - target.y) <= cfg.coarse_radius_m)
         settled = ctx.horizontal_speed is not None and ctx.horizontal_speed <= cfg.handoff_speed_mps
         at_alt = abs(h - cfg.approach_alt_m) <= cfg.handoff_alt_tol_m
+        event = None
         if best is None and arrived and settled and at_alt and cfg.relock_radius_m > 0.0:
+            old = target
             if self._wide_relock(ctx, dets, target):
                 target = st.locked
+                st.hover_since = None
+                event = ('RELOCK_WIDE', f'no detection at ({old.x:.2f},{old.y:.2f}); relocked to '
+                                        f'({target.x:.2f},{target.y:.2f}) {math.hypot(target.x - old.x, target.y - old.y):.2f}m away')
         else:
             st.relock_seen, st.relock_last = 0, None
         aim = (target.x, target.y, -cfg.approach_alt_m)
+        if arrived and st.hover_since is None:
+            st.hover_since = now
+        if st.hover_since is not None and now - st.hover_since > cfg.coarse_confirm_timeout_s:
+            why = 'no detection near target' if best is None else 'detection but no handoff (offset/speed/alt)'
+            return ApproachOutput(position_target=aim, give_up=(
+                'TARGET_UNCONFIRMED', f'{cfg.coarse_confirm_timeout_s:.0f}s over target at h={h:.2f}m: {why}'))
         if arrived and best is not None:
             off = self._bearing_to_off((best.bearing_x, best.bearing_y), ctx, h)
             a = self._aim(h)
             e = (off[0] - a[0], off[1] - a[1])
             if math.hypot(*e) <= cfg.handoff_off_m and settled and at_alt:
-                st.phase, st.mode = 'terminal', 'track'
+                st.phase, st.mode, st.hover_since = 'terminal', 'track', None
                 st.miss, st.prev_off_meas, st.off_window = 0, off, [off]
                 st.integ, st.prev_off, st.stable_since = (0.0, 0.0), None, None
-        return ApproachOutput(position_target=aim)
+        return ApproachOutput(position_target=aim, event=event)
 
     def _wide_relock(self, ctx, dets, target) -> bool:
         """到点悬停、门内没检测时：SEARCH 机动中采样的世界坐标可偏 ~1m，悬停平视复看更可信——
-        relock_radius 内同一检测连续可见 relock_ticks 次就改锁过去。已投过的筒不认。"""
+        relock_radius 内同一检测连续可见 relock_ticks 次就改锁过去。已投过/已放弃的不认。"""
         cfg, st = self.cfg, self.state
-        used = ctx.drop_task.used_positions
+        used = ctx.drop_task.used_positions + ctx.drop_task.rejected_positions
         fresh = [d for d in dets
                  if not any(math.hypot(d.position.x - ux, d.position.y - uy) < cfg.refine_gate_m
                             for ux, uy in used)]
@@ -251,7 +272,13 @@ class ConeDescentIbvs:
                 if h >= cfg.reacquire_ceiling_m:
                     st.phase, st.mode, st.miss = 'coarse', '', 0
                     st.prev_off_meas, st.off_window = None, []
-                    return self._coarse(ctx, dets, h)
+                    st.hover_since, st.drop_alt_since, st.relaxed = None, None, False
+                    st.reacquires += 1
+                    if st.reacquires > cfg.max_reacquire:
+                        return ApproachOutput(velocity_target=(0.0, 0.0, 0.0), give_up=(
+                            'TARGET_LOST_REPEATEDLY', f'lost in terminal {st.reacquires}x '
+                                                      f'(max_reacquire={cfg.max_reacquire})'))
+                    return self._coarse(ctx, dets, h, now)
                 st.mode = 'climb'
                 return ApproachOutput(velocity_target=(0.0, 0.0, -cfg.climb_rate_mps))
             st.mode = 'endgame' if endgame else 'coast'
@@ -290,10 +317,24 @@ class ConeDescentIbvs:
             return ApproachOutput(velocity_target=(v[0], v[1], vz))
 
         # 投放高度:高度P保持(过低爬回),查投放门。门用全量杆臂误差(此处 aim==lever)。
+        # 久过不了门先放宽容差(偏一点投出去比投不出去好:筒外 0.5m 内仍算 B 区),再久就放弃。
+        if st.drop_alt_since is None:
+            st.drop_alt_since = now
+        at_alt_s = now - st.drop_alt_since
+        if at_alt_s > cfg.stable_timeout_s + cfg.relaxed_timeout_s:
+            return ApproachOutput(velocity_target=(0.0, 0.0, 0.0), give_up=(
+                'DROP_GATE_TIMEOUT', f'{at_alt_s:.0f}s at drop alt without passing the drop gate '
+                                     f'(last herr={herr:.3f}m)'))
+        event = None
+        if at_alt_s > cfg.stable_timeout_s and not st.relaxed:
+            st.relaxed = True
+            event = ('DROP_GATE_RELAXED', f'{cfg.stable_timeout_s:.0f}s at drop alt, drop_tol '
+                                          f'{cfg.drop_tol_m:.2f} -> {cfg.relaxed_drop_tol_m:.2f}m (herr={herr:.3f}m)')
+        tol = cfg.relaxed_drop_tol_m if st.relaxed else cfg.drop_tol_m
         vz_hold = 0.0
         if cfg.alt_hold_p > 0.0:
             vz_hold = _clip(cfg.alt_hold_p * (h - cfg.drop_alt_m), cfg.descend_rate_mps)
-        stable = (herr < cfg.drop_tol_m
+        stable = (herr < tol
                   and ctx.horizontal_speed is not None and ctx.horizontal_speed < cfg.speed_tol_mps
                   and ctx.vertical_speed is not None and abs(ctx.vertical_speed) < cfg.speed_tol_mps
                   and ctx.roll_rad is not None and abs(ctx.roll_rad) < cfg.level_tol_rad
@@ -302,7 +343,7 @@ class ConeDescentIbvs:
             if st.stable_since is None:
                 st.stable_since = now
             elif now - st.stable_since >= cfg.stable_hold_s:
-                return ApproachOutput(velocity_target=(v[0], v[1], vz_hold), drop_ready=True)
+                return ApproachOutput(velocity_target=(v[0], v[1], vz_hold), drop_ready=True, event=event)
         else:
             st.stable_since = None
-        return ApproachOutput(velocity_target=(v[0], v[1], vz_hold))
+        return ApproachOutput(velocity_target=(v[0], v[1], vz_hold), event=event)

@@ -27,6 +27,12 @@ drop_tol_m: 0.04
 speed_tol_mps: 0.15
 level_tol_rad: 0.1
 stable_hold_s: 1.0
+# ---- 失效处理(放弃 = 任务拉黑本目标换下一个,见 docs/spec/failure-handling.md) ----
+coarse_confirm_timeout_s: 8.0     # 粗段到点后这么久没交接末端 -> 放弃
+max_reacquire: 3                  # 末端丢失退回粗段次数上限
+stable_timeout_s: 15.0            # 到投放高度这么久没过门 -> 放宽容差
+relaxed_drop_tol_m: 0.08
+relaxed_timeout_s: 10.0           # 放宽后仍没过门 -> 放弃
 # ---- 锥面/迁移/重捕获(本模块专属) ----
 fov_half_deg: 17.25             # 纵向半FOV(实测标定 33.4°/2)
 fov_margin_deg: 4.0             # 可见性余量(俯仰瞬态+圆盘半径的角预算)

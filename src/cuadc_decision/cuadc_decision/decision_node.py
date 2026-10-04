@@ -16,6 +16,7 @@ docs/spec/06-planning.md 前置讨论。同一时刻只允许一个 service 调�
 在途，`mission_logic.py` 的状态机本来就是线性的，不需要并发调用。
 """
 
+import json
 import math
 import time
 from dataclasses import replace
@@ -89,6 +90,9 @@ class DecisionNode(Node):
         self._velocity_pub = self.create_publisher(
             TwistStamped, f'{_INTERFACE_NS}/cmd/velocity', 10)
         self._status_pub = self.create_publisher(String, '~/mission_state', 10)
+        # 失效/异常处理事件（JSON 一条一事件）：机载录制 -a 自动进 rosbag，地面站可订阅。
+        self._fault_pub = self.create_publisher(String, '~/fault_events', 10)
+        self._perception_outage_since = None
         self._speed_pubs = {
             field: self.create_publisher(Float64, f'{_INTERFACE_NS}/cmd/{topic}', 10)
             for field, topic in (('speed_target_mps', 'speed'), ('climb_speed_mps', 'climb_speed'),
@@ -167,6 +171,29 @@ class DecisionNode(Node):
             self._ctx.det_roll_rad, self._ctx.det_pitch_rad = roll, pitch
             self._ctx.det_height_m = -msg.vehicle_pose.position.z
 
+    def _emit_fault(self, code, reason, next_state=None):
+        state = self._ctx.current_state
+        arrow = f' -> {next_state}' if next_state is not None and next_state != state else ''
+        self.get_logger().warn(f'[FAULT] {code} state={state}{arrow} {reason}')
+        self._fault_pub.publish(String(data=json.dumps({
+            'stamp': time.time(), 'code': code, 'state': state, 'next_state': next_state,
+            'reason': reason, 'drop_count': self._ctx.drop_task.drop_count})))
+
+    def _check_perception_outage(self):
+        # 只记录、不改任务逻辑：作业状态里感知流断超过阈值记一条，恢复时再记一条带时长。
+        working = self._ctx.current_state in (mission_logic.State.SEARCH_DROP_TARGETS,
+                                              mission_logic.State.APPROACH_DROP_TARGET,
+                                              mission_logic.State.SURVEY_RECON_ZONE)
+        gap = time.monotonic() - self._last_detections_monotonic
+        if self._perception_outage_since is None:
+            if working and gap > mission_logic._TUNING.perception_stale_log_s:
+                self._perception_outage_since = self._last_detections_monotonic
+                self._emit_fault('PERCEPTION_STALE', f'no detection message for {gap:.1f}s')
+        elif gap <= _DETECTIONS_STALE_S:
+            lasted = time.monotonic() - self._perception_outage_since
+            self._perception_outage_since = None
+            self._emit_fault('PERCEPTION_RESUMED', f'detections back after {lasted:.1f}s')
+
     def _on_task_start_trigger(self, msg):
         self._ctx.task_start_triggered = True
 
@@ -203,6 +230,7 @@ class DecisionNode(Node):
                 f'[STALE] detections older than {_DETECTIONS_STALE_S}s -> cleared '
                 '(perception stream down?)', throttle_duration_sec=5.0)
 
+        self._check_perception_outage()
         self._ctx.last_service_result = self._poll_pending_service_result()
 
         tick_started = time.monotonic()
@@ -218,6 +246,8 @@ class DecisionNode(Node):
 
         if result.notice:
             self.get_logger().warn(f'[PILOT] {result.notice}')
+        if result.fault is not None:
+            self._emit_fault(result.fault.code, result.fault.reason, result.next_state)
         if result.next_state is not None and result.next_state != self._ctx.current_state:
             if result.next_state == mission_logic.State.DROP_PAYLOAD:
                 # 投放瞬间的瞄准快照:跨轮对比 bearing/冻结偏移的可复现性,是
