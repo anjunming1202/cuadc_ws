@@ -1,5 +1,16 @@
-# ROS 链路层扰动表（sim-only）——与飞控层 sim_realism.parm 并列，总索引见
-# docs/spec/sim-stress-testbed.md §3.2。gazebo_bringup 默认读本表（imperfections:=false 或
-# image_latency_ms:=… 关闭/覆盖）；生产 mission_bringup 不读它。只填实测值。
+# 仿真世界侧扰动表（sim-only）——与飞控层 sim_realism.parm 并列，总索引见
+# docs/spec/sim-stress-testbed.md §3.2。gazebo_bringup 默认读本表（imperfections:=false 全关）；
+# 生产 mission_bringup 不读它。只填实测值或按实测标定的值。
 
-image_latency_ms: 40.0  # 相机→CV 图像延迟(保留拍照戳);真机实测 20–40ms 取上限
+# 相机成像（真机 IMX519 白天实测，2026-10-04 录像；噪声 <1DN、运动模糊不可测 → 不加）
+blur_sigma_px: 1.2      # 镜头/ISP 柔化;边缘拟合 σ≈1.8px 含 H.264 柔化为上界，取 1.0–1.5 中值
+vignetting_k: 0.09      # 暗角 ×(1−k·r²)，r 按半宽归一;实测边缘 0.91、角 0.86–0.92
+
+image_latency_ms: 40.0  # 相机→CV 图像延迟(保留拍照戳);真机 CV 耗时中位 18–21ms、p95 33–39ms，取 40
+
+# sim_disturbance_node：经 Gazebo ApplyLinkWrench 加在机体上（ArduPilot SIM_WIND 在 Gazebo 模式不生效）
+wind_force_n: 1.0       # 风阻力均值:真机白天悬停平均倾角 ~1.8° × 3.5kg×g ≈ 1.1N(夜间 ~0.5° ≈ 0.3N)
+wind_dir_deg: 45.0      # 风吹向(世界系 x=0°、逆时针为正);真机无风向数据，取斜向同时压前后左右
+gust_std_n: 0.3         # 阵风标准差;标定到悬停倾角波动 0.4–0.7°、水平抖动 2–6cm(真机 0.3–0.8°、3–12cm)
+gust_tau_s: 3.0
+yaw_torque_nm: 0.03     # 悬停推力下的偏航反扭偏差(推测:电机/桨不竖直);标定到离地 1s 内航向跳 5–9°(真机 4–9°)

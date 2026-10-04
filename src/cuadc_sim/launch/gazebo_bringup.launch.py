@@ -26,8 +26,9 @@ First run in a fresh sitl_run_dir needs a EEPROM wipe, e.g.:
     ros2 launch cuadc_sim gazebo_bringup.launch.py extra_sitl_args:=-w
 
 Real-world imperfections are ON by default (imperfections:=false turns them all
-off): the SITL realism parm (wind / sensor noise, config/sim_realism.parm) and the
-camera->CV image latency (config/disturbances.yaml). Both model the sensor/airframe
+off): the SITL realism parm (sensor noise, config/sim_realism.parm), the camera->CV
+image latency, and wind drag / yaw torque on the airframe (sim_disturbance_node; the
+last two from config/disturbances.yaml -- ArduPilot's SIM_WIND does nothing in JSON mode). Both model the sensor/airframe
 side, so every sim task/test started on top of this world inherits them. Override one
 layer with sim_realism_params:='' or image_latency_ms:=0. See
 docs/spec/sim-stress-testbed.md §3.2.
@@ -50,10 +51,13 @@ from launch_ros.actions import Node
 _CAPTURE_TOPIC = '/camera/image_capture'  # bridged camera, before the simulated latency
 
 
-def _table_latency_ms() -> str:
+def _disturbance_table() -> dict:
     path = Path(get_package_share_directory('cuadc_sim')) / 'config' / 'disturbances.yaml'
     with open(path) as fh:
-        return str(float((yaml.safe_load(fh) or {}).get('image_latency_ms', 0.0)))
+        return yaml.safe_load(fh) or {}
+
+
+_BODY_DISTURBANCE_KEYS = ('wind_force_n', 'wind_dir_deg', 'gust_std_n', 'gust_tau_s', 'yaw_torque_nm')
 
 
 def generate_launch_description():
@@ -108,7 +112,7 @@ def generate_launch_description():
     )
     image_latency_arg = DeclareLaunchArgument(
         'image_latency_ms',
-        default_value=_table_latency_ms(),
+        default_value=str(float(_disturbance_table().get('image_latency_ms', 0.0))),
         description=('Camera->CV image latency in ms, capture stamp preserved (default = '
                      'config/disturbances.yaml). 0 = pass-through. Ignored when imperfections:=false.'),
     )
@@ -226,7 +230,9 @@ def generate_launch_description():
             # src/cuadc_sim/README.md "已解决问题".
             ' --configure-define=HAL_WITH_ESC_TELEM=1',
             ' --no-wsl2-network --use-dir ', LaunchConfiguration('sitl_run_dir'),
-            ' -m "--out 127.0.0.1:14551"',
+            # --streamrate 8: MAVProxy re-requests all streams every ~15s, like the onboard
+            # mav_fanout does; real FC link (57600 baud) delivers ~7.5 Hz telemetry.
+            ' -m "--out 127.0.0.1:14551 --streamrate 8"',
             ' ', LaunchConfiguration('extra_sitl_args'),
         ]],
         shell=True,
@@ -268,8 +274,21 @@ def generate_launch_description():
             'delay_ms': PythonExpression([
                 LaunchConfiguration('image_latency_ms'), " if '",
                 LaunchConfiguration('imperfections'), "'.lower() == 'true' else 0.0"]),
+            **{k: PythonExpression([str(float(_disturbance_table().get(k, 0.0))), " if '",
+                                    LaunchConfiguration('imperfections'), "'.lower() == 'true' else 0.0"])
+               for k in ('blur_sigma_px', 'vignetting_k')},
         }],
         remappings=[('image_in', _CAPTURE_TOPIC), ('image_out', '/camera/image_raw')],
+    )
+
+    table = _disturbance_table()
+    body_disturbance_node = Node(
+        package='cuadc_sim',
+        executable='sim_disturbance_node',
+        name='sim_disturbance',
+        output='screen',
+        parameters=[{k: float(table.get(k, 0.0)) for k in _BODY_DISTURBANCE_KEYS}],
+        condition=IfCondition(LaunchConfiguration('imperfections')),
     )
 
     return LaunchDescription([
@@ -288,4 +307,5 @@ def generate_launch_description():
         sitl_process,
         camera_bridge_node,
         image_latency_node,
+        body_disturbance_node,
     ])

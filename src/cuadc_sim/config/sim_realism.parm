@@ -2,11 +2,7 @@
 # sim 默认加载(gazebo_bringup / sitl_bringup);imperfections:=false 或 sim_realism_params:='' 关闭。
 # 用途与度量见 docs/spec/sim-stress-testbed.md。这里放偏离默认、用于压测的扰动量。
 
-# ---- 风扰(飞控动力学层)----
-# 稳态风 + 湍流:压 APPROACH 位置保持 / 末端 IBVS 的抗扰;2m 巡航高度、需悬停对准。
-SIM_WIND_SPD  4.0    # 平均风速 m/s(户外轻到中等风)
-SIM_WIND_DIR  45     # 风来向 deg
-SIM_WIND_TURB 0.3    # 湍流强度(阵风)
+# 风不在这里:ArduPilot 的 SIM_WIND_* 在 Gazebo(JSON) 模式不生效,风由 sim_disturbance_node 在 Gazebo 侧加。
 
 # ---- 传感器噪声(传感器层)----
 # GPS 水平噪声是重点:它直接放大 local_position 定位误差,也就是 SEARCH 世界锁的

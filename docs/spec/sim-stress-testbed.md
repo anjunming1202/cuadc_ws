@@ -59,18 +59,24 @@
 都挂在**仿真世界**（`gazebo_bringup`；`sitl_bringup` 只有飞控层）上——它们建模的是飞机/传感器本身，
 所以跑在这个世界上的任务、飞行测试、量测尺、压测全部自动带上，不另写"带扰动"的脚本。
 透传给 `run_gazebo_*.sh`：`imperfections:=false`（全关）、`sim_realism_params:=''`（只关风/噪声）、
-`image_latency_ms:=0`（只关延迟）或其它值覆盖。
+`image_latency_ms:=0`（只关延迟）或其它值覆盖。数值都按 2026-10-04 比赛场地（水泥地）真机录制
+（`local/recordings`）实测或标定，出处写在各参数旁。
 
-扰动分三层，各有一张**参数表**做数值的单一事实源（都在 `cuadc_sim/config/`，
+扰动分四层，各有一张**参数表**做数值的单一事实源（都在 `cuadc_sim/config/`，
 sim-only 包）；本节只记角色、注入点和加载方式，数值以表为准：
 
 | 层 | 参数表 | 注入点 / 加载方式 | 旋钮 |
 |---|---|---|---|
-| 飞控动力学（风） | `sim_realism.parm` | ArduPilot 内建风模型；默认叠最后一层 `--add-param-file`，`sim_realism_params:=<path>` 换文件、`''` 不加载 | `SIM_WIND_SPD` / `SIM_WIND_DIR` / `SIM_WIND_TURB` |
-| 传感器噪声 | 同一 parm 文件 | ArduPilot 自带传感器模型（GPS 噪声经真实 EKF 传播，见 §1.1 红线 3） | `SIM_GPS_*`、`SIM_ACC*_RND`、`SIM_GYR*_RND`、`SIM_BARO_RND` |
+| 机体扰动（风阻力 + 偏航扭矩） | `disturbances.yaml` | `sim_disturbance_node` 经 Gazebo `ApplyLinkWrench` 在 base_link 上加世界系水平力（均值+一阶阵风）和绕 z 扭矩（随旋翼转速² 缩放，桨停为 0；推测来源：电机/桨不竖直，标定到真机离地航向跳 4–9°）。**ArduPilot `SIM_WIND_*` 在 Gazebo(JSON) 模式不生效**（`SIM_JSON.cpp`: wind not supported），所以风必须在 Gazebo 侧加；均值按真机悬停平均倾角换算 | `wind_force_n` / `wind_dir_deg` / `gust_std_n` / `gust_tau_s` / `yaw_torque_nm` |
+| 传感器噪声 | `sim_realism.parm` | ArduPilot 自带传感器模型（GPS 噪声经真实 EKF 传播，见 §1.1 红线 3） | `SIM_GPS_*`、`SIM_ACC*_RND`、`SIM_GYR*_RND`、`SIM_BARO_RND` |
+| 相机成像 | `disturbances.yaml` | 同一个 `image_delay_node`：先加镜头/ISP 柔化（高斯）和暗角，再延迟。真机白天噪声 <1 DN、运动模糊测不出（曝光 ≲2ms），故不加 | `blur_sigma_px` / `vignetting_k` |
 | ROS 链路（相机→CV 图像时延） | `disturbances.yaml` | **sim-only** `image_delay_node` 插在相机↔感知之间，延迟转发 `Image`、**保留拍照戳**——注入点与真机物理一致(拍照→CV)，并触发位姿-图像时刻不一致（§3.3）。世界里相机桥出 `/camera/image_capture`，延迟后发 `/camera/image_raw`（所有消费者看到的"相机"）。覆盖：`image_latency_ms:=…` / 压测 `--latency-ms` / 量测 `run_measure_reprojection.sh [ms]` | `image_latency_ms`（40，真机实测 20–40ms 取上限） |
 
 生产 `mission_bringup` 不读任何一张表。压测台加 `--clean` 跑干净对照。
+
+**不是扰动、始终生效的真机对齐**（不受 `imperfections` 控制）：遥测 ~7.5 Hz（MAVProxy `--streamrate 8`，
+真机 57600 波特率链路实测）；地面贴图按水泥地（渲染亮度均值 ~175、p1–p99 ~140–208，真机 ~180、135–200）；
+关掉真机没有的测距仪 / 精准降落（`mission_defaults.parm`）。
 
 ### 3.3 反投影的两个延迟效应（区分清楚）
 
@@ -98,9 +104,8 @@ sim-only 包）；本节只记角色、注入点和加载方式，数值以表�
 > （`gazebo_bringup` 的 `image_delay_node`）后，生产 `mission_bringup` 不含任何 sim 专用节点，
 > 也不用另一份"带延迟"的任务入口。
 
-> **相机成像噪声——放弃 sim 注入**：gz-sim 8.14 + ogre2 相机不吃 `<noise>`（注入
-> stddev=8，两帧不同渲染却逐字节几乎相同；已排除改错文件/渲染引擎）。成像留到真机阶段
-> （真相机本有真噪声）；若日后要在 sim 补，走仓库内 `image_noise_stddev`，别改外部 SDF。
+> **相机成像在 ROS 侧加**：gz-sim 8.14 + ogre2 相机不吃 `<noise>`（注入 stddev=8 渲染几乎逐字节
+> 不变），所以柔化/暗角在 `image_delay_node` 里加；真机白天噪声本就 <1 DN，不加噪声。
 
 ## 4. 构建顺序
 

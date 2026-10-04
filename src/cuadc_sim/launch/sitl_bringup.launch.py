@@ -82,7 +82,9 @@ def generate_launch_description():
             # src/cuadc_sim/README.md "已解决问题".
             ' --configure-define=HAL_WITH_ESC_TELEM=1',
             ' --no-wsl2-network --use-dir ', LaunchConfiguration('sitl_run_dir'),
-            ' -m "--out 127.0.0.1:14551"',
+            # --streamrate 8: MAVProxy re-requests all streams every ~15s, like the onboard
+            # mav_fanout does; real FC link (57600 baud) delivers ~7.5 Hz telemetry.
+            ' -m "--out 127.0.0.1:14551 --streamrate 8"',
             ' ', LaunchConfiguration('extra_sitl_args'),
         ]],
         shell=True,
