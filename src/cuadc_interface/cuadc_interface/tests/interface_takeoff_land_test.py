@@ -42,7 +42,7 @@ class InterfaceTakeoffLandTest(Node):
         # arm+takeoff 放行闸门：默认开(现场安全)。sim 快速迭代可 -p wait_for_start:=false 直接飞。
         self.declare_parameter('wait_for_start', True)
         self.declare_parameter('start_timeout_sec', 600.0)
-        self.declare_parameter('takeoff_altitude_m', 5.0)
+        self.declare_parameter('takeoff_altitude_m', 1.0)
         self.declare_parameter('takeoff_timeout_sec', 30.0)
         self.declare_parameter('altitude_tolerance_m', 0.5)
         self.declare_parameter('hover_hold_sec', 8.0)
@@ -188,7 +188,7 @@ class InterfaceTakeoffLandTest(Node):
         if not result.success:
             raise RuntimeError('takeoff returned success=False')
         self._wait_for_condition(
-            lambda: self._relative_altitude() >= self._takeoff_altitude - self._altitude_tolerance,
+            lambda: self._relative_altitude() >= self._takeoff_altitude * 0.8,
             'altitude telemetry confirming climb', self._takeoff_timeout)
         climb_err = self._relative_altitude() - self._takeoff_altitude
         self._record_result('Takeoff', f'{self._takeoff_altitude:.1f}m',

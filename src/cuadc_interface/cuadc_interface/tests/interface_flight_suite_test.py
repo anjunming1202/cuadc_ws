@@ -9,12 +9,12 @@
 已锁 yaw、不触发 ArduCopter 自动朝向）。
 
 阶段（takeoff/land 恒有；中间段由 `phases` 参数选，逗号分隔，默认全开）：
-  takeoff  解锁 + 起飞到 takeoff_altitude_m
-  box      定 yaw 方框（北→东→南→西闭环）：yaw 不变却全向平移=定yaw全向移动，
-           每段量单次到位误差、闭环量累计误差、并断言机头没转
-  altitude 高度扫描（降到 3/2/1m 再爬回）：低空垂直位置控制，1m 贴近地效谨慎
-  velocity 速度扫描（0.25/0.5/1/1.5/2 m/s，每档 前进→停悬→反向→停悬）：量指令→
-           实测速度跟踪，并反复验证停发后安全悬停不续飞；收尾再单独测一次漂移
+  takeoff  解锁 + 起飞到 takeoff_altitude_m（默认 1m 低空）
+  box      定 yaw 方框（**以起飞点为中心**，±L/2 绕 NE→NW→SW→SE 再回中心）：yaw 不变
+           却全向平移=定yaw全向移动，每角量单次到位误差、闭环量累计误差、并断言机头没转
+  altitude 高度扫描（1→2→3→5→回 1m）：低空垂直位置控制，1m 贴近地效谨慎
+  velocity 速度扫描（0.25/0.5/1/1.5/2 m/s）：**从起飞 xy 出发、沿起飞时机头方向前进→停悬
+           →反向→停悬**往返；量指令→实测速度跟踪，并反复验证停发后安全悬停不续飞
   land     RTL 回 home 降落 + 自动上锁，量返航误差
 
 最后打目标/实测/误差汇总表——sim 跑一遍给基线、real 跑一遍量精度，同格式对比。
@@ -72,11 +72,11 @@ class InterfaceFlightSuiteTest(Node):
         self.declare_parameter('wait_for_start', True)
         self.declare_parameter('start_timeout_sec', 600.0)
         self.declare_parameter('phases', 'box,altitude,velocity')
-        self.declare_parameter('takeoff_altitude_m', 5.0)
+        self.declare_parameter('takeoff_altitude_m', 1.0)     # 起飞/方框/速度段都在这个低高度
         self.declare_parameter('takeoff_timeout_sec', 30.0)
         # 位置（方框/高度）收敛判定
-        self.declare_parameter('box_leg_m', 5.0)
-        self.declare_parameter('altitude_steps_m', [3.0, 2.0, 1.0])
+        self.declare_parameter('box_leg_m', 5.0)               # 方框边长，以起飞点为中心（各向 ±L/2）
+        self.declare_parameter('altitude_steps_m', [1.0, 2.0, 3.0, 5.0])  # 高度扫描，之后回起飞高度 → 1,2,3,5,1
         self.declare_parameter('position_tolerance_m', 0.6)
         self.declare_parameter('position_settle_sec', 2.0)
         self.declare_parameter('leg_timeout_sec', 40.0)
@@ -288,7 +288,7 @@ class InterfaceFlightSuiteTest(Node):
         if not result.success:
             raise RuntimeError('takeoff returned success=False')
         self._wait_for_condition(
-            lambda: self._relative_altitude() >= self._takeoff_altitude - 1.0,
+            lambda: self._relative_altitude() >= self._takeoff_altitude * 0.8,
             'altitude telemetry confirming climb', self._takeoff_timeout, settle_sec=1.0)
         self._home_x, self._home_y = self._local_xy()
         self._takeoff_yaw = self._latest_yaw
@@ -319,13 +319,15 @@ class InterfaceFlightSuiteTest(Node):
         self.get_logger().info(f'{label}: reached (pos_err={pos_err:.2f}m, alt_err={alt_err:+.2f}m)')
 
     def _run_box(self):
-        L = self._box_leg
+        h = self._box_leg / 2.0                 # 以起飞点为中心的方框：各向 ±half
         alt = self._takeoff_altitude
+        # 起飞点在中心 → 对角飞到 NE 角，绕一圈(边沿 N/E 轴对齐)，再回中心闭环。
         corners = [
-            (L, 0.0, 'Box N leg'),
-            (L, L, 'Box E leg'),
-            (0.0, L, 'Box S leg'),
-            (0.0, 0.0, 'Box W leg (close loop)'),
+            (+h, +h, 'Box corner NE'),
+            (+h, -h, 'Box corner NW'),
+            (-h, -h, 'Box corner SW'),
+            (-h, +h, 'Box corner SE'),
+            (0.0, 0.0, 'Box back to center (close loop)'),
         ]
         for north, east, label in corners:
             self._goto_local(north, east, alt, label)
@@ -374,8 +376,10 @@ class InterfaceFlightSuiteTest(Node):
         return peak
 
     def _run_velocity_sweep(self):
+        # 从起飞水平坐标开始：先回到起飞点正上方(不管上一段停在哪)，再沿起飞时机头方向往返。
+        self._goto_local(0.0, 0.0, self._takeoff_altitude, 'Velocity: return to takeoff xy')
         for v in self._speeds:
-            self.get_logger().info(f'velocity sweep: {v:.2f}m/s ...')
+            self.get_logger().info(f'velocity sweep: {v:.2f}m/s (机身前向=起飞时前方) ...')
             fwd = self._velocity_leg(v, f'Velocity {v:.2f}m/s fwd')
             back = self._velocity_leg(-v, f'Velocity {v:.2f}m/s back')
             achieved = max(fwd, back)
