@@ -76,6 +76,7 @@ Set Home Position、Air Speed（多旋翼不适用）。
 | Local Position + Relative Altitude | `~/telemetry/local_position` | `geometry_msgs/PoseStamped` | `position.x/y/z` 是**起飞坐标系**（前/右/下，接口层换算，见 [coordinate-frames.md](coordinate-frames.md)），z 轴向下为正——高度用 `-position.z`，见下方"高度基准" |
 | Velocity | `~/telemetry/velocity` | `geometry_msgs/TwistStamped` | 起飞坐标系（前/右/下） |
 | Attitude/Heading | `~/telemetry/attitude` | `sensor_msgs/Imu`（`orientation`+`angular_velocity`，不发线加速度） | `orientation` = 机体 → 起飞坐标系；航向相对起飞时机头 |
+| FC Time（诊断） | `~/telemetry/fc_time` | `sensor_msgs/TimeReference` | 每条 ATTITUDE 一条：`header.stamp` = Pi 到达时刻（同 attitude），`time_ref` = 飞控 `time_boot_ms`。录进 bag 后离线算链路延迟/抖动（`scripts/analyze_recording.py`），任务逻辑不用 |
 | Battery | `~/telemetry/battery` | `sensor_msgs/BatteryState` | 任务逻辑安全响应（提前 RTL）依赖这个 |
 | GPS Status | `~/telemetry/gps_status` | 自定义（fix_type, satellites_visible, hdop） | |
 | EKF Status | `~/telemetry/ekf_status` | 自定义 | |

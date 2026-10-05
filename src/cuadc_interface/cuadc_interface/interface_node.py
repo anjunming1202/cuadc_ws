@@ -28,7 +28,7 @@ from cuadc_interface_msgs.msg import (
 )
 from cuadc_interface_msgs.srv import Arm, GotoLocation, ReleasePayload, SetMode, Takeoff
 from geometry_msgs.msg import PoseStamped, TwistStamped
-from sensor_msgs.msg import BatteryState, Imu, NavSatFix
+from sensor_msgs.msg import BatteryState, Imu, NavSatFix, TimeReference
 from std_msgs.msg import Bool, Float64, String
 
 # EKF_STATUS_REPORT.flags 判定"位置估计可信"的两个必要位——早于这两位置位时飞控会
@@ -185,6 +185,8 @@ class InterfaceNode(Node):
             PoseStamped, '~/telemetry/local_position', 10)
         self.velocity_pub = self.create_publisher(TwistStamped, '~/telemetry/velocity', 10)
         self.attitude_pub = self.create_publisher(Imu, '~/telemetry/attitude', 10)
+        # 诊断：每条 ATTITUDE 的飞控时间(time_boot_ms) 对 Pi 到达时间，录进 bag 后可算链路延迟/抖动。
+        self.fc_time_pub = self.create_publisher(TimeReference, '~/telemetry/fc_time', 10)
         self.battery_pub = self.create_publisher(BatteryState, '~/telemetry/battery', 10)
         self.gps_status_pub = self.create_publisher(GpsStatus, '~/telemetry/gps_status', 10)
         self.ekf_status_pub = self.create_publisher(EkfStatus, '~/telemetry/ekf_status', 10)
@@ -361,6 +363,12 @@ class InterfaceNode(Node):
             yaw_takeoff = _wrap_pi(msg.yaw - self._origin_yaw)  # 对外：相对起飞时机头
         imu = Imu()
         imu.header.stamp = self.get_clock().now().to_msg()
+        ref = TimeReference()
+        ref.header.stamp = imu.header.stamp
+        ref.time_ref.sec, ref.time_ref.nanosec = divmod(int(msg.time_boot_ms), 1000)
+        ref.time_ref.nanosec *= 1_000_000
+        ref.source = 'ATTITUDE.time_boot_ms'
+        self._safe_publish(self.fc_time_pub, ref)
         imu.angular_velocity.x = msg.rollspeed
         imu.angular_velocity.y = msg.pitchspeed
         imu.angular_velocity.z = msg.yawspeed
