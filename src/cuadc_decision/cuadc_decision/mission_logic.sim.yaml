@@ -6,3 +6,4 @@ drop_phase_timeout_s: 90.0
 recon_phase_timeout_s: 90.0
 battery_critical_fraction: 0.20
 gps_fix_ok_threshold: 3
+emulate_pilot_arm: true          # sim 没有飞手：WAIT_PILOT_ARM 里替飞手切 STABILIZE+解锁

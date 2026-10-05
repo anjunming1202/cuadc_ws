@@ -7,3 +7,4 @@ drop_phase_timeout_s: 90.0
 recon_phase_timeout_s: 90.0
 battery_critical_fraction: 0.20
 gps_fix_ok_threshold: 3
+emulate_pilot_arm: false         # 真机：解锁/上锁只归飞手 RC，Pi 不发 arm

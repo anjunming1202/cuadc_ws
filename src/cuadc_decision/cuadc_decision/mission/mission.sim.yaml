@@ -1,6 +1,7 @@
 # 世界/任务参数 —— sim 档。字段 = MissionWorld 字段。取值须与 cuadc_sim/field/config.py
 # 建出的仿真世界对应（区中心来自那份固定开发场地；值不对会在压测台端到端暴露）。按设计
 # 与 field/config.py 分别维护、不跨包 import。initial_state/phases 属场景，不在 base 里写。
+takeoff_point: [0.0, 0.0]            # 起飞点场地坐标 = 仿真出生点（field/config.py LANDING_PAD_CENTER）
 cruise_alt_m: 2.0
 
 drop_zone_center: [32.5, 0.0]        # field-layout.md 投放区 x in [30,35] 中点

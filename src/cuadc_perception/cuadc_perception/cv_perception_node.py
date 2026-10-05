@@ -1,7 +1,7 @@
 """真实感知节点：**薄 ROS 壳**——选取帧源（sim=`/camera/image_raw`；real=相机
 服务的原始 NV12 shm，图像**不进 ROS**）、跑 rclpy-free 的 `PerceptionCore`、把结果
 扇出到多个 sink：DetectionArray（ROS，给决策，契约不变）、sim 的 debug Image（给
-cuadc_viz）、real 的 RTP 标注预览（给地面）。算法在 `detectors/`、编排在
+viz，已退役）、real 的 RTP 标注预览（给地面）。算法在 `detectors/`、编排在
 `perception_core`、取帧/预览在 `frame_sources`/`sinks`——都不依赖 rclpy。
 设计见 docs/spec/adr/0008-perception-raw-frame-multi-sink.md、契约见
 docs/spec/05-perception-decision-interface.md。
@@ -9,7 +9,7 @@ docs/spec/05-perception-decision-interface.md。
 按帧处理（收一帧算一帧）。取帧源:
 - `frame_source=ros`（仿真）:订阅 `/camera/image_raw`（Gazebo 发），图经 ROS。
 - `frame_source=shm`（真机）:从 `raw_shm` 直接取原始帧,零解码,**图不进 ROS**;
-  同时把标注预览编码推到本地 `preview_port`（cv-forward 转地面）。
+  同时把标注预览编码推到本地 `preview_port`（onboard 转发到地面）。
 """
 
 import math
@@ -118,6 +118,9 @@ class CvPerceptionNode(Node):
         self.declare_parameter('preview_enabled', False)
         self.declare_parameter('preview_port', DEFAULT_PREVIEW_PORT)
         self.declare_parameter('preview_bitrate', 1000)
+        # 逐帧检测判定链日志(px 半径→反投影距离→物理半径→接受/拒因),节流打印。
+        # 默认关;运行时可 `ros2 param set /cuadc_perception_cv detection_log_enabled true` 开。
+        self.declare_parameter('detection_log_enabled', False)
 
         detector_name = self.get_parameter('detector').value
         profile = self.get_parameter('profile').value
@@ -265,8 +268,10 @@ class CvPerceptionNode(Node):
         out.detections = [self._to_msg(d) for d in result.detections]
         self._publisher.publish(out)
         self._publish_perf(result.perf)
+        if self.get_parameter('detection_log_enabled').value:
+            self._log_detection_chain(result)
 
-        # sink 2: sim 的 debug Image(给 cuadc_viz)
+        # sink 2: sim 的 debug Image(给已退役的 viz)
         for view in active_views:
             self._publish_debug_image(view, frame_bgr, result.debug, header)
         if self._recon_zone_active and ros_image_msg is not None:
@@ -280,6 +285,25 @@ class CvPerceptionNode(Node):
             annotated = frame_bgr.copy()
             draw_overlay(annotated, result, self._frame_idx, self._ema_ms)
             self._preview.push(annotated)
+
+    def _log_detection_chain(self, result):
+        """把这一帧每个候选的判定链打成一行(节流~1s):px 半径→反投影距离→物理半径→接受/拒因。
+        地面单点调参用;radius_m 超出 [min,max] 会显示 too_small/too_big(地面高度≈0 时常见)。"""
+        parts = []
+        for i, cr in enumerate(result.contour_results):
+            rng = f'{cr.range_m:.2f}m' if cr.range_m is not None else 'n/a'
+            r_m = f'{cr.radius_m:.3f}m' if cr.radius_m is not None else 'n/a'
+            if cr.detection is not None:
+                d = cr.detection
+                parts.append(f'#{i} px_r={cr.observation.radius_px:.0f} rng={rng} r={r_m} '
+                             f'ACC conf={d.confidence:.2f} world=({d.x:.1f},{d.y:.1f})')
+            else:
+                parts.append(f'#{i} px_r={cr.observation.radius_px:.0f} rng={rng} r={r_m} '
+                             f'REJ({cr.reject_reason})')
+        detail = ' | '.join(parts) if parts else '(no contours)'
+        self.get_logger().info(
+            f'[DET] obs={len(result.observations)} acc={len(result.detections)} | {detail}',
+            throttle_duration_sec=1.0)
 
     @staticmethod
     def _to_msg(det):
@@ -307,12 +331,14 @@ class CvPerceptionNode(Node):
             out_bgr = cv2.cvtColor(debug['mask'], cv2.COLOR_GRAY2BGR)
         elif view == 'contours':
             out_bgr = image_bgr.copy()
-            for obs, det in debug['contour_results']:
+            for cr in debug['contour_results']:
+                obs, det = cr.observation, cr.detection
                 color = (0, 200, 0) if det is not None else (128, 128, 128)
                 cv2.drawContours(out_bgr, [obs.contour], -1, color, 2)
         elif view == 'annotated':
             out_bgr = image_bgr.copy()
-            for obs, det in debug['contour_results']:
+            for cr in debug['contour_results']:
+                obs, det = cr.observation, cr.detection
                 if det is None:
                     continue
                 cv2.circle(out_bgr, (int(obs.u), int(obs.v)), int(obs.radius_px), (0, 200, 0), 2)

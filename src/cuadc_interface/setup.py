@@ -24,10 +24,14 @@ setup(
     entry_points={
         'console_scripts': [
             'interface_node = cuadc_interface.interface_node:main',
-            'interface_acceptance_test = cuadc_interface.interface_acceptance_test:main',
-            'interface_maneuver_test = cuadc_interface.interface_maneuver_test:main',
-            'interface_precision_test = cuadc_interface.interface_precision_test:main',
-            'interface_velocity_test = cuadc_interface.interface_velocity_test:main',
+            # 操作性测试节点在 tests/ 子包（手动 ros2 run，非 pytest）
+            'interface_acceptance_test = cuadc_interface.tests.interface_acceptance_test:main',
+            'interface_maneuver_test = cuadc_interface.tests.interface_maneuver_test:main',
+            'interface_precision_test = cuadc_interface.tests.interface_precision_test:main',
+            'interface_velocity_test = cuadc_interface.tests.interface_velocity_test:main',
+            'interface_arm_test = cuadc_interface.tests.interface_arm_test:main',
+            'interface_takeoff_land_test = cuadc_interface.tests.interface_takeoff_land_test:main',
+            'interface_flight_suite_test = cuadc_interface.tests.interface_flight_suite_test:main',
         ],
     },
 )

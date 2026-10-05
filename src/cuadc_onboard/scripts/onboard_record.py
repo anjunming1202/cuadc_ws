@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""cuadc_onboard 机载录制 —— 全质量视频(相机 tee 5604)+ rosbag,共享后端 Recorder。
+"""cuadc_onboard 机载录制 —— 全质量视频(相机 tee 5605)+ rosbag,共享后端 Recorder。
 
 **不自启**(开发/写代码时不会录空 bag)。前端:
 - 本脚本 CLI:**前台跑、Ctrl-C 停**,ssh 进 Pi 一条命令即录。

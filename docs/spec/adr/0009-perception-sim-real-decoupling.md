@@ -18,4 +18,4 @@ ADR-0008 重构后的 `cv_perception_node` 把 sim/real 混在一个节点里，
 
 - sim/real 的数据/配置差异全部是"按 profile 选文件"，无代码分支。
 - 取帧仍保留 `frame_source`（ros/shm）一处薄适配分支——源本就不同（Gazebo 发 ROS 话题 / 真相机写 shm），是合理接缝。
-- **未决（留待 perception owner）**：`run_mission_hardware.sh` 尚未设 `frame_source:=shm`，真机取帧链未接管；是否把节点拆成 sim/real 两个入口。
+- **未决（留待 perception owner）**：`run_mission_real.sh` 尚未设 `frame_source:=shm`，真机取帧链未接管；是否把节点拆成 sim/real 两个入口。

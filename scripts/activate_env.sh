@@ -1,5 +1,5 @@
 # Source this file, don't execute it: it exports environment variables
-# into the *current* shell (ROS Humble + this workspace's install +
+# into the *current* shell (ROS 2 + this workspace's install +
 # AMENT_PREFIX_PATH workaround). Running it as ./scripts/activate_env.sh
 # only affects a throwaway subshell and has no effect on your terminal.
 #
@@ -24,7 +24,18 @@
 _ACTIVATE_ENV_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$_ACTIVATE_ENV_REPO_ROOT"
 
-source /opt/ros/humble/setup.bash
+# ROS distro differs by machine: dev workstation = Humble, 伴随机(树莓派) = Jazzy.
+# Source whichever is installed (prefer an already-selected $ROS_DISTRO), so the
+# same scripts run on both without editing. Add a distro here if a third appears.
+if [ -n "$ROS_DISTRO" ] && [ -f "/opt/ros/$ROS_DISTRO/setup.bash" ]; then
+  source "/opt/ros/$ROS_DISTRO/setup.bash"
+elif [ -f /opt/ros/jazzy/setup.bash ]; then
+  source /opt/ros/jazzy/setup.bash
+elif [ -f /opt/ros/humble/setup.bash ]; then
+  source /opt/ros/humble/setup.bash
+else
+  echo "activate_env.sh: no ROS found under /opt/ros (looked for \$ROS_DISTRO, jazzy, humble)" >&2
+fi
 source install/setup.bash
 # Local colcon quirk workaround, see docs/lessons.md 2026-07-09 entry --
 # loop over every built package instead of naming them one by one, so a
@@ -40,4 +51,4 @@ unset _pkg_install_dir
 # sourcing us (run_sitl_demo.sh / run_gazebo_demo.sh both declare their
 # own REPO_ROOT before calling this).
 unset _ACTIVATE_ENV_REPO_ROOT
-echo "cuadc_ws env activated (ROS Humble + AMENT_PREFIX_PATH workaround)"
+echo "cuadc_ws env activated (ROS ${ROS_DISTRO:-?} + AMENT_PREFIX_PATH workaround)"

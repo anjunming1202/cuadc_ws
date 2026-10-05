@@ -2,7 +2,7 @@
 Description=cuadc_onboard controllable camera service (raw tee + H264 + runtime controls)
 # 相机独占; raw NV12 tee → 编码 5602/5603 + shmsink /tmp/cuadc-cam-raw.shm（CV 直吃）。
 # 运行时可控:监听 5610 收 JSON 改曝光/增益/对焦(libcamerasrc runtime 属性)。
-# 自己不发地面:干净图传 video-forward(5603→5600),CV 预览 cv-preview+cv-forward。
+# 自己不发地面:干净图传 video-forward(5603→5600),CV 预览 cv-preview-ctl(按钮启停)。
 After=network.target
 
 [Service]

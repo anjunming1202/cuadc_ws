@@ -62,7 +62,7 @@ class DecisionNode(Node):
         # profile = sim/real 环境档（选各算法/配置层的 .sim/.real 文件）；scenario = 跑哪种
         # 场景（full_mission / drop_zone_bench / recon_zone_bench，含 initial_state 与跑哪些
         # 阶段）。两者由场景启动脚本写死（run_mission_sim.sh=sim / *_drop_zone_bench=该场景 /
-        # run_mission_hardware.sh=real），见 docs/spec/mission-config-layer.md。
+        # run_mission_real.sh=real），见 docs/spec/mission-config-layer.md。
         self.declare_parameter('profile', 'sim')
         self.declare_parameter('scenario', 'full_mission')
         profile = self.get_parameter('profile').value
@@ -93,6 +93,7 @@ class DecisionNode(Node):
 
         self.create_subscription(Bool, f'{_INTERFACE_NS}/status/connected', self._on_connected, 10)
         self.create_subscription(Bool, f'{_INTERFACE_NS}/status/armed', self._on_armed, 10)
+        self.create_subscription(String, f'{_INTERFACE_NS}/status/mode', self._on_mode, 10)
         self.create_subscription(FailsafeState, f'{_INTERFACE_NS}/status/failsafe', self._on_failsafe, 10)
         self.create_subscription(
             PoseStamped, f'{_INTERFACE_NS}/telemetry/local_position', self._on_local_position, 10)
@@ -121,6 +122,9 @@ class DecisionNode(Node):
 
     def _on_armed(self, msg):
         self._ctx.armed = msg.data
+
+    def _on_mode(self, msg):
+        self._ctx.mode = msg.data
 
     def _on_failsafe(self, msg):
         self._ctx.failsafe_active = msg.active
@@ -208,6 +212,8 @@ class DecisionNode(Node):
                 f'[PERF] tick() took {tick_elapsed_ms:.1f}ms (budget {self._tick_budget_ms:.1f}ms)',
                 throttle_duration_sec=1.0)
 
+        if result.notice:
+            self.get_logger().warn(f'[PILOT] {result.notice}')
         if result.next_state is not None and result.next_state != self._ctx.current_state:
             if result.next_state == mission_logic.State.DROP_PAYLOAD:
                 # 投放瞬间的瞄准快照:跨轮对比 bearing/冻结偏移的可复现性,是
@@ -220,6 +226,10 @@ class DecisionNode(Node):
                     f'[DROP_AIM] drop={self._ctx.drop_task.drop_count} bearing={bstr} '
                     f'off_frozen={ostr} lever_eff=({ast.lever[0]:.3f},{ast.lever[1]:.3f})')
             self.get_logger().info(f'[STATE] {self._ctx.current_state} -> {result.next_state}')
+            if result.next_state == mission_logic.State.PILOT_TAKEOVER:
+                self.get_logger().warn(
+                    f'[PILOT] pilot/FC took over (mode={self._ctx.mode}, armed={self._ctx.armed}) '
+                    '— mission stopped commanding')
             self._ctx.current_state = result.next_state
             self._ctx.command_dispatched = False
             self._ctx.state_entered_monotonic = time.monotonic()

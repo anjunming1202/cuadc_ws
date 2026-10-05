@@ -1,7 +1,8 @@
-# 投放区单练：从投放前一个 state(ARM_AND_TAKEOFF)起，起飞→飞抵投放区→搜索→接近→投放，
-# 投满即 RTL(phases 无 recon)。配合 run_gazebo_drop_zone_bench.sh 的近投放区出生世界。
+# 投放区单练：起飞→飞抵投放区→搜索→接近→投放，投满即 RTL(phases 无 recon)。照样走放行 +
+# 飞手解锁两道门（真机单点测试也用本场景，不能一起来就飞）。sim 的近投放区出生点写在
+# drop_zone_bench.sim.yaml（只对 sim 成立，不能放这里带到真机）。
 # SEARCH 简化「看到候选就去投」靠覆盖 search 门实现，mission_logic 里无 test-only 分支。
-initial_state: ARM_AND_TAKEOFF
+initial_state: INIT
 phases: [drop]
 search_overrides:
   min_candidates_before_select: 1     # 看到一个可信候选就选（不必等凑够 3 个/扫完全程）

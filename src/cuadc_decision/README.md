@@ -110,7 +110,7 @@ ros2 launch cuadc_decision decision_bringup.launch.py scenario:=drop_zone_bench
 
 **sim/real 与 scenario 选择**沿用 `connection` 那套：不靠一个参数默认值二选一，而是
 **场景启动脚本**把 `profile`/`scenario` 写死（`run_mission_sim.sh`=sim+full_mission /
-`run_mission_sim_drop_zone_bench.sh`=sim+drop_zone_bench / `run_mission_hardware.sh`=real）。
+`run_mission_sim_drop_zone_bench.sh`=sim+drop_zone_bench / `run_mission_real.sh`=real）。
 两者经 `mission_bringup` 传到 `decision_node.__init__`，那里各层 `load` 后调
 `mission_logic.configure_approach(profile)` + `configure_mission(world, tuning, search)`
 一次性注入（`world` 已含场景覆盖）。同一个 `profile` 也选感知检测器的档。

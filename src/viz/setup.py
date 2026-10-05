@@ -3,11 +3,11 @@ from glob import glob
 
 from setuptools import find_packages, setup
 
-package_name = 'cuadc_viz'
+package_name = 'viz'
 
 
 def _web_data_files():
-    """把 web/ 下所有文件按相对路径原样装进 share/cuadc_viz/web/，
+    """把 web/ 下所有文件按相对路径原样装进 share/viz/web/，
     静态文件服务器（http.server）直接指到这个安装后的目录。"""
     files = []
     for root, _dirs, filenames in os.walk('web'):

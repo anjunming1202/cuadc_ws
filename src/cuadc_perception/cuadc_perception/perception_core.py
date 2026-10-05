@@ -30,10 +30,22 @@ class WorldDetection:
 
 
 @dataclass
+class ContourResult:
+    """一个候选轮廓的完整判定链：图像观测 → 反投影 → 物理尺寸门。detection 非 None=通过；
+    range_m/radius_m 是反投影中间量（预览模式无 pose、或反投影失败时为 None），reject_reason
+    空串=接受，否则 'no_pose'/'reproject_fail'/'too_small'/'too_big'。供画框/调试/日志复用。"""
+    observation: object                     # ContourObservation
+    detection: "WorldDetection | None"
+    range_m: float | None = None            # 反投影到筒顶的距离
+    radius_m: float | None = None           # 反推的物理半径
+    reject_reason: str = ''
+
+
+@dataclass
 class PerceptionResult:
     observations: list          # ContourObservation：图像空间观测（永远有）
     detections: list            # WorldDetection：世界检测（无 pose 时为空）
-    contour_results: list       # (ContourObservation, WorldDetection|None)；None=被拒
+    contour_results: list       # ContourResult：逐轮廓判定链（含中间量/拒因）
     perf: dict
     debug: dict | None          # 检测器 debug（mask 等）+ 'contour_results'；未请求为 None
 
@@ -73,9 +85,18 @@ class PerceptionCore:
                 world_xy, range_m = geometry.reproject_to_cylinder_top(
                     obs.u, obs.v, self._camera, cam_origin, cam_to_world, self._cylinder_height_m)
                 det = None
-                if world_xy is not None:
+                radius_m = None
+                reason = ''
+                if world_xy is None:
+                    range_m = None
+                    reason = 'reproject_fail'
+                else:
                     radius_m = obs.radius_px * range_m / self._camera.fx
-                    if self._min_radius_m <= radius_m <= self._max_radius_m:
+                    if radius_m < self._min_radius_m:
+                        reason = 'too_small'
+                    elif radius_m > self._max_radius_m:
+                        reason = 'too_big'
+                    else:
                         bearing_x, bearing_y = geometry.normalize_bearing(
                             obs.u, obs.v, self._camera)
                         det = WorldDetection(
@@ -86,14 +107,14 @@ class PerceptionCore:
                             confidence=float(min(obs.circularity, 1.0)),
                         )
                         detections.append(det)
-                contour_results.append((obs, det))
+                contour_results.append(ContourResult(obs, det, range_m, radius_m, reason))
             reproject_ms = (time.monotonic() - t_reproject) * 1000.0
             if perf:
                 perf['fit_reproject_ms'] = perf.pop('fit_ms', 0.0) + reproject_ms
                 perf['total_ms'] = (perf.get('segment_ms', 0.0) + perf.get('morphology_ms', 0.0)
                                     + perf.get('contours_ms', 0.0) + perf['fit_reproject_ms'])
         else:
-            contour_results = [(obs, None) for obs in observations]
+            contour_results = [ContourResult(obs, None, reject_reason='no_pose') for obs in observations]
             if perf:  # 预览模式无反投影,总时长 = 检测器各段之和(overlay 显示用)
                 perf['total_ms'] = sum(v for k, v in perf.items() if k.endswith('_ms'))
 

@@ -34,20 +34,20 @@ def generate_launch_description():
     web_video_server_node = Node(
         package='web_video_server',
         executable='web_video_server',
-        name='cuadc_viz_web_video_server',
+        name='viz_web_video_server',
         output='screen',
         parameters=[{
             'port': LaunchConfiguration('web_video_port'),
             # 无线链路上真正传的是 JPEG 压缩字节（image_transport 的
             # compressed 话题），不是原始像素——这是带宽预算能成立的关键，
-            # 不是可选项，见 cuadc_viz/README.md 的带宽设计一节。
+            # 不是可选项，见 viz/README.md 的带宽设计一节。
             'default_transport': 'compressed',
         }],
     )
 
     static_web_server = ExecuteProcess(
         cmd=['python3', '-m', 'http.server', LaunchConfiguration('web_port'),
-             '--directory', PathJoinSubstitution([FindPackageShare('cuadc_viz'), 'web'])],
+             '--directory', PathJoinSubstitution([FindPackageShare('viz'), 'web'])],
         output='screen',
     )
 

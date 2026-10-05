@@ -1,6 +1,6 @@
 """结果出口（sink）：一次检测的结果扇出到多个出口。这里放**非-ROS** 的 RTP
 预览 sink（gi/GStreamer，不依赖 rclpy）——把标注画到帧上、H.264 编码推到本地
-udp（cv-forward 再转地面），供真机预览和无-ROS 预览模式复用。ROS 的
+udp（onboard 转发到地面），供真机预览和无-ROS 预览模式复用。ROS 的
 DetectionArray/debug-Image 出口是 ROS 原生的、留在节点里（用 self.create_publisher）。
 
 见 docs/spec/adr/0008-perception-raw-frame-multi-sink.md。
@@ -31,7 +31,8 @@ def _ensure_gst():
 def draw_overlay(frame_bgr: np.ndarray, result, frame_idx: int, ema_ms: float) -> None:
     """把检测框 + 计时信息画到 frame 上（就地）。接受=绿圈+尺寸/置信标签，
     拒绝=灰圈。result 是 perception_core.PerceptionResult。"""
-    for obs, det in result.contour_results:
+    for cr in result.contour_results:
+        obs, det = cr.observation, cr.detection
         u, v, r = int(obs.u), int(obs.v), max(1, int(obs.radius_px))
         if det is not None:
             cv2.circle(frame_bgr, (u, v), r, (0, 220, 0), 2)

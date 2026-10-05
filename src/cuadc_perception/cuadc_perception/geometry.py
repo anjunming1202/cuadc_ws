@@ -31,6 +31,9 @@ class CameraParams:
     t_forward_m: float = 0.0
     t_right_m: float = 0.0
     t_down_m: float = 0.0
+    # 飞控停在地面时离地高。位姿原点 = 解锁时的飞控位置（接口层换算，ADR-0011），地面在其下方
+    # 这么多；与 approaches/*.yaml 的同名值是同一个机体实测量。
+    fc_rest_clearance_m: float = 0.0
 
 
 def load_camera_params(profile: str) -> CameraParams:
@@ -79,7 +82,7 @@ def normalize_bearing(u, v, camera: CameraParams) -> Tuple[float, float]:
 def reproject_to_cylinder_top(u, v, camera: CameraParams, origin_ned,
                                cam_to_world, cylinder_height_m):
     """像素 -> 世界坐标：像素反投影成相机系射线，转到世界系，跟筒顶所在平面
-    （NED down = -cylinder_height_m，不是地面 down=0）求交——检测到的色块主要
+    （地面 down = fc_rest_clearance_m，筒顶在其上 cylinder_height_m）求交——检测到的色块主要
     反映筒的顶面，跟地面求交会引入正比于视线倾角的系统性偏差。`origin_ned` 是
     相机光心的世界位置（见 camera_origin_ned）。返回 (world_xy, 斜距)，射线太
     接近水平（姿态倾斜太大）时返回 (None, None)。"""
@@ -89,7 +92,7 @@ def reproject_to_cylinder_top(u, v, camera: CameraParams, origin_ned,
     origin_down = origin_ned[2]
     if d_world[2] < _MIN_RAY_DOWN_COMPONENT:
         return None, None
-    t = (-cylinder_height_m - origin_down) / d_world[2]
+    t = (camera.fc_rest_clearance_m - cylinder_height_m - origin_down) / d_world[2]
     if t <= 0:
         return None, None
 

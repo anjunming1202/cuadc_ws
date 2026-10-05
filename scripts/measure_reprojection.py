@@ -23,6 +23,7 @@ _ALT_M = 2.0                 # 量测悬停高度 = 任务巡航高度
 _OFFSET_E_M = 0.55           # 侧偏视点的东向偏移(锁 yaw=0 后筒落在水平半FOV内)
 _SETTLE_S = 5.0              # 到点后先稳定再采样
 _SAMPLE_S = 6.0              # 每视点采样时长（10Hz 检测 ≈ 60 帧）
+_SPAWN_E, _SPAWN_N = field_config.DROP_ZONE_BENCH_SPAWN  # 场地 x->NED east, y->NED north
 _ASSOC_GATE_M = 0.8          # 检测←→真值筒关联门（筒间距≥1.5m，不会串）
 _BIAS_LIMIT_M = 0.05         # 干净 sim 判定门限（只加在 nadir 视点上,见下）
 _STD_LIMIT_M = 0.03
@@ -53,7 +54,9 @@ class _Collector(Node):
             return
         for d in msg.detections:
             if d.target_type == 'cylinder':
-                self.samples.append((d.position.x, d.position.y, d.apparent_size))
+                # 检测在接口层坐标系（原点 = 解锁点 = bench 出生点），本工具用世界 NED 飞/比对，加回出生点。
+                self.samples.append((d.position.x + _SPAWN_N, d.position.y + _SPAWN_E,
+                                     d.apparent_size))
 
 
 def _goto(mav, north, east, wait_s):

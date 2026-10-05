@@ -2,7 +2,7 @@
 
 地面站(地面笔记本侧)运行时:收机载推来的**图传 + 遥测**,在 localhost 起一个
 网页把两者同屏显示。是 `cuadc_onboard` 的**地面对端**——非 ROS、低延迟直路
-(与 `cuadc_viz` 的 sim/ROS 仪表盘互补,不是同一个东西)。
+(已退役的 `src/viz` 是 sim/ROS 仪表盘,不是同一个东西)。
 
 **非 colcon 包**(纯 Python + 网页),和 `cuadc_onboard` 一样游离在 ROS 任务链外。
 

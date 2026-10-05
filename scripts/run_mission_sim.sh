@@ -7,7 +7,7 @@
 # design, see README.md Quickstart.
 #
 # connection 写死指向本机 SITL，不接受命令行覆盖——真机跑
-# run_mission_hardware.sh，桩感知跑 run_mission_stub_sim.sh，一个脚本只
+# run_mission_real.sh，桩感知跑 run_mission_stub_sim.sh，一个脚本只
 # 对应一种场景，不靠传参切换，见 launch/mission_bringup.launch.py 文件头
 # 的说明（之前那种"一个脚本+参数默认值决定行为"的设计就是因为默认值
 # 悄悄选中了错误的选项，排查了很久才发现）。

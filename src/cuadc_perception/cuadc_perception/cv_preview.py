@@ -1,6 +1,7 @@
-"""CV 预览（无-ROS 模式）：从相机服务的原始 shm 取帧 → 跑选定检测器画框 →
-H.264/RTP 推本地 `--port`（cv-forward 转地面）。**不订位姿、不反投影、不发 ROS**
-——供相机自检/现场调参，不需要起 ROS 栈。
+"""CV 预览（无-ROS 模式）：从相机服务取帧（默认原始 shm；shmsrc 接不上时
+`--from-rtp-port 5602` 回退本地 H.264 tap）→ 跑选定检测器画框 → H.264/RTP 推本地
+`--port`（转发到地面）。**不订位姿、不反投影、不发 ROS**——供相机自检/现场调参，
+不需要起 ROS 栈。
 
 和 cv_perception_node 共用同一套 `frame_sources` / `perception_core` / `sinks` /
 `detectors`，只是接线不同（pose=None、只挂 RTP sink）。设计见
@@ -20,7 +21,7 @@ gi.require_version("Gst", "1.0")
 from gi.repository import Gst  # noqa: E402
 
 from cuadc_perception import detectors
-from cuadc_perception.frame_sources import DEFAULT_RAW_SHM, ShmFrameSource
+from cuadc_perception.frame_sources import DEFAULT_RAW_SHM, RtpFrameSource, ShmFrameSource
 from cuadc_perception.perception_core import PerceptionCore
 from cuadc_perception.sinks import DEFAULT_PREVIEW_PORT, RtpPreviewSink, draw_overlay
 
@@ -37,6 +38,8 @@ def main() -> None:
     ap.add_argument("--bitrate", type=int, default=1000)
     ap.add_argument("--detector", default=detectors.ACTIVE_DEFAULT)
     ap.add_argument("--profile", default="real", choices=("real", "sim"))
+    ap.add_argument("--from-rtp-port", type=int, default=0,
+                    help="设为 5602 时回退本地 H.264 tap 取帧（shmsrc 接不上时）")
     args = ap.parse_args()
 
     Gst.init(None)
@@ -60,13 +63,18 @@ def main() -> None:
             print(f"cv-preview n={state['n']} obs={len(result.observations)} "
                   f"total={total:.1f}ms ema={state['ema']:.1f}ms", flush=True)
 
-    src = ShmFrameSource(args.raw_shm, args.src_width, args.src_height, args.src_fps,
-                         args.width, args.height)
+    if args.from_rtp_port > 0:
+        src = RtpFrameSource(args.from_rtp_port, args.src_fps, args.width, args.height)
+        src_desc = f"rtp:{args.from_rtp_port}"
+    else:
+        src = ShmFrameSource(args.raw_shm, args.src_width, args.src_height, args.src_fps,
+                             args.width, args.height)
+        src_desc = f"shm:{args.raw_shm}"
     if not src.start(on_frame):
-        print("shm 取帧源启动失败(相机服务在跑吗?)", file=sys.stderr)
+        print("取帧源启动失败(相机服务在跑吗?)", file=sys.stderr)
         raise SystemExit(1)
 
-    print(f"cv-preview: shm:{args.raw_shm} -> {args.detector}({args.profile}) "
+    print(f"cv-preview: {src_desc} -> {args.detector}({args.profile}) "
           f"{args.width}x{args.height}@{args.src_fps} -> udp:127.0.0.1:{args.port}", flush=True)
 
     stop = threading.Event()

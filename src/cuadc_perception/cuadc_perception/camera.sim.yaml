@@ -13,3 +13,5 @@ mount_yaw_rad: 0.0
 t_forward_m: 0.11
 t_right_m: 0.0
 t_down_m: 0.20
+# 飞控停在地面时离地高（位姿原点=解锁时飞控位置，地面在其下方；实测，见 ADR-0010 簇①）
+fc_rest_clearance_m: 0.31

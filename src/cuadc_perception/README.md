@@ -22,7 +22,7 @@ ros2 launch cuadc_perception cv_perception_bringup.launch.py
 ```
 
 顶层任务节点启动脚本按场景分开，`scripts/run_mission_sim.sh`/
-`run_mission_hardware.sh` 固定起真实 CV 感知，`run_mission_stub_sim.sh`
+`run_mission_real.sh` 固定起真实 CV 感知，`run_mission_stub_sim.sh`
 固定起桩感知——不用一个参数默认值二选一（之前是这么做的，默认值选中
 了 stub，排查了很久才发现），一个脚本名直接对应一种场景，见仓库根
 `README.md` Quickstart 表格。
@@ -108,7 +108,7 @@ sim 档是 **Gazebo 采样值**；real 档是真实蓝布垫的 census 值（源
 
 - 每个检测器的可调参数放它自己的 `detectors/<方法>.<profile>.yaml`，节点启动时
   按 `detector` + `profile` 参数用 `load_config(profile)` 读进来（一次）。
-- **sim/real 沿用场景启动脚本**（`run_mission_sim.sh` / `run_mission_hardware.sh`
+- **sim/real 沿用场景启动脚本**（`run_mission_sim.sh` / `run_mission_real.sh`
   传 `profile:=sim|real`），不靠一个默认值二选一。**注**：脚本层把 `profile`
   透传下去这一步**还没接线**（待办），现在默认 `profile=sim`。
 

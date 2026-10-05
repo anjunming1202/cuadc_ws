@@ -23,9 +23,9 @@
 
 | 类别 | 内容 | 属主 / 位置 |
 |---|---|---|
-| **A. 世界 / 任务 / 场景**（非算法参数） | 区中心与扫描航点样式、**一般巡航/过渡高度**、投放/侦察检测分界、要投几次、跑哪些阶段、要找几个筒、`initial_state`、投放 relay 通道 | **新的 mission-config 层**（独立成 `mission/`） |
+| **A. 世界 / 任务 / 场景**（非算法参数） | 起飞点场地坐标 `takeoff_point`（= local_position 原点，ADR-0011）、区中心与扫描航点样式、**一般巡航/过渡高度**、投放/侦察检测分界、要投几次、跑哪些阶段、要找几个筒、`initial_state`、投放 relay 通道 | **新的 mission-config 层**（独立成 `mission/`） |
 | **B. 各可替换算法内部** | 检测器 HSV（`detectors/*`）；approach 的 PID/门/交接/降高/投放门 + **投放区作业高度** `cruise_alt_m`/`drop_alt_m`（`approaches/*`，与投放算法绑定，见 Q2）；投放目标选择（`drop_strategy.py`）；**SEARCH 的聚类/选目标算法**（新 `search_strategy.py`，见 Q6） | **各自算法源码旁**、用**算法名**命名的 `<算法>.{sim,real}.yaml` |
-| **B′. 顶层任务 FSM 自身通用参数** | 到点容差、阶段超时、电量/GPS 守卫阈值——不属于任何可替换算法，是唯一那个顶层 FSM 本体的机制 | **跟 `mission_logic.py` 放一起**：单一 `mission_logic.{sim,real}.yaml`（见 Q5/Q7） |
+| **B′. 顶层任务 FSM 自身通用参数** | 到点容差、阶段超时、电量/GPS 守卫阈值、`emulate_pilot_arm`（仅 sim 替飞手解锁）——不属于任何可替换算法，是唯一那个顶层 FSM 本体的机制 | **跟 `mission_logic.py` 放一起**：单一 `mission_logic.{sim,real}.yaml`（见 Q5/Q7） |
 
 **关键原则（Q5）**：**算法相关参数与算法代码放在一起**、且**用算法自己的名字命名参数表**
 （换算法时整套参数跟着走、一目了然，如 `stepped_descent_ibvs.*.yaml`）。算法是
@@ -157,9 +157,13 @@ decision_node.__init__:
 ### 5.1 组合方式
 每个隔离测试 = **一个场景 yaml**（`initial_state` + `phases` + 必要覆盖）。任务节点里
 **没有** `if test:` 分支——行为差异全部由配置表达。
-- 投放区单练：`drop_zone_bench`，`initial_state=ARM_AND_TAKEOFF`（投放前一个 state），
-  起飞→前飞≈1m→搜索→接近→投放，`phases=[drop]` 投完即 RTL；配合
-  `run_gazebo_drop_zone_bench.sh`（`field/config.py` 的 `DROP_ZONE_BENCH_SPAWN` 世界）。
+- 投放区单练：`drop_zone_bench`，`initial_state=INIT`（照样走放行 + 飞手解锁两道门，真机单点
+  测试也用它），起飞→前飞≈1m→搜索→接近→投放，`phases=[drop]` 投完即 RTL；sim 出生点写在
+  `drop_zone_bench.sim.yaml`（`takeoff_point: [29, 0]`）。配合 `run_gazebo_drop_zone_bench.sh`（`field/config.py` 的
+  `DROP_ZONE_BENCH_SPAWN` 世界）。
+- `initial_state` 只用来**跳过不需要的任务阶段**，不能跳过放行和等飞手解锁（ADR-0011）。
+- 只对某个环境成立的场景偏离写在可选的 `scenarios/<场景>.<profile>.yaml`（最后叠加），不能写进
+  sim/real 共用的场景文件——例如 sim 单练出生点写进共用文件，真机单点测试的航点就会全偏。
 - 侦察区单练：`recon_zone_bench`，`initial_state` 取侦察前一个 state，`phases=[recon]`。
 
 ### 5.2 SEARCH 简化靠配置
@@ -179,7 +183,7 @@ decision_node.__init__:
 | 场景 | initial_state | phases | 用途 |
 |---|---|---|---|
 | `full_mission` | INIT | [drop, recon] | 正式全任务（sim/真机同场景，脚本选 connection/profile） |
-| `drop_zone_bench` | ARM_AND_TAKEOFF | [drop] | 反复调投放接近+投放；SEARCH 简化 |
+| `drop_zone_bench` | INIT | [drop] | 反复调投放接近+投放；SEARCH 简化；sim 出生点见 `.sim.yaml` |
 | `recon_zone_bench` | (侦察前一个 state) | [recon] | 反复调侦察覆盖 |
 
 启动仍**一脚本一场景**：`run_mission_sim.sh` / `run_mission_sim_drop_zone_bench.sh` 各自把

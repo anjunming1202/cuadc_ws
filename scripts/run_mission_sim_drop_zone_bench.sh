@@ -10,7 +10,7 @@
 # Usage: ./scripts/run_mission_sim_drop_zone_bench.sh [extra ros2 launch args]
 #
 # 两个脚本都起来后，另开终端触发任务：
-#   ros2 topic pub --once /cuadc_decision/sim/task_start_trigger std_msgs/msg/Empty "{}"
+#   ros2 topic pub -t 5 -r 2 /cuadc_decision/sim/task_start_trigger std_msgs/msg/Empty "{}"
 
 set -eo pipefail
 

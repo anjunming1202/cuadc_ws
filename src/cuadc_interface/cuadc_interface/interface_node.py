@@ -44,13 +44,21 @@ _FAILSAFE_SYSTEM_STATUS = (
     mavutil.mavlink.MAV_STATE_EMERGENCY,
 )
 
-# RC_CHANNELS_OVERRIDE：65535 = 忽略该通道（不改其覆盖状态），0 = 释放该通道回遥控器。
-# 投放只碰投放那一个 RC 通道，其余全填忽略，绝不动飞控/飞行通道，见 docs/spec/adr/0007。
-_RC_OVERRIDE_IGNORE = 65535
-_RC_OVERRIDE_RELEASE = 0
-_RC_OVERRIDE_CHANNELS = 18
-# ArduPilot RC override 有超时（不刷新会回落遥控器），投放期间按此周期重发保活。
-_RC_OVERRIDE_REFRESH_S = 0.1
+# 不是飞控本体的心跳来源：地面站（Mission Planner 经数传连飞控时，飞控会把它的心跳转发到
+# 所有口，一样进 fanout）、云台等。只认飞控心跳——否则 armed/mode 会在飞控和地面站的
+# "未解锁/STABILIZE" 之间来回跳（2026-10-04 实测），模式确认、夺控判定、起飞点原点全会错。
+_NON_VEHICLE_TYPES = frozenset({
+    mavutil.mavlink.MAV_TYPE_GCS,
+    mavutil.mavlink.MAV_TYPE_GIMBAL,
+    mavutil.mavlink.MAV_TYPE_ADSB,
+    mavutil.mavlink.MAV_TYPE_ONBOARD_CONTROLLER,
+})
+
+
+def _is_vehicle_heartbeat(msg):
+    return (msg.type not in _NON_VEHICLE_TYPES
+            and msg.autopilot != mavutil.mavlink.MAV_AUTOPILOT_INVALID
+            and msg.get_srcComponent() != mavutil.mavlink.MAV_COMP_ID_GIMBAL)
 
 
 def _quaternion_from_euler(roll, pitch, yaw):
@@ -79,15 +87,15 @@ class InterfaceNode(Node):
         self._command_ack_timeout = self.get_parameter('command_ack_timeout_sec').value
         self._set_mode_timeout = self.get_parameter('set_mode_timeout_sec').value
 
-        # 投放执行器参数（属接口层，见 docs/spec/adr/0007）。投放通道平时归遥控器（飞控设
-        # SERVO*_FUNCTION=RCIN<ch> 直通），仅投放时本节点在该 RC 通道发定时 override 接管。
-        # 默认 = 硬件子队真机验证值；drop_run_s 必须按验证的投放动作时长设置（真机）。
-        self.declare_parameter('drop_rc_channel', 9)       # 投放 RC 通道（1..18），对应飞控 RCIN 直通
+        # 投放执行器参数（属接口层，见 docs/spec/adr/0007）。投放经 DO_SET_SERVO 直接驱动
+        # 舵机输出口（飞控该口须 SERVO*_FUNCTION=0）。默认 = 硬件子队台架验证值；
+        # drop_run_s 必须按验证的投放动作时长设置（真机）。
+        self.declare_parameter('drop_servo', 9)            # 投放舵机输出口 SERVO<n>（9=AUX1）
         self.declare_parameter('drop_forward_us', 1100)    # 投放（放料）方向 PWM
         self.declare_parameter('drop_neutral_us', 1500)    # 连续舵机停止/中立 PWM
         self.declare_parameter('drop_run_s', 2.0)          # 投放方向持续时长（真机按验证值设）
         self.declare_parameter('allow_disarmed_drop', False)  # 仅台架：未解锁也允许软件投放，默认关
-        self._drop_rc_channel = int(self.get_parameter('drop_rc_channel').value)
+        self._drop_servo = int(self.get_parameter('drop_servo').value)
         self._drop_forward_us = int(self.get_parameter('drop_forward_us').value)
         self._drop_neutral_us = int(self.get_parameter('drop_neutral_us').value)
         self._drop_run_s = float(self.get_parameter('drop_run_s').value)
@@ -100,6 +108,16 @@ class InterfaceNode(Node):
         self._mode_names = {}
         self._state_lock = threading.Lock()
         self._state = {'connected': False, 'armed': False, 'mode': '', 'yaw': 0.0}
+        # 起飞点原点（EKF 原点系 NED）：local_position 发布前减它、position_target_local 下发前加它，
+        # 使对外坐标都相对起飞点。飞控 EKF 原点不在起飞点（实机实测 z 偏 0.9–2.1m、xy 偏数米）。
+        # 原点 = 最近一次解锁瞬间的位置（同 ArduPilot 在解锁时设 home），上锁后保持（落地后读数仍
+        # 相对起飞点，返航误差可量）；从未解锁过时跟随当前位置。
+        self._origin_ned = None
+        self._raw_ned = None
+        self._armed_once = False
+        self._seen_heartbeat = False
+        self._vehicle_sysid = None
+        self._vehicle_compid = None
         self._ack_lock = threading.Lock()
         self._pending_acks = {}  # command id -> threading.Event
         self._ack_results = {}  # command id -> COMMAND_ACK.result
@@ -161,10 +179,16 @@ class InterfaceNode(Node):
             # （UDP 无连接握手，对方端口没人监听也一样能建出这个对象）
             # ——真正确认"连上了"必须等到第一条心跳，同 cuadc_sim 的验证
             # 脚本一致，不能只看 mavlink_connection() 有没有抛异常。
-            if master.wait_heartbeat(timeout=self._link_timeout) is None:
+            vehicle_hb = self._wait_vehicle_heartbeat(master)
+            if vehicle_hb is None:
                 self.get_logger().warn(
-                    f'no heartbeat from {self._connection_str}, retrying ...')
+                    f'no vehicle heartbeat from {self._connection_str}, retrying ...')
                 continue
+            # 只跟这个飞控说话、只收它的消息（见 _is_vehicle_heartbeat）。
+            self._vehicle_sysid = vehicle_hb.get_srcSystem()
+            self._vehicle_compid = vehicle_hb.get_srcComponent()
+            master.target_system = self._vehicle_sysid
+            master.target_component = self._vehicle_compid
 
             self._master = master
             self._mode_ids = master.mode_mapping() or {}
@@ -185,6 +209,16 @@ class InterfaceNode(Node):
             self._safe_publish(self.connected_pub, Bool(data=False))
             self.get_logger().warn('link lost, reconnecting ...')
             self._master = None
+
+    def _wait_vehicle_heartbeat(self, master):
+        # 不能用 master.wait_heartbeat()：它返回任意来源的第一条心跳，先到的若是地面站，
+        # 此时还不知道飞行器类型，mode_mapping() 为空，之后每次 set_mode 都直接失败。
+        deadline = time.monotonic() + self._link_timeout
+        while time.monotonic() < deadline and not self._shutdown.is_set():
+            msg = master.recv_match(type='HEARTBEAT', blocking=True, timeout=1.0)
+            if msg is not None and _is_vehicle_heartbeat(msg):
+                return msg
+        return None
 
     def _connect_with_retry(self, connection):
         # 跟 cuadc_sim 的一次性验证脚本不同：这是常驻桥接节点，连不上不该
@@ -209,6 +243,8 @@ class InterfaceNode(Node):
                 if time.monotonic() - last_msg_time > self._link_timeout:
                     return
                 continue
+            if msg.get_srcSystem() != self._vehicle_sysid:
+                continue  # 地面站等其它系统转发过来的消息
             last_msg_time = time.monotonic()
             handler = self._HANDLERS.get(msg.get_type())
             if handler is not None:
@@ -231,11 +267,29 @@ class InterfaceNode(Node):
     # -- MAVLink -> ROS2：逐个消息类型的处理 --
 
     def _handle_heartbeat(self, master, msg):
+        if msg.get_srcComponent() != self._vehicle_compid or not _is_vehicle_heartbeat(msg):
+            return
         armed = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
         mode = self._mode_names.get(msg.custom_mode, '')
         with self._state_lock:
+            was_armed = self._state['armed']
+            first = not self._seen_heartbeat
+            self._seen_heartbeat = True
             self._state['armed'] = armed
             self._state['mode'] = mode
+            if armed and not was_armed:
+                self._armed_once = True
+                self._origin_ned = self._raw_ned  # None 时由下一条 LOCAL_POSITION_NED 补上
+                if first:
+                    # 起来时已在解锁状态（空中重启接口层）：拿不到真正的起飞点，退化为当前位置。
+                    self.get_logger().warn(
+                        'interface started while ARMED: takeoff origin unknown, using current '
+                        'position -- local_position is NOT relative to the takeoff point')
+                elif self._origin_ned is not None:
+                    self.get_logger().info(
+                        'armed: takeoff origin frozen at EKF-frame '
+                        f'({self._origin_ned[0]:+.2f}, {self._origin_ned[1]:+.2f}, '
+                        f'{self._origin_ned[2]:+.2f})')
         self._safe_publish(self.armed_pub, Bool(data=armed))
         self._safe_publish(self.mode_pub, String(data=mode))
 
@@ -252,11 +306,16 @@ class InterfaceNode(Node):
         self._safe_publish(self.global_position_pub, fix)
 
     def _handle_local_position_ned(self, master, msg):
+        with self._state_lock:
+            self._raw_ned = (msg.x, msg.y, msg.z)
+            if not self._armed_once or self._origin_ned is None:
+                self._origin_ned = self._raw_ned
+            ox, oy, oz = self._origin_ned
         pose = PoseStamped()
         pose.header.stamp = self.get_clock().now().to_msg()
-        pose.pose.position.x = msg.x
-        pose.pose.position.y = msg.y
-        pose.pose.position.z = msg.z
+        pose.pose.position.x = msg.x - ox
+        pose.pose.position.y = msg.y - oy
+        pose.pose.position.z = msg.z - oz
         self._safe_publish(self.local_position_pub, pose)
 
         twist = TwistStamped()
@@ -409,27 +468,23 @@ class InterfaceNode(Node):
         response.success = True
         return response
 
-    def _send_rc_override(self, channel, value):
-        """在单个 RC 通道上发一次 override（其余通道填 65535=忽略，绝不动飞行通道）。
-        value=PWM 覆盖该通道；value=0 释放该通道回遥控器。见 docs/spec/adr/0007。"""
-        master = self._master
-        if master is None:
-            return
-        chans = [_RC_OVERRIDE_IGNORE] * _RC_OVERRIDE_CHANNELS
-        chans[channel - 1] = value
-        master.mav.rc_channels_override_send(
-            master.target_system, master.target_component, *chans)
+    def _set_drop_servo(self, pwm_us):
+        """DO_SET_SERVO 直接驱动投放舵机输出口（PWM µs），等 COMMAND_ACK。
+        见 docs/spec/adr/0007。"""
+        return self._send_command_and_wait_ack(
+            mavutil.mavlink.MAV_CMD_DO_SET_SERVO,
+            (self._drop_servo, pwm_us, 0, 0, 0, 0, 0),
+            self._command_ack_timeout)
 
     def _on_release_payload(self, request, response):
-        # 投放执行：仅本服务被调用时（决策进 DROP_PAYLOAD）在投放 RC 通道上短暂 override，
-        # override→forward 跑 drop_run_s → neutral 停 → 释放回遥控器，物理动作完成才返回。
-        # 其余任何时刻本节点零 override，投放通道归遥控器（见 docs/spec/adr/0007）。
-        # armed 守卫：地面（未解锁）不由软件驱动投放，交给遥控器/人工。
+        # 投放执行：仅本服务被调用时（决策进 DROP_PAYLOAD）驱动投放舵机，
+        # forward 跑 drop_run_s → 回中立停住，物理动作完成才返回（见 docs/spec/adr/0007）。
+        # armed 守卫：地面（未解锁）不由软件驱动投放；台架测试用 allow_disarmed_drop。
         with self._state_lock:
             armed = self._state['armed']
         if not armed and not self._allow_disarmed_drop:
             response.success = False
-            response.message = 'refused: not armed (disarmed drop is manual/RC per ADR-0007)'
+            response.message = 'refused: not armed (disarmed drop is bench-only per ADR-0007)'
             return response
         if not armed and self._allow_disarmed_drop:
             self.get_logger().warn('allow_disarmed_drop: driving drop while disarmed (bench only)')
@@ -438,16 +493,20 @@ class InterfaceNode(Node):
             response.message = 'no MAVLink link'
             return response
 
-        ch = self._drop_rc_channel
-        # 投放方向持续 drop_run_s，其间按刷新周期重发 override 保活（ArduPilot override 会超时回落）。
-        deadline = time.monotonic() + self._drop_run_s
-        while time.monotonic() < deadline and not self._shutdown.is_set():
-            self._send_rc_override(ch, self._drop_forward_us)
-            time.sleep(_RC_OVERRIDE_REFRESH_S)
-        # 连续舵机必须先停在中立，再释放回遥控器。
-        self._send_rc_override(ch, self._drop_neutral_us)
-        time.sleep(_RC_OVERRIDE_REFRESH_S)
-        self._send_rc_override(ch, _RC_OVERRIDE_RELEASE)
+        if not self._set_drop_servo(self._drop_forward_us):
+            # 保险：forward 未确认也补一次停——宁可多停一次，不赌舵机没在转。
+            self._set_drop_servo(self._drop_neutral_us)
+            response.success = False
+            response.message = 'DO_SET_SERVO(forward) rejected or no ack'
+            return response
+        time.sleep(self._drop_run_s)  # 投放方向持续 drop_run_s（连续舵机物理动作期间）
+        # 连续舵机必须回中立停住（DO_SET_SERVO 无超时回落，停不住比投放失败更危险）：
+        # 未确认就再补发一次，并如实报失败。
+        if not self._set_drop_servo(self._drop_neutral_us):
+            self._set_drop_servo(self._drop_neutral_us)
+            response.success = False
+            response.message = 'DO_SET_SERVO(neutral/stop) rejected or no ack'
+            return response
 
         self.drop_status_pub.publish(DropStatus(actuated=True))
         response.success = True
@@ -475,17 +534,21 @@ class InterfaceNode(Node):
         master = self._master
         if master is None:
             return
-        # MAV_FRAME_LOCAL_NED：x/y/z 是绝对局部坐标（相对起飞点），跟
-        # _on_position_target 的机身相对偏移是两回事——这个 frame 下 yaw
+        # MAV_FRAME_LOCAL_NED：x/y/z 是相对起飞点的绝对局部坐标，下发前加回起飞点原点换成
+        # 飞控的 EKF 原点系。跟 _on_position_target 的机身相对偏移是两回事——这个 frame 下 yaw
         # 字段是绝对量，锁定当前朝向要显式回填当前角度（不能像
         # BODY_OFFSET_NED 那样发 0），不然会落回默认的 WP_YAW_BEHAVIOR。
         with self._state_lock:
             yaw = self._state['yaw']
+            origin = self._origin_ned
+        if origin is None:
+            self.get_logger().warn('position_target_local dropped: no local position yet')
+            return
         master.mav.set_position_target_local_ned_send(
             0, master.target_system, master.target_component,
             mavutil.mavlink.MAV_FRAME_LOCAL_NED,
             0b0000101111111000,
-            msg.x, msg.y, msg.z,
+            msg.x + origin[0], msg.y + origin[1], msg.z + origin[2],
             0, 0, 0, 0, 0, 0, yaw, 0)
 
     def _on_velocity(self, msg):
