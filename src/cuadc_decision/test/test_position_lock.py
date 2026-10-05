@@ -132,6 +132,10 @@ def test_selection_and_variant_overlay():
     lock = approaches.create_active('sim', name='position_lock_descent')
     assert lock.cfg.refine_gate_m == base.cfg.refine_gate_m   # 粗段/失效参数沿用 cone 同档
     assert lock.cfg.camera_offset_m == (0.11, 0.0)
+    assert lock.cfg.max_coast_ticks > base.cfg.max_coast_ticks   # 位置锁定下短丢保持更久
+    high = approaches.create_active('sim', name='position_lock_descent', variant='high')
+    assert high.cfg.drop_alt_m == 1.4 and high.cfg.aim_migrate_bot_m > high.cfg.drop_alt_m + high.cfg.drop_alt_band_m
+    assert high.cfg.reacquire_ceiling_m > high.cfg.drop_alt_m + 0.5
     ml.configure_approach('sim', 'position_lock_descent')
     assert ml._ACTIVE_APPROACH.name == 'position_lock_descent'
     ml.configure_approach('sim')
