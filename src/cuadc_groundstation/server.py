@@ -47,7 +47,7 @@ CLIENT_QUEUE_MAX = 64  # ~ drop old TS if a slow browser falls behind
 _telemetry_lock = threading.Lock()
 _latest_telemetry: dict | None = None
 _latest_telemetry_recv_mono: float = 0.0
-_field_pose = FieldPoseTracker()  # 每次 GUIDED 上升沿锁 H；退出 GUIDED 钉回 H
+_field_pose = FieldPoseTracker()  # 起飞坐标系：解锁上升沿锁 H，上锁后保持
 _alt_trace = AltitudeTrace(window_s=30.0)  # 近 30s 高度，给折线图
 _air_ctrl_hosts: list[str] = [
     h.strip() for h in DEFAULT_AIR_CTRL_HOSTS.split(",") if h.strip()
@@ -515,8 +515,8 @@ def _telemetry_snapshot() -> dict:
                 "field_x_m": 0.0,
                 "field_y_m": 0.0,
                 "field_yaw_deg": 0.0,
-                "field_airborne": False,
-                "field_src": "pre-guided",
+                "field_latched": False,
+                "field_src": "pre-arm",
                 "alt_trace": _alt_trace.snapshot(),
             }
         return {
@@ -582,10 +582,6 @@ class ViewerHandler(BaseHTTPRequestHandler):
             return
         if path == "/mpegts.js":
             body = (VIEWER_DIR / "mpegts.js").read_bytes()
-            self._send_bytes(body, "application/javascript; charset=utf-8")
-            return
-        if path == "/field_map.js":
-            body = (VIEWER_DIR / "field_map.js").read_bytes()
             self._send_bytes(body, "application/javascript; charset=utf-8")
             return
         if path == "/telemetry.json":

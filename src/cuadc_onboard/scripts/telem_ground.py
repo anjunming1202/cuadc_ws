@@ -65,6 +65,7 @@ class MavlinkTelemetrySource:
             "pitch_deg": None,
             "yaw_deg": None,
             "mode": None,
+            "armed": None,  # 地面起飞坐标系在解锁上升沿锁原点
             "batt_v": None,
             "batt_pct": None,
             "ekf_ready": None,  # bool；未收到 EKF_STATUS_REPORT 前为 None
@@ -125,14 +126,15 @@ class MavlinkTelemetrySource:
         if force_targets and src_sys:
             self._master.target_system = src_sys
             self._master.target_component = src_comp or 1
-        if msg.type == mavutil.mavlink.MAV_TYPE_GCS:
-            return
+        if msg.type == mavutil.mavlink.MAV_TYPE_GCS or msg.autopilot == mavutil.mavlink.MAV_AUTOPILOT_INVALID:
+            return  # 只认飞控自己的心跳
         try:
             mode = mavutil.mode_string_v10(msg)
         except Exception:
             mode = str(getattr(msg, "custom_mode", "?"))
         with self._lock:
             self._state["mode"] = mode
+            self._state["armed"] = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
 
     def _request_streams(self) -> None:
         assert self._master is not None
@@ -313,6 +315,7 @@ def run_forever(args: argparse.Namespace) -> None:
                 "pitch_deg": state.get("pitch_deg"),
                 "yaw_deg": state.get("yaw_deg"),
                 "mode": state.get("mode"),
+                "armed": state.get("armed"),
                 "batt_v": state.get("batt_v"),
                 "batt_pct": state.get("batt_pct"),
                 "ekf_ready": state.get("ekf_ready"),

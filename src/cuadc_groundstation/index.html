@@ -286,7 +286,7 @@
           <span><i style="background:#3d4a28"></i>投放区 5×8 m</span>
           <span><i style="background:#243040"></i>过渡 20×8 m</span>
           <span><i style="background:#3a2d4c"></i>侦察区 5×8 m</span>
-          <span><i style="background:#ff8a3d"></i>飞机（GUIDED 后才离 H）</span>
+          <span><i style="background:#ff8a3d"></i>飞机（解锁后才离 H）</span>
         </p>
       </div>
     </div>
@@ -339,7 +339,7 @@
     </div>
     <p class="hint">
       顶上就是赛道（不需要飞控）。左：干净图传 <code>/stream.ts</code>。
-      右：CV 预览 <code>/stream_cv.ts</code>。每次进入 GUIDED 的那一帧锁成 H；退出 GUIDED（如 RTL）后钉回 H，再进 GUIDED 重新锁。
+      右：CV 预览 <code>/stream_cv.ts</code>。机位为起飞坐标（x 前、y 右）：每次解锁那一刻锁成 H，上锁后保持，下次解锁重锁。
       高度折线看近 30 秒 <code>alt_m</code>。
     </p>
   </main>
@@ -366,7 +366,7 @@
     const altNowEl = document.getElementById("altNowLab");
     const altT0El = document.getElementById("altT0Lab");
     const altT1El = document.getElementById("altT1Lab");
-    // 平面图 / 高度图画在本页，不依赖 field_map.js 是否加载成功。
+    // 机位用 server 算好的起飞坐标（x 前、y 右），屏幕 x 向右 = 前、y 向下 = 右。
     const fieldView = {
       setCraft: function (pose) {
         if (!craftEl) return;
@@ -376,7 +376,7 @@
         const px = Number.isFinite(x) ? x : 0;
         const py = Number.isFinite(y) ? y : 0;
         const pyaw = Number.isFinite(yaw) ? yaw : 0;
-        craftEl.setAttribute("transform", "translate(" + px + "," + (-py) + ") rotate(" + pyaw + ")");
+        craftEl.setAttribute("transform", "translate(" + px + "," + py + ") rotate(" + pyaw + ")");
         if (craftLabEl) craftLabEl.textContent = (pose && pose.label) || "";
       },
     };
@@ -441,58 +441,8 @@
         },
       };
     })();
-    fieldView.setCraft({ x: 0, y: 0, yawDeg: 0, airborne: false, label: "钉在 H" });
+    fieldView.setCraft({ x: 0, y: 0, yawDeg: 0, label: "钉在 H" });
     altView.setTrace([]);
-    // 每次 GUIDED 上升沿锁 H；退出 GUIDED 就钉回 H。不依赖 field_map.js。
-    const poseTracker = (function () {
-      let airborne = false, n0 = null, e0 = null, yaw0 = 0;
-      let last = { x: 0, y: 0, yawDeg: 0, airborne: false, label: "钉在 H" };
-      return {
-        update: function (d) {
-          d = d || {};
-          const guided = String(d.mode || "").trim().toUpperCase() === "GUIDED";
-          const nn = Number(d.ned_n), ne = Number(d.ned_e);
-          const has = Number.isFinite(nn) && Number.isFinite(ne);
-          if (airborne && !guided) {
-            airborne = false;
-            n0 = null;
-            e0 = null;
-            last = { x: 0, y: 0, yawDeg: 0, airborne: false, label: "钉在 H" };
-            return last;
-          }
-          if (!airborne) {
-            if (!guided) {
-              last = { x: 0, y: 0, yawDeg: 0, airborne: false, label: "钉在 H" };
-              return last;
-            }
-            if (!has) {
-              last = { x: 0, y: 0, yawDeg: 0, airborne: false, label: "GUIDED 无 NED" };
-              return last;
-            }
-            n0 = nn;
-            e0 = ne;
-            yaw0 = (Number.isFinite(Number(d.yaw_deg)) ? Number(d.yaw_deg) : 0) * Math.PI / 180;
-            airborne = true;
-          }
-          if (!has) {
-            last.airborne = true;
-            last.label = "hold";
-            return last;
-          }
-          const dn = nn - n0, de = ne - e0;
-          const c = Math.cos(yaw0), s = Math.sin(yaw0);
-          const yawNow = (Number.isFinite(Number(d.yaw_deg)) ? Number(d.yaw_deg) : 0) * Math.PI / 180;
-          last = {
-            x: dn * c + de * s,
-            y: dn * s - de * c,
-            yawDeg: ((yawNow - yaw0) * 180 / Math.PI % 360 + 360) % 360,
-            airborne: true,
-            label: "NED",
-          };
-          return last;
-        },
-      };
-    })();
     const altLocal = [];
 
     const streamState = { clean: "初始化", cv: "初始化" };
@@ -549,8 +499,8 @@
         vEkf.textContent = "—";
         vEkf.style.color = "";
         setCpuDisplay(null);
-        vField.textContent = "钉在 H（未 GUIDED）";
-        fieldView.setCraft({ x: 0, y: 0, yawDeg: 0, airborne: false, label: "钉在 H" });
+        vField.textContent = "钉在 H（无遥测）";
+        fieldView.setCraft({ x: 0, y: 0, yawDeg: 0, label: "钉在 H" });
         return;
       }
 
@@ -614,15 +564,15 @@
 
       setCpuDisplay(typeof data.cpu_pct === "number" ? data.cpu_pct : null);
 
-      const pose = poseTracker.update(data);
-      if (pose.airborne) {
-        vField.textContent = pose.x.toFixed(1) + " / " + pose.y.toFixed(1) + " m";
-        fieldView.setCraft(pose);
+      if (data.field_latched) {
+        const fx = Number(data.field_x_m), fy = Number(data.field_y_m);
+        vField.textContent = fx.toFixed(1) + " / " + fy.toFixed(1) + " m";
+        fieldView.setCraft({ x: fx, y: fy, yawDeg: Number(data.field_yaw_deg), label: data.field_src });
       } else {
         const nedHint = Number.isFinite(Number(data.ned_n))
           ? (" n=" + Number(data.ned_n).toFixed(1)) : " 无ned";
-        vField.textContent = pose.label + nedHint;
-        fieldView.setCraft({ x: 0, y: 0, yawDeg: 0, airborne: false, label: pose.label });
+        vField.textContent = "钉在 H（未解锁）" + nedHint;
+        fieldView.setCraft({ x: 0, y: 0, yawDeg: 0, label: "钉在 H" });
       }
     }
 

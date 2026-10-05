@@ -134,7 +134,7 @@ sudo /home/wly/cuadc-onboard-backup-20261004_133328/restore.sh
 
 装完若 5611 被抢：不要留 `/home/wly/cv_preview_ctl.py` 那种家目录副本和正式 ctl 一起听。
 
-数传 JSON 现含 `ned_n`/`ned_e`/`lat_deg`/`lon_deg`（赛道图在**地面**投影，Pi 不算）。
+数传 JSON 现含 `armed`、`ned_n`/`ned_e`/`lat_deg`/`lon_deg`（赛道图在**地面**投影，Pi 不算）。
 只换数传、不动扇出/网络：
 
 ```bash
