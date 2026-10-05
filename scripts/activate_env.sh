@@ -12,7 +12,7 @@
 #
 # Usage: source scripts/activate_env.sh
 #   then: ros2 launch cuadc_interface interface_bringup.launch.py
-#         ros2 run cuadc_sim sitl_smoke_test
+#         ./scripts/run_flight_check_sim.sh
 #   Run once per terminal -- further ros2 run/launch calls in the same
 #   shell don't need it again. A new terminal is a new shell process with
 #   its own environment, so it needs its own source.
@@ -48,7 +48,7 @@ unset _pkg_install_dir
 # Deliberately namespaced (not REPO_ROOT) -- this file is sourced (not
 # executed) into the caller's shell, so a plain REPO_ROOT here would
 # clobber a same-named variable the caller script still needs after
-# sourcing us (run_sitl_demo.sh / run_gazebo_demo.sh both declare their
+# sourcing us (e.g. run_gazebo_demo.sh declares its
 # own REPO_ROOT before calling this).
 unset _ACTIVATE_ENV_REPO_ROOT
 echo "cuadc_ws env activated (ROS ${ROS_DISTRO:-?} + AMENT_PREFIX_PATH workaround)"

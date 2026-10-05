@@ -15,3 +15,7 @@ RTL_SPEED_MS	5
 # 机体质量提到满载 3.5kg 后(见 ADR-0010 簇③)悬停油门变高:让飞控在线学习悬停油门,
 # 高度环前馈才准。有真机 MOT_THST_HOVER 后可改为直接写死该值。
 MOT_HOVER_LEARN	2
+
+# 与真机对齐:ArduPilot 自带 gazebo-iris.parm 开了模拟测距仪和精准降落(红外信标),真机都没有。
+RNGFND1_TYPE	0
+PLND_ENABLED	0

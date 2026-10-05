@@ -3,7 +3,7 @@
 
 每轮：起 Gazebo 世界 + 任务节点(真实 CV) → 等就绪 → 触发任务开始 → 订阅
 mission_state 记状态时间线 → 判定第二次投放是否完成 → 干净拆除 → 汇总 N 轮。
-不用桩;扰动通过 realism parm / 感知时延参数注入(默认关 = 干净 sim)。
+不用桩;扰动(风/传感器噪声/图像延迟)由仿真世界默认带上,--clean 或单项参数覆盖。
 
 用 scripts/run_search_stress.sh 起(它先 source 环境再跑本文件)。直接
 `python3` 跑会因为没 source ROS 环境而 import rclpy 失败。
@@ -143,17 +143,15 @@ def _run_trial(node, idx, args, logdir):
 
         gz_cmd = ['bash', 'scripts/run_gazebo_demo.sh',
                   'gui:=true' if args.gui else 'gui:=false']
-        if args.realism_parm:
+        if args.clean:
+            gz_cmd.append('imperfections:=false')
+        if args.realism_parm is not None:
             gz_cmd.append(f'sim_realism_params:={args.realism_parm}')
+        if args.latency_ms is not None:
+            gz_cmd.append(f'image_latency_ms:={args.latency_ms}')
         gz_proc, gz_f = _spawn(gz_cmd, gz_log)
 
-        # 时延档走 run_mission_sim_delayed.sh(相机→CV 图像延迟,保留拍照戳);零延迟走生产 run_mission_sim.sh。
-        if args.latency_ms:
-            mission_cmd = ['bash', 'scripts/run_mission_sim_delayed.sh',
-                           str(args.latency_ms)]
-        else:
-            mission_cmd = ['bash', 'scripts/run_mission_sim.sh']
-        mission_proc, mission_f = _spawn(mission_cmd, mission_log)
+        mission_proc, mission_f = _spawn(['bash', 'scripts/run_mission_sim.sh'], mission_log)
 
         # 等载具就绪(决策到 WAIT_TASK_START)。Gazebo 冷启慢,给足超时。
         if not _spin_until(node, lambda: node.current_state == READY_STATE,
@@ -204,10 +202,12 @@ def main():
                     help='起带窗口的 Gazebo(默认无头);看/验一轮或手动用时加上')
     ap.add_argument('--ready-timeout-sec', type=float, default=180.0)
     ap.add_argument('--trial-timeout-sec', type=float, default=300.0)
-    ap.add_argument('--realism-parm', default='',
-                    help='SITL 风/传感器噪声 parm 文件(叠加);空=干净 sim')
-    ap.add_argument('--latency-ms', type=float, default=0.0,
-                    help='相机→CV 图像延迟(保留拍照戳,建模真实链路时延);0=无')
+    ap.add_argument('--clean', action='store_true',
+                    help='关掉仿真世界默认带的全部扰动(风/传感器噪声/图像延迟)')
+    ap.add_argument('--realism-parm', default=None,
+                    help="覆盖 SITL 风/传感器噪声 parm 文件;''=不加载;省略=世界默认")
+    ap.add_argument('--latency-ms', type=float, default=None,
+                    help='覆盖相机→CV 图像延迟(保留拍照戳);0=无;省略=世界默认(disturbances.yaml)')
     ap.add_argument('--out', default='',
                     help='结果 CSV 路径;空=只打印摘要')
     ap.add_argument('--logdir', default='/tmp/search_stress_logs')
