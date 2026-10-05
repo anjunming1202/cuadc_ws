@@ -1,0 +1,16 @@
+[Unit]
+Description=cuadc_onboard clean video forward control (UDP 5612; default on)
+# 【编排】听地面按钮启停 5603→5600；进程起来默认开图传。勿与旧 video-forward 单元同开。
+After=network.target cuadc-onboard-camera.service
+Wants=cuadc-onboard-camera.service
+
+[Service]
+Type=simple
+User=wly
+Environment=GST_PLUGIN_PATH=/usr/local/lib/aarch64-linux-gnu/gstreamer-1.0
+ExecStart=/usr/bin/python3 /opt/cuadc-onboard/video_forward_ctl.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -23,6 +23,9 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 VIEWER_DIR = Path(__file__).resolve().parent
+if str(VIEWER_DIR) not in sys.path:
+    sys.path.insert(0, str(VIEWER_DIR))
+from field_pose import AltitudeTrace, FieldPoseTracker
 DEFAULT_SDP = VIEWER_DIR.parent / "DroneLink.sdp"  # docs / air-link reference
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
@@ -32,7 +35,8 @@ AIR_RTP_PORT = 5600
 AIR_SHARED_PORT = 5601  # legacy telemetry JSON and/or RTCP from some stacks
 AIR_CV_RTP_PORT = 5606  # CV preview downlink (Pi cv_preview_ctl 转发)
 CV_PREVIEW_CTRL_PORT = 5611  # Pi cv_preview_ctl UDP; default off until viewer button
-DEFAULT_CV_CTRL_HOSTS = "192.168.50.1,10.10.10.1"  # Wi-Fi AP + Ethernet
+VIDEO_FORWARD_CTRL_PORT = 5612  # Pi video_forward_ctl UDP; default on at boot
+DEFAULT_AIR_CTRL_HOSTS = "192.168.50.1,10.10.10.1"  # Wi-Fi AP + Ethernet
 LOCAL_RTP_PORT = 15600  # FFmpeg loopback RTP (clean)
 LOCAL_RTCP_PORT = 15601  # FFmpeg loopback RTCP (clean)
 LOCAL_CV_RTP_PORT = 15610  # FFmpeg loopback RTP (CV)
@@ -43,18 +47,22 @@ CLIENT_QUEUE_MAX = 64  # ~ drop old TS if a slow browser falls behind
 _telemetry_lock = threading.Lock()
 _latest_telemetry: dict | None = None
 _latest_telemetry_recv_mono: float = 0.0
-_cv_ctrl_hosts: list[str] = [h.strip() for h in DEFAULT_CV_CTRL_HOSTS.split(",") if h.strip()]
+_field_pose = FieldPoseTracker()  # 每次 GUIDED 上升沿锁 H；退出 GUIDED 钉回 H
+_alt_trace = AltitudeTrace(window_s=30.0)  # 近 30s 高度，给折线图
+_air_ctrl_hosts: list[str] = [
+    h.strip() for h in DEFAULT_AIR_CTRL_HOSTS.split(",") if h.strip()
+]
 
 
-def query_cv_preview(cmd: str, timeout_s: float = 2.0) -> dict:
-    """Ask Pi cv_preview_ctl (UDP JSON) to start/stop/status the detector worker."""
+def query_air_ctrl(cmd: str, port: int, timeout_s: float = 2.0) -> dict:
+    """Ask Pi UDP ctl (cv 5611 / video 5612) for on|off|status."""
     payload = json.dumps({"cmd": cmd}).encode("utf-8")
     last_err = "no ctrl host"
-    for host in _cv_ctrl_hosts:
+    for host in _air_ctrl_hosts:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.settimeout(timeout_s)
         try:
-            sock.sendto(payload, (host, CV_PREVIEW_CTRL_PORT))
+            sock.sendto(payload, (host, port))
             data, _addr = sock.recvfrom(4096)
             obj = json.loads(data.decode("utf-8"))
             if isinstance(obj, dict):
@@ -86,6 +94,9 @@ def _ingest_telemetry_payload(payload: bytes, addr: tuple[str, int]) -> bool:
     if not isinstance(obj, dict):
         return False
     with _telemetry_lock:
+        obj.update(_field_pose.update(obj))
+        _alt_trace.update(obj)
+        obj["alt_trace"] = _alt_trace.snapshot()
         _latest_telemetry = obj
         _latest_telemetry_recv_mono = time.monotonic()
     return True
@@ -498,10 +509,20 @@ def _telemetry_snapshot() -> dict:
             else None
         )
         fresh = age is not None and age <= TELEMETRY_STALE_S
+        data = _latest_telemetry
+        if data is None:
+            data = {
+                "field_x_m": 0.0,
+                "field_y_m": 0.0,
+                "field_yaw_deg": 0.0,
+                "field_airborne": False,
+                "field_src": "pre-guided",
+                "alt_trace": _alt_trace.snapshot(),
+            }
         return {
             "ok": bool(fresh),
             "age_s": None if age is None else round(age, 3),
-            "data": _latest_telemetry,
+            "data": data,
             "stale": bool(_latest_telemetry is not None and not fresh),
         }
 
@@ -563,6 +584,10 @@ class ViewerHandler(BaseHTTPRequestHandler):
             body = (VIEWER_DIR / "mpegts.js").read_bytes()
             self._send_bytes(body, "application/javascript; charset=utf-8")
             return
+        if path == "/field_map.js":
+            body = (VIEWER_DIR / "field_map.js").read_bytes()
+            self._send_bytes(body, "application/javascript; charset=utf-8")
+            return
         if path == "/telemetry.json":
             body = json.dumps(_telemetry_snapshot(), ensure_ascii=False).encode("utf-8")
             self._send_bytes(body, "application/json; charset=utf-8")
@@ -577,17 +602,26 @@ class ViewerHandler(BaseHTTPRequestHandler):
             self._send_json(_recorder.status() if _recorder else {"recording": False})
             return
         if path == "/cv-preview/status":
-            self._send_json(query_cv_preview("status"))
+            self._send_json(query_air_ctrl("status", CV_PREVIEW_CTRL_PORT))
+            return
+        if path == "/video-forward/status":
+            self._send_json(query_air_ctrl("status", VIDEO_FORWARD_CTRL_PORT))
             return
         self.send_error(404)
 
     def do_POST(self) -> None:  # noqa: N802
         path = self.path.split("?", 1)[0]
         if path == "/cv-preview/start":
-            self._send_json(query_cv_preview("on"))
+            self._send_json(query_air_ctrl("on", CV_PREVIEW_CTRL_PORT))
             return
         if path == "/cv-preview/stop":
-            self._send_json(query_cv_preview("off"))
+            self._send_json(query_air_ctrl("off", CV_PREVIEW_CTRL_PORT))
+            return
+        if path == "/video-forward/start":
+            self._send_json(query_air_ctrl("on", VIDEO_FORWARD_CTRL_PORT))
+            return
+        if path == "/video-forward/stop":
+            self._send_json(query_air_ctrl("off", VIDEO_FORWARD_CTRL_PORT))
             return
         if _recorder is None:
             self.send_error(503, "recorder not ready")
@@ -625,7 +659,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    global _hub, _cv_hub, _proxy, _cv_proxy, _recorder, _cv_ctrl_hosts
+    global _hub, _cv_hub, _proxy, _cv_proxy, _recorder, _air_ctrl_hosts
 
     parser = argparse.ArgumentParser(description="DroneLink localhost video viewer")
     parser.add_argument("--host", default=DEFAULT_HOST, help="HTTP bind address")
@@ -641,12 +675,12 @@ def main() -> None:
     parser.add_argument("--record-dir", type=Path, default=DEFAULT_RECORD_DIR,
                         help="录制输出目录(默认 groundstation/recordings/)")
     parser.add_argument(
-        "--cv-ctrl-hosts",
-        default=DEFAULT_CV_CTRL_HOSTS,
-        help="Pi cv_preview_ctl UDP hosts, comma-separated",
+        "--air-ctrl-hosts",
+        default=DEFAULT_AIR_CTRL_HOSTS,
+        help="Pi UDP ctl hosts (cv 5611 + video 5612), comma-separated",
     )
     args = parser.parse_args()
-    _cv_ctrl_hosts = [h.strip() for h in args.cv_ctrl_hosts.split(",") if h.strip()]
+    _air_ctrl_hosts = [h.strip() for h in args.air_ctrl_hosts.split(",") if h.strip()]
 
     ffmpeg_bin = find_ffmpeg()
     start_telemetry_listener(args.telemetry_bind, args.telemetry_port)
@@ -687,8 +721,11 @@ def main() -> None:
     print(f"CV RTP: 0.0.0.0:{AIR_CV_RTP_PORT} -> /stream_cv.ts")
     print(f"Telemetry UDP: {args.telemetry_bind}:{args.telemetry_port} (+ JSON on :{AIR_SHARED_PORT})")
     print(f"Recordings: {args.record_dir}  (POST /record/start|stop, GET /record/status)")
-    print(f"CV preview ctrl UDP {_cv_ctrl_hosts}:{CV_PREVIEW_CTRL_PORT}  "
-          f"(POST /cv-preview/start|stop, GET /cv-preview/status)")
+    print(
+        f"Air ctrl hosts {_air_ctrl_hosts}: "
+        f"CV :{CV_PREVIEW_CTRL_PORT} (POST /cv-preview/start|stop) · "
+        f"video :{VIDEO_FORWARD_CTRL_PORT} (POST /video-forward/start|stop)"
+    )
     print("Ctrl+C to stop.")
     try:
         server.serve_forever()

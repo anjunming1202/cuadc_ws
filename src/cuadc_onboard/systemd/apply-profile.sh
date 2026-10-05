@@ -16,6 +16,9 @@ echo "cuadc-onboard profile: ${profile:-none}"
 KNOWN_CONSUMERS=(
   cuadc-onboard-telem.service
   cuadc-onboard-video-forward.service
+  cuadc-onboard-video-forward-ctl.service
+  cuadc-onboard-cv-preview.service
+  cuadc-onboard-cv-forward.service
 )
 
 for u in "${KNOWN_CONSUMERS[@]}"; do
@@ -27,9 +30,9 @@ case "${profile:-none}" in
     : # 只跑底座，消费者全手动（相机服务仍在推本地端点，只是没人转发到地面）
     ;;
   ground-monitor)
-    # 外场监看：数传 + 干净图传。OpenCV 由 cv-preview-ctl 开机听按钮,默认关。
+    # 外场监看：数传 + 干净图传 ctl（默认开 5603→5600）。OpenCV 由 cv-preview-ctl 听按钮，默认关。
     systemctl start cuadc-onboard-telem.service
-    systemctl start cuadc-onboard-video-forward.service
+    systemctl start cuadc-onboard-video-forward-ctl.service
     ;;
   mission)
     # 任务侧 bringup 按名引用；任务栈接线前为占位，不阻断底座

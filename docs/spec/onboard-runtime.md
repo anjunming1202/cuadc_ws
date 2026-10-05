@@ -63,8 +63,10 @@ PLAYING 态即改曝光/增益/对焦（实测该机 `libcamerasrc` 这些属性
 | 机载录制 tap | `udp:127.0.0.1:5605` | H.264/RTP | 相机服务 tee 的一路(同干净编码)；onboard_record 读它录全质量；无人读则内核丢弃 |
 | CV 预览本地 | `udp:127.0.0.1:5604` | H.264/RTP | cv-preview-ctl 的检测 worker 标注后的画面；其转发读它转地面 |
 | 相机控制口 | `udpin:127.0.0.1:5610` | JSON datagram | 向相机服务发 `{ae,exposure_us,gain,af,lens,…}` 运行时改拍摄参数 |
-| 图传→地面 | `192.168.50.2:5600` | H.264/RTP | 干净图传；**video-forward** 读 5603 转发 |
-| CV 预览→地面 | `192.168.50.2:5606` | H.264/RTP | OpenCV/标注预览；**cv-preview-ctl** 读 5604 转发 |
+| 图传开关（地面→机载） | `udp:0.0.0.0:5612` | JSON `{cmd}` | **video_forward_ctl**；开机默认 on（5603→5600） |
+| OpenCV 开关（地面→机载） | `udp:0.0.0.0:5611` | JSON `{cmd}` | **cv_preview_ctl**；开机默认 off |
+| 图传→地面 | `192.168.50.2:5600` | H.264/RTP | 干净图传；ctl / video-forward 读 5603 转发 |
+| CV 预览→地面 | `192.168.50.2:5606` | H.264/RTP | OpenCV/标注预览；ctl 内 5604→5606 |
 | 地面数据总线 | `udp:127.0.0.1:5700` | JSON datagram（含 `topic`） | 要往地面发的数据投这里，底座按 topic 转发到地面 |
 | GCS | `192.168.50.2:14560` | MAVLink | Mission Planner 双向 |
 | 回程 JSON（地面→机载） | `udp:127.0.0.1:5701`（预留） | JSON datagram | 地面下发自定义数据给某消费者；管道搭好，按需接 |
@@ -92,7 +94,7 @@ PLAYING 态即改曝光/增益/对焦（实测该机 `libcamerasrc` 这些属性
 | profile | 开机自启的消费者 | 场景 |
 |---|---|---|
 | `none` | 无（只起底座） | 日常开发：消费者全手动跑 |
-| `ground-monitor` | 数传 + video-forward（5603→5600） | 外场一通电，地面站有干净图传 + 遥测；CV 预览按地面按钮开（cv-preview-ctl，不归 profile） |
+| `ground-monitor` | 数传 + **video-forward-ctl**（5603→5600，默认开）；CV 由底座 **cv-preview-ctl** 听按钮（默认关） | 外场一通电有干净图传+遥测；OpenCV 地面按钮再开 |
 | `mission` | 任务侧 bringup（**按名引用**） | 比赛：无人值守、栈内等"开始"信号 |
 
 profile 落地为一行运行态设置 + 一个 oneshot applier：`/etc/cuadc-onboard/profile`
