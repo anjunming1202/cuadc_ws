@@ -221,9 +221,8 @@ class InterfaceNode(Node):
             self._safe_publish(self.connected_pub, Bool(data=True))
             self.get_logger().info(f'connected to {self._connection_str}')
 
-            master.mav.request_data_stream_send(
-                master.target_system, master.target_component,
-                mavutil.mavlink.MAV_DATA_STREAM_ALL, 4, 1)
+            # 不请求数据流：飞控数据流速率归链路提供方唯一配置（真机 mav_fanout，sim MAVProxy），
+            # 这里发 ALL 会把各流重置成同一速率、打开没人用的流。
 
             self._read_loop(master)
 
