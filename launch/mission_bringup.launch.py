@@ -49,6 +49,10 @@ def generate_launch_description():
         'scenario', default_value='full_mission',
         description='任务场景，选 mission/scenarios/<scenario>.yaml，正式任务 full_mission',
     )
+    # 接近算法选择（只到决策层），现场对比用：approach:=position_lock_descent / approach_variant:=lowgain。
+    approach_arg = DeclareLaunchArgument('approach', default_value='', description='接近模块名，空 = 默认')
+    approach_variant_arg = DeclareLaunchArgument('approach_variant', default_value='',
+                                                 description='叠加 <approach>.<variant>.yaml，空 = 不叠加')
     # 感知取帧源，跟 connection 一样各启动脚本写死：sim=ros（订 Gazebo 的
     # /camera/image_raw）、真机=shm（读 camera_service 的 NV12，图不进 ROS）。
     frame_source_arg = DeclareLaunchArgument(
@@ -85,6 +89,8 @@ def generate_launch_description():
         launch_arguments={
             'profile': LaunchConfiguration('profile'),
             'scenario': LaunchConfiguration('scenario'),
+            'approach': LaunchConfiguration('approach'),
+            'approach_variant': LaunchConfiguration('approach_variant'),
         }.items(),
     )
 
@@ -99,6 +105,7 @@ def generate_launch_description():
             ["'", LaunchConfiguration('profile'), "' == 'sim'"])),
     )
 
-    return LaunchDescription([connection_arg, profile_arg, scenario_arg, frame_source_arg,
+    return LaunchDescription([connection_arg, profile_arg, scenario_arg, approach_arg, approach_variant_arg,
+                              frame_source_arg,
                               interface_launch, cv_perception_launch, decision_launch,
                               sim_drop_bridge])

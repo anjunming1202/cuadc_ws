@@ -124,11 +124,11 @@ _RECON_SCAN_WAYPOINTS = _scan_waypoints(_WORLD.recon_zone_center, _WORLD.recon_s
 _ACTIVE_APPROACH = approaches.create_active()
 
 
-def configure_approach(profile):
-    """按 sim/real profile 从 yaml 载入当前 approach 的配置,重建活动实例。
-    decision_node 在 __init__ 里调一次（profile 参数由场景启动脚本给）。"""
+def configure_approach(profile, name=None, variant=None):
+    """按 sim/real profile 从 yaml 载入 approach（name 缺省 = approaches.ACTIVE，variant 叠加
+    <name>.<variant>.yaml）,重建活动实例。decision_node 在 __init__ 里调一次。"""
     global _ACTIVE_APPROACH
-    _ACTIVE_APPROACH = approaches.create_active(profile=profile)
+    _ACTIVE_APPROACH = approaches.create_active(profile=profile, name=name, variant=variant)
 
 
 def configure_mission(world, tuning, search):
@@ -515,6 +515,8 @@ def _tick_approach_drop_target(ctx):
     if out.drop_ready:
         return TickResult(next_state=State.DROP_PAYLOAD, fault=event)
     speeds = _zone_speeds(ctx, out.position_target[2]) if out.position_target is not None else {}
+    if out.speed_mps is not None and out.position_target is not None:
+        speeds['speed_target_mps'] = out.speed_mps
     return TickResult(position_target=out.position_target, velocity_target=out.velocity_target,
                       fault=event, **speeds)
 

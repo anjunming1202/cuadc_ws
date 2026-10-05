@@ -47,7 +47,7 @@
 （按 `drop_strategy`，排除已投 / 拉黑），**直接粗对准**（3m 飞过去）；没有可选候选才回 SEARCH
 从第一个航点重扫。目标位置不准由粗段的宽门改锁和确认超时兜住。
 
-## 接近阶段（`cone_descent_ibvs`）
+## 接近阶段（`cone_descent_ibvs` / `position_lock_descent`）
 
 内部恢复（不离开 APPROACH，不算放弃）：
 
@@ -67,6 +67,8 @@
 | `TARGET_LOST_REPEATEDLY` | 末端退回粗段超过 `max_reacquire`（3）次 |
 | `DROP_GATE_TIMEOUT` | 放宽后再 `relaxed_timeout_s`（10s）仍没过门 |
 | `TERMINAL_TIMEOUT` | 本目标末端总时长（首次交接起算，回退粗段不清零）超过 `terminal_timeout_s`（60s） |
+
+`position_lock_descent`（[ADR-0012](adr/0012-terminal-position-lock.md)）继承上面全部路径和代码，只有两处不同：climb 时水平仍锁在目标估计点上（不是原地）；endgame 判据是投放口到目标估计 < 当前容差，冻结估计照查投放门。
 
 备用的 `stepped_descent_ibvs` 没有放弃路径（切换过去前要补）。
 

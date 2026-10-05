@@ -66,6 +66,9 @@ class DecisionNode(Node):
         # run_mission_real.sh=real），见 docs/spec/mission-config-layer.md。
         self.declare_parameter('profile', 'sim')
         self.declare_parameter('scenario', 'full_mission')
+        # approach = 接近模块名（空 = approaches.ACTIVE）；approach_variant = 叠加 <approach>.<variant>.yaml
+        self.declare_parameter('approach', '')
+        self.declare_parameter('approach_variant', '')
         profile = self.get_parameter('profile').value
         scenario = self.get_parameter('scenario').value
 
@@ -74,7 +77,10 @@ class DecisionNode(Node):
         world = mission_config.load(profile, scenario)
         search = replace(search_strategy.load_config(profile), **world.search_overrides)
         tuning = mission_logic.load_tuning(profile)
-        mission_logic.configure_approach(profile)
+        mission_logic.configure_approach(profile, self.get_parameter('approach').value or None,
+                                         self.get_parameter('approach_variant').value or None)
+        self.get_logger().info(f'approach={mission_logic._ACTIVE_APPROACH.name} '
+                               f'variant={self.get_parameter("approach_variant").value or "-"} profile={profile}')
         mission_logic.configure_mission(world, tuning, search)
         self._ctx = mission_logic.MissionContext(current_state=world.initial_state)
         self._pending_service_name = None
@@ -328,6 +334,8 @@ class DecisionNode(Node):
             # 飞离）、h=离地高。
             vt = result.velocity_target
             vstr = f'({vt[0]:.2f},{vt[1]:.2f},{vt[2]:.2f})' if vt is not None else 'None'
+            pt = result.position_target  # 位置指令(x,y,高度)：粗段与 position_lock_descent 末端
+            pstr = f'({pt[0]:.2f},{pt[1]:.2f},{-pt[2]:.2f})' if pt is not None else 'None'
             ast = mission_logic._ACTIVE_APPROACH.state
             off = ast.prev_off_meas
             offstr = f'({off[0]:.2f},{off[1]:.2f})' if off is not None else 'None'
@@ -349,7 +357,7 @@ class DecisionNode(Node):
             hstr = f'{-self._ctx.local_position_z:.2f}' if self._ctx.local_position_z is not None else 'None'
             self.get_logger().info(
                 f'[APPROACH] phase={ast.phase} lever=({ast.lever[0]:.2f},{ast.lever[1]:.2f}) '
-                f'yaw={self._ctx.yaw_rad or 0.0:.3f} v={vstr} '
+                f'yaw={self._ctx.yaw_rad or 0.0:.3f} v={vstr} p={pstr} mode={ast.mode or "-"} '
                 f'off={offstr} miss={ast.miss} dist2lock={diststr} near_det={ndstr} h={hstr} '
                 f'hspeed={self._ctx.horizontal_speed}',
                 throttle_duration_sec=0.3)
