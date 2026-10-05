@@ -38,6 +38,37 @@ _STREAM_RATES = {
 }
 
 
+_RATE_CMDS = {mavutil.mavlink.MAV_CMD_SET_MESSAGE_INTERVAL}
+
+
+def _drop_rate_requests(data: bytes):
+    """丢掉消费者（地面站等）发来的数据流速率请求，其余原样转发：速率只归本扇出配置。
+    返回 (要写串口的字节, 被丢的速率指令列表)。解析不出完整消息时原样转发（不因解析问题吞掉指令）。"""
+    parser = mavutil.mavlink.MAVLink(None)  # 每个报文新建：残帧不跨报文/跨消费者拼接
+    parser.robust_parsing = True
+    try:
+        msgs = parser.parse_buffer(data) or []
+    except Exception:
+        return data, []
+    keep, dropped_cmds = [], []
+    for x in msgs:
+        if x.get_type() == "REQUEST_DATA_STREAM":
+            continue
+        if x.get_type() in ("COMMAND_LONG", "COMMAND_INT") and x.command in _RATE_CMDS:
+            dropped_cmds.append(x)
+            continue
+        keep.append(x)
+    if len(keep) == len(msgs):
+        return data, []
+    return b"".join(x.get_msgbuf() for x in keep), dropped_cmds
+
+
+def _deny_ack(cmd, fc_sys: int, fc_comp: int) -> bytes:
+    """被丢的速率指令回 DENIED，免得地面站等不到 ACK 反复重发。"""
+    enc = mavutil.mavlink.MAVLink(None, srcSystem=fc_sys, srcComponent=fc_comp)
+    return enc.command_ack_encode(cmd.command, mavutil.mavlink.MAV_RESULT_DENIED).pack(enc)
+
+
 def request_streams(m) -> None:
     sysid = m.target_system or 1
     compid = m.target_component or 1
@@ -103,8 +134,12 @@ def main() -> None:
             for u in socks:
                 if u.fileno() in ready:
                     try:
-                        data, _ = u.recvfrom(65535)
-                        m.write(data)
+                        data, addr = u.recvfrom(65535)
+                        data, denied = _drop_rate_requests(data)
+                        if data:
+                            m.write(data)
+                        for cmd in denied:
+                            u.sendto(_deny_ack(cmd, m.target_system or 1, m.target_component or 1), addr)
                     except OSError:
                         pass
 
