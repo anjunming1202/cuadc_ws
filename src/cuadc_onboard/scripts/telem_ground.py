@@ -52,6 +52,9 @@ class MavlinkTelemetrySource:
         self._baud = baud
         self._master: Any = None
         self._last_stream_req = 0.0
+        # 经 mav_fanout（udp/tcp 端点）时飞控数据流速率归扇出（唯一属主），这里只消费；
+        # 只有自己直连串口时才请求数据流。
+        self._owns_link = not device.startswith(("udp", "tcp"))
         self._lock = threading.Lock()
         self._state: dict[str, Any] = self._empty_state()
         self._seen: set[str] = set()
@@ -115,7 +118,8 @@ class MavlinkTelemetrySource:
             f"{self._master.target_component} mode={self.snapshot().get('mode')}",
             flush=True,
         )
-        self._request_streams()
+        if self._owns_link:
+            self._request_streams()
 
     def _apply_heartbeat(self, msg: Any, force_targets: bool = False) -> None:
         if msg is None:
@@ -179,7 +183,7 @@ class MavlinkTelemetrySource:
             return
         now = time.monotonic()
         interval = 2.0 if not self.has_motion_fields() else 5.0
-        if now - self._last_stream_req > interval:
+        if self._owns_link and now - self._last_stream_req > interval:
             self._request_streams()
         deadline = time.monotonic() + budget_s
         while time.monotonic() < deadline:
