@@ -20,7 +20,7 @@ from typing import Any
 from pymavlink import mavutil
 
 DEFAULT_DEVICE = "/dev/ttyAMA0"
-DEFAULT_BAUD = 57600
+DEFAULT_BAUD = 921600
 DEFAULT_DEST_HOST = "192.168.50.2,10.10.10.2"  # Wi-Fi + Ethernet
 DEFAULT_DEST_PORTS = "5701,5601"  # preferred + legacy (viewer demuxes 5601)
 DEFAULT_HZ = 10.0

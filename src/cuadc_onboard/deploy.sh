@@ -30,6 +30,9 @@ install -m 0755 "$SRC_DIR/systemd/apply-profile.sh"  "$OPT/apply-profile.sh"
 for u in "$SRC_DIR"/systemd/*.service; do
   install -m 0644 "$u" "$UNIT_DIR/$(basename "$u")"
 done
+# 单元文件是唯一真源：现场手写的扇出 drop-in 会静默盖掉 ExecStart(波特率)，收敛掉。
+rm -f "$UNIT_DIR/cuadc-onboard-fanout.service.d/override.conf"
+rmdir "$UNIT_DIR/cuadc-onboard-fanout.service.d" 2>/dev/null || true
 
 # 已退役单元(被 cv-preview-ctl 的按钮路径取代):老 Pi 上可能还装着,收敛掉。
 for u in cuadc-onboard-cv-preview.service cuadc-onboard-cv-forward.service; do
