@@ -211,6 +211,7 @@ class MissionContext:
     pilot_arm_ready: bool = False             # 进 WAIT_PILOT_ARM 后已看到过未解锁（下一次解锁才算数）
     already_armed_noted: bool = False
     pi_in_control: bool = False               # 起飞指令被接受起 = Pi 接管；之后飞手改模式/上锁即夺控
+    rtl_commanded: bool = False               # RTL_OR_LAND 已切过 RTL（或飞控已在 RTL）：不再重发
 
     connected: bool = False
     armed: bool = False
@@ -587,9 +588,14 @@ def _tick_survey_recon_zone(ctx):
 
 
 def _tick_rtl_or_land(ctx):
+    # 只切一次：decision_node 每拍把 last_service_result 刷成本拍结果（多数拍为 None），不记住
+    # 就会隔拍重发 set_mode RTL，把飞手拨的模式抢回来（2026-10-05 任务没退出、地面解锁不了）。
+    if ctx.rtl_commanded or ctx.mode == 'RTL':
+        ctx.rtl_commanded = True
+        return TickResult()
+
     def on_success():
-        # 切到 RTL 之后不需要再做什么——是否真的落地、disarm 由遥测
-        # 观察即可，任务到此结束，停在这个状态直到进程退出。
+        ctx.rtl_commanded = True
         return TickResult()
     return _dispatch_and_await(ctx, 'set_mode', {'mode': 'RTL'}, on_success)
 

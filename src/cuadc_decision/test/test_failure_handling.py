@@ -328,3 +328,34 @@ def test_terminal_timeout_gives_up(clock):
         clock.t += 0.1
     assert out.give_up[0] == 'TERMINAL_TIMEOUT'
     assert a.cfg.terminal_timeout_s < clock.t - 1000.0 < a.cfg.terminal_timeout_s + 0.5
+
+
+# ---- 收尾 RTL ----
+
+def test_rtl_commanded_once_then_never_again(clock):
+    """decision_node 每拍把 last_service_result 刷成 None（无新结果时）：RTL 只能切一次，
+    之后飞手拨模式、落地上锁都不能被抢回 RTL。"""
+    configure()
+    ctx = flying_ctx(clock, S.RTL_OR_LAND)
+    r = ml.tick(ctx)
+    assert r.service_call is not None and r.service_call.name == 'set_mode'
+    ctx.last_service_result = ml.ServiceResult('set_mode', True)
+    assert ml.tick(ctx).service_call is None
+    ctx.mode = 'RTL'
+    for _ in range(5):
+        ctx.last_service_result = None
+        assert ml.tick(ctx).service_call is None
+    ctx.armed, ctx.mode = False, 'STABILIZE'      # 落地上锁后飞手拨回 STABILIZE 准备再飞
+    for _ in range(5):
+        ctx.last_service_result = None
+        assert ml.tick(ctx).service_call is None
+
+
+def test_rtl_not_sent_when_fc_already_in_rtl(clock):
+    configure()
+    ctx = flying_ctx(clock, S.RTL_OR_LAND)
+    ctx.mode = 'RTL'                              # 飞控 failsafe 自己切了 RTL
+    assert ml.tick(ctx).service_call is None
+    ctx.mode = 'LOITER'                           # 空中飞手拨走 -> 夺控，不抢回
+    r = ml.tick(ctx)
+    assert r.service_call is None and r.next_state == S.PILOT_TAKEOVER
