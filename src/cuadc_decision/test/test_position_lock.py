@@ -137,7 +137,8 @@ def test_selection_and_variant_overlay():
     assert high.cfg.drop_alt_m == 1.4 and high.cfg.aim_migrate_bot_m > high.cfg.drop_alt_m + high.cfg.drop_alt_band_m
     assert high.cfg.reacquire_ceiling_m > high.cfg.drop_alt_m + 0.5
     both = approaches.create_active('sim', name='position_lock_descent', variant='high,fastgate')
-    assert (both.cfg.drop_alt_m, both.cfg.drop_tol_m, both.cfg.stable_timeout_s) == (1.4, 0.05, 8.0)
+    assert (both.cfg.drop_alt_m, both.cfg.drop_tol_m, both.cfg.stable_hold_s) == (1.4, 0.05, 0.3)
+    assert both.cfg.stable_timeout_s == lock.cfg.stable_timeout_s   # 放宽时机不变
     ml.configure_approach('sim', 'position_lock_descent')
     assert ml._ACTIVE_APPROACH.name == 'position_lock_descent'
     ml.configure_approach('sim')
