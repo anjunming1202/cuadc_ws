@@ -28,6 +28,7 @@ setup(
             'interface_arm_test = cuadc_interface.tests.interface_arm_test:main',
             'interface_takeoff_land_test = cuadc_interface.tests.interface_takeoff_land_test:main',
             'interface_flight_suite_test = cuadc_interface.tests.interface_flight_suite_test:main',
+            'interface_route_test = cuadc_interface.tests.interface_route_test:main',
         ],
     },
 )

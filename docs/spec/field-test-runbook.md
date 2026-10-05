@@ -138,6 +138,15 @@ settle）→RTL 降落。基准 3m 是因为 1m 地效下实机明显发飘。ya
 sim 侧对应 `run_flight_check_sim.sh` / `run_flight_suite_sim.sh`（连 SITL，先在仿真验逻辑；sim
 没有飞手，由节点代飞手切 STABILIZE+解锁）。
 
+### 全任务航线（**会飞**，不用 CV，RC 待命）
+```
+./scripts/run_route_test_real.sh
+ros2 topic pub -t 5 -r 2 /cuadc_flight_test/start std_msgs/msg/Empty "{}"   # 另一终端放行，之后飞手 RC 解锁
+```
+起飞 → 投放区两个假目标（上方 3m → 降 1.4m 悬停 3s，不投放）→ 侦察区巡视航点（5m）→ RTL，最后打汇总表
+（各段耗时/到位误差/低空悬停偏差）。与任务算法完全解耦（不起决策/感知，航线在节点参数里），夜间等无 CV
+时验证全链路。最远到起飞点机头前方约 60m，场地不够长用 `--ros-args -p stub_targets:=... -p recon_waypoints:=...` 改。
+
 ### 接近+对准单点（**会飞**，RC 待命）
 ```
 ./scripts/run_drop_zone_real.sh          # = run_mission_real.sh scenario:=drop_zone_bench
