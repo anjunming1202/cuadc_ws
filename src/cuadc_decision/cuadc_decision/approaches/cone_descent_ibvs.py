@@ -84,6 +84,8 @@ class ApproachConfig:
     stable_timeout_s: float = 15.0         # 到投放高度后这么久没过投放门 -> 放宽到 relaxed_drop_tol_m
     relaxed_drop_tol_m: float = 0.08
     relaxed_timeout_s: float = 10.0        # 放宽后再这么久仍没过门 -> 放弃
+    drop_alt_band_m: float = 0.1           # 高度进入 drop_alt + 此带宽即开始投放门计时（之后不论高度持续计）
+    terminal_timeout_s: float = 60.0       # 本目标末端总时长上限（首次交接起算，回退粗段不清零）-> 放弃
 
 
 def load_config(profile: str) -> ApproachConfig:
@@ -116,6 +118,8 @@ class ApproachState:
     reacquires: int = 0                   # 末端退回粗段次数
     drop_alt_since: Optional[float] = None  # 首次到投放高度时刻
     relaxed: bool = False                 # 投放门已放宽
+    terminal_since: Optional[float] = None  # 本目标首次交接末端时刻
+    pending_event: Optional[Tuple[str, str]] = None  # 本 tick 要报的事件（任一返回路径带出）
     relock_last: Optional[Tuple[float, float]] = None
 
 
@@ -144,8 +148,12 @@ class ConeDescentIbvs:
         dets = [d for d in ctx.detections
                 if getattr(d, 'target_type', 'cylinder') == 'cylinder' and d.confidence >= conf_gate]
         if self.state.phase == 'coarse':
-            return self._coarse(ctx, dets, h, now)
-        return self._terminal(ctx, dets, h, now)
+            out = self._coarse(ctx, dets, h, now)
+        else:
+            out = self._terminal(ctx, dets, h, now)
+        if self.state.pending_event is not None and out.event is None:
+            out.event, self.state.pending_event = self.state.pending_event, None
+        return out
 
     # ---- 几何 ----
 
@@ -214,9 +222,32 @@ class ConeDescentIbvs:
             e = (off[0] - a[0], off[1] - a[1])
             if math.hypot(*e) <= cfg.handoff_off_m and settled and at_alt:
                 st.phase, st.mode, st.hover_since = 'terminal', 'track', None
+                if st.terminal_since is None:
+                    st.terminal_since = now
                 st.miss, st.prev_off_meas, st.off_window = 0, off, [off]
                 st.integ, st.prev_off, st.stable_since = (0.0, 0.0), None, None
         return ApproachOutput(position_target=aim, event=event)
+
+    def _terminal_budget(self, h, now):
+        """末端时间预算，每拍检查、不看当前在哪个分支（贴着投放高度上下浮动、丢失爬升时也计）：
+        进过 drop_alt+带宽后，stable_timeout 仍没投就放宽投放门（偏一点投出去比投不出去好：筒外 0.5m
+        内仍算 B 区），再 relaxed_timeout 放弃；本目标末端总时长超 terminal_timeout 放弃。"""
+        cfg, st = self.cfg, self.state
+        if st.terminal_since is not None and now - st.terminal_since > cfg.terminal_timeout_s:
+            return ('TERMINAL_TIMEOUT', f'{now - st.terminal_since:.0f}s in terminal for this target '
+                                        f'(reacquires={st.reacquires}), h={h:.2f}m')
+        if st.drop_alt_since is None and h <= cfg.drop_alt_m + cfg.drop_alt_band_m:
+            st.drop_alt_since = now
+        if st.drop_alt_since is None:
+            return None
+        at_alt_s = now - st.drop_alt_since
+        if at_alt_s > cfg.stable_timeout_s + cfg.relaxed_timeout_s:
+            return ('DROP_GATE_TIMEOUT', f'{at_alt_s:.0f}s since reaching drop alt without passing the gate')
+        if at_alt_s > cfg.stable_timeout_s and not st.relaxed:
+            st.relaxed = True
+            st.pending_event = ('DROP_GATE_RELAXED', f'{cfg.stable_timeout_s:.0f}s since reaching drop alt, '
+                                                     f'drop_tol {cfg.drop_tol_m:.2f} -> {cfg.relaxed_drop_tol_m:.2f}m')
+        return None
 
     def _wide_relock(self, ctx, dets, target) -> bool:
         """到点悬停、门内没检测时：SEARCH 机动中采样的世界坐标可偏 ~1m，悬停平视复看更可信——
@@ -245,6 +276,9 @@ class ConeDescentIbvs:
 
     def _terminal(self, ctx, dets, h, now) -> ApproachOutput:
         cfg, st = self.cfg, self.state
+        give_up = self._terminal_budget(h, now)
+        if give_up is not None:
+            return ApproachOutput(velocity_target=(0.0, 0.0, 0.0), give_up=give_up)
         target = st.locked
         best = _nearest_within(dets, target.x, target.y, cfg.refine_gate_m) if target is not None else None
         endgame = False
@@ -317,19 +351,6 @@ class ConeDescentIbvs:
             return ApproachOutput(velocity_target=(v[0], v[1], vz))
 
         # 投放高度:高度P保持(过低爬回),查投放门。门用全量杆臂误差(此处 aim==lever)。
-        # 久过不了门先放宽容差(偏一点投出去比投不出去好:筒外 0.5m 内仍算 B 区),再久就放弃。
-        if st.drop_alt_since is None:
-            st.drop_alt_since = now
-        at_alt_s = now - st.drop_alt_since
-        if at_alt_s > cfg.stable_timeout_s + cfg.relaxed_timeout_s:
-            return ApproachOutput(velocity_target=(0.0, 0.0, 0.0), give_up=(
-                'DROP_GATE_TIMEOUT', f'{at_alt_s:.0f}s at drop alt without passing the drop gate '
-                                     f'(last herr={herr:.3f}m)'))
-        event = None
-        if at_alt_s > cfg.stable_timeout_s and not st.relaxed:
-            st.relaxed = True
-            event = ('DROP_GATE_RELAXED', f'{cfg.stable_timeout_s:.0f}s at drop alt, drop_tol '
-                                          f'{cfg.drop_tol_m:.2f} -> {cfg.relaxed_drop_tol_m:.2f}m (herr={herr:.3f}m)')
         tol = cfg.relaxed_drop_tol_m if st.relaxed else cfg.drop_tol_m
         vz_hold = 0.0
         if cfg.alt_hold_p > 0.0:
@@ -343,7 +364,7 @@ class ConeDescentIbvs:
             if st.stable_since is None:
                 st.stable_since = now
             elif now - st.stable_since >= cfg.stable_hold_s:
-                return ApproachOutput(velocity_target=(v[0], v[1], vz_hold), drop_ready=True, event=event)
+                return ApproachOutput(velocity_target=(v[0], v[1], vz_hold), drop_ready=True)
         else:
             st.stable_since = None
-        return ApproachOutput(velocity_target=(v[0], v[1], vz_hold), event=event)
+        return ApproachOutput(velocity_target=(v[0], v[1], vz_hold))

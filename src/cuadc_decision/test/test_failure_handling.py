@@ -211,7 +211,7 @@ def test_terminal_repeated_loss_gives_up(clock):
     a = ml._ACTIVE_APPROACH
     target = Candidate(32.5, -1.5, 0.1)
     ctx = _approach_ctx(clock, target, [])
-    ctx.local_position_z = -2.0                      # 高于 reacquire_ceiling(1.9)：持续丢失即退回粗段
+    ctx.local_position_z = -(a.cfg.reacquire_ceiling_m + 0.1)  # 高于 reacquire_ceiling：持续丢失即退回粗段
     out = None
     for attempt in range(a.cfg.max_reacquire + 1):
         a.state.phase, a.state.prev_off_meas = 'terminal', (0.0, 0.0)
@@ -280,3 +280,51 @@ def test_guards_carry_fault_codes(clock):
 def test_strategy_signature_unchanged():
     c = [Candidate(0, 0, 0.1), Candidate(1, 1, 0.08)]
     assert drop_strategy.ACTIVE_STRATEGY(c, [(1.0, 1.0)], 0) == c[0]
+
+
+# ---- 2026-10-05 真机暴露的空档：贴着投放高度上方浮动 / 末端久拖 ----
+
+def test_drop_gate_budget_runs_above_drop_alt(clock):
+    """在 drop_alt 上方带宽内浮动（从不进入投放分支）也要放宽、到时放弃。"""
+    a, ctx = _terminal_at_drop_alt(clock, herr_fwd=0.12)
+    ctx.local_position_z = -(a.cfg.drop_alt_m + 0.05)
+    events, out = [], None
+    for _ in range(300):
+        out = a.loop(ctx, now=clock.t)
+        if out.event:
+            events.append(out.event[0])
+        if out.give_up:
+            break
+        clock.t += 0.1
+    assert events == ['DROP_GATE_RELAXED'] and out.give_up[0] == 'DROP_GATE_TIMEOUT'
+
+
+def test_relaxed_event_reported_while_climbing(clock):
+    """放宽恰在丢失爬升时到期，事件也要随那一拍的输出带出去。"""
+    a, ctx = _terminal_at_drop_alt(clock, herr_fwd=0.12)
+    a.loop(ctx, now=clock.t)                       # 进入带宽，开始计时
+    ctx.detections = []
+    a.state.miss = a.cfg.max_coast_ticks + 1        # 下一拍走爬升
+    clock.t += a.cfg.stable_timeout_s + 0.5
+    out = a.loop(ctx, now=clock.t)
+    assert out.velocity_target[2] < 0 and out.event[0] == 'DROP_GATE_RELAXED'
+
+
+def test_terminal_timeout_gives_up(clock):
+    """末端一直对不上、也没降到投放高度：本目标末端总时长到点放弃。"""
+    configure()
+    a = ml._ACTIVE_APPROACH
+    target = Candidate(32.5, -1.5, 0.1)
+    ctx = _approach_ctx(clock, target, [])
+    ctx.local_position_z = -2.0
+    a.state.phase, a.state.mode, a.state.terminal_since = 'terminal', 'track', clock.t
+    depth = a._depth(2.0)
+    ctx.detections = [det(32.5, -1.5, bearing=(0.4 / depth, 0.0))]   # 偏 0.4m，锥面外不降
+    out = None
+    for _ in range(int(a.cfg.terminal_timeout_s / 0.1) + 20):
+        out = a.loop(ctx, now=clock.t)
+        if out.give_up:
+            break
+        clock.t += 0.1
+    assert out.give_up[0] == 'TERMINAL_TIMEOUT'
+    assert a.cfg.terminal_timeout_s < clock.t - 1000.0 < a.cfg.terminal_timeout_s + 0.5

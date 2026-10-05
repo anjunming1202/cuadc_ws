@@ -57,7 +57,7 @@
 | 末端持续丢失 | climb：原地以 `climb_rate_mps` 爬升重捕获；爬到 `reacquire_ceiling_m` 仍没见 → 退回粗段 |
 | 已收敛、投放高度附近丢失 | endgame：有界盲收口投放 |
 | 粗段到点、门内无检测但 `relock_radius_m`（1.5m）内持续 `relock_ticks` 次看到别的筒 | 改锁过去，记 `RELOCK_WIDE` |
-| 到投放高度 `stable_timeout_s`（15s）仍没过投放门（4cm） | 门放宽到 `relaxed_drop_tol_m`（8cm），记 `DROP_GATE_RELAXED`（偏一点投出去比投不出去好：筒外 0.5m 内仍算 B 区） |
+| 进入 `drop_alt + drop_alt_band_m`（0.1m）后 `stable_timeout_s`（15s）仍没过投放门（4cm）——之后不论高度持续计时（贴着投放高度上下浮动、丢失爬升时也算） | 门放宽到 `relaxed_drop_tol_m`（8cm），记 `DROP_GATE_RELAXED`（偏一点投出去比投不出去好：筒外 0.5m 内仍算 B 区） |
 
 放弃本目标（→ 任务 FSM 拉黑）：
 
@@ -66,6 +66,7 @@
 | `TARGET_UNCONFIRMED` | 粗段水平到点后 `coarse_confirm_timeout_s`（8s）仍没交接末端（改锁后重新计时） |
 | `TARGET_LOST_REPEATEDLY` | 末端退回粗段超过 `max_reacquire`（3）次 |
 | `DROP_GATE_TIMEOUT` | 放宽后再 `relaxed_timeout_s`（10s）仍没过门 |
+| `TERMINAL_TIMEOUT` | 本目标末端总时长（首次交接起算，回退粗段不清零）超过 `terminal_timeout_s`（60s） |
 
 备用的 `stepped_descent_ibvs` 没有放弃路径（切换过去前要补）。
 

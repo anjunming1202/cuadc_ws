@@ -26,13 +26,15 @@ alt_hold_p: 1.2                 # 末端高度P:比例减速进 drop_alt+过低�
 drop_tol_m: 0.04
 speed_tol_mps: 0.15
 level_tol_rad: 0.1
-stable_hold_s: 1.0
+stable_hold_s: 0.5
 # ---- 失效处理(放弃 = 任务拉黑本目标换下一个,见 docs/spec/failure-handling.md) ----
 coarse_confirm_timeout_s: 8.0     # 粗段到点后这么久没交接末端 -> 放弃
 max_reacquire: 3                  # 末端丢失退回粗段次数上限
 stable_timeout_s: 15.0            # 到投放高度这么久没过门 -> 放宽容差
 relaxed_drop_tol_m: 0.08
 relaxed_timeout_s: 10.0           # 放宽后仍没过门 -> 放弃
+drop_alt_band_m: 0.1              # 进入 drop_alt+此带宽即开始投放门计时，之后不论高度持续计
+terminal_timeout_s: 60.0          # 本目标末端总时长上限（首次交接起算，回退粗段不清零）
 # ---- 锥面/迁移/重捕获(本模块专属) ----
 fov_half_deg: 17.25             # 纵向半FOV(实测标定 33.4°/2)
 fov_margin_deg: 4.0             # 可见性余量(俯仰瞬态+圆盘半径的角预算)
