@@ -109,6 +109,8 @@ sudo systemctl disable --now dronelink-telemetry.service dronelink-video.service
   数据攒满 4 KB 才交给用户态：遥测每 ~0.7s 成批到一次、比最新样本多旧 ~0.5s。链路要留足空闲。
 - **数据流**：`mav_fanout.py` 按消费者实际用到的消息分流请求（`_STREAM_RATES`：ATTITUDE 50 Hz、位置 25 Hz、
   状态/HUD/EKF 5 Hz，原始 IMU 与 RC 通道不要），不发 ALL。EXTRA3 带 `EKF_STATUS_REPORT`，不能停。
+  扇出是飞控数据流速率的**唯一属主**：消费者（地面站/Mission Planner 等）发来的 `REQUEST_DATA_STREAM`
+  与 `SET_MESSAGE_INTERVAL` 在扇出被丢弃（后者回 `COMMAND_ACK` DENIED），其余指令原样转发。
 - **物理口**：本架 TELEM2 无心跳；改插 **TELEM3** 后扇出出现 `heartbeat sys=1`。图传 UDP 与飞控串口无关。
 - **禁止 30s 重开串口**：心跳超时若 `close` 再 `open`，这块飞控 TELEM 会哑到断电。`mav_fanout.py` 改为一直持有 `/dev/ttyAMA0`，只打 `still no heartbeat; keeping serial open`。
 - **OpenCV 预览**：`cuadc-onboard-cv-preview-ctl` 开机默认关，地面 viewer 按钮经 UDP 5611 才起检测（省 CPU）。worker 是 `cuadc_perception.cv_preview`（与任务同一份检测代码），读本地 H.264 5602、**不占相机 shm**，任务飞行时开着也不抢感知的帧。
