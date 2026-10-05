@@ -75,8 +75,7 @@ cv2.VideoCapture(
 sudo ./deploy.sh ground-monitor   # 装脚本/单元、写 profile（缺省才写）、enable 底座 + applier
 ```
 
-`deploy.sh` 只装+enable 本模块，**不碰任何 dronelink 服务**。现场只改图传/CV
-开关时，也可用 `local/pi_burn_video_ctls/backup_and_install.sh`（先备份再装 ctl）。
+`deploy.sh` 只装+enable 本模块，**不碰任何 dronelink 服务**。
 迁移旧的仓库外自启是单独一步——**只 disable 要替换的两个**，不删文件、可回退：
 
 ```bash
@@ -86,6 +85,22 @@ sudo systemctl disable --now dronelink-telemetry.service dronelink-video.service
 
 **扇出必须对『刚上电的飞控』开串口，不能热交接（见 ADR-0004），迁移启用后
 须整机断电重启一次**，让扇出接一个没被交接搞过的飞控。
+
+## 开发与部署约定（所有人）
+
+- **只改 git**：机载脚本/单元只在仓库 `scripts/` + `systemd/` 里改、提交，再部署；不直接改 `/opt`、
+  `/etc/systemd`、家目录副本，也不从 Windows `scp` 进 `/opt`（会带 CRLF、绕过 git）。
+- **只用 `deploy.sh` 装**：在 Pi 上**任务所用的检出**里 `sudo src/cuadc_onboard/deploy.sh`。它装 `/opt` 和单元、
+  删现场 drop-in 和退役单元，CV 预览的 `PYTHONPATH` 指向这个检出（与任务同一份检测代码）。
+  `local/pi_burn_video_ctls/` 是 10-04 的历史烧录包，不再用。
+- **自启只走 systemd**：底座 enable + profile/按钮 ctl。不用 crontab、rc.local、家目录脚本另起一份——
+  同一端口两个进程会抢包。
+- **一个资源一个主人**：飞控串口归 `mav_fanout`（数据流频率也只有它设）；相机归
+  `camera_service`（shm 给任务感知，5602 给预览/采集）。新功能 = 连已有端点 + 新单元，不碰硬件。
+- **新端口**先登记到 [onboard-runtime.md](../../docs/spec/onboard-runtime.md) 端点表。
+- 改了扇出、或部署后首次启用：**整机断电重启**（ADR-0004）。
+- **Pi 系统前提（别动）**：内核锁在 `6.8.0-1064-raspi`（1065 相机起不来）、关自动更新；`loginctl enable-linger wly`
+  （否则 logind RemoveIPC 删 shm，感知 0 帧）；绝不动 `dronelink-network` / `eth0`。
 
 ## 现场（2026-10-03）
 

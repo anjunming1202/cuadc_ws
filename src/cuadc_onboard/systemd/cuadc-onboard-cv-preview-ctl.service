@@ -8,7 +8,8 @@ Wants=cuadc-onboard-camera.service
 Type=simple
 User=wly
 Environment=GST_PLUGIN_PATH=/usr/local/lib/aarch64-linux-gnu/gstreamer-1.0
-Environment=PYTHONPATH=/home/wly/cuadc_ws/src/cuadc_perception:/home/wly/cuadc_ws/src/cuadc_physical
+# @REPO@ 由 deploy.sh 填成部署所用检出：预览与任务用同一份检测代码
+Environment=PYTHONPATH=@REPO@/src/cuadc_perception:@REPO@/src/cuadc_physical
 ExecStart=/usr/bin/python3 /opt/cuadc-onboard/cv_preview_ctl.py
 Restart=always
 RestartSec=3
