@@ -52,7 +52,7 @@ def generate_launch_description():
     # 接近算法选择（只到决策层），现场对比用：approach:=position_lock_descent / approach_variant:=lowgain。
     approach_arg = DeclareLaunchArgument('approach', default_value='', description='接近模块名，空 = 默认')
     approach_variant_arg = DeclareLaunchArgument('approach_variant', default_value='',
-                                                 description='叠加 <approach>.<variant>.yaml，空 = 不叠加')
+                                                 description='叠加 <approach>.<variant>.yaml，逗号分隔可多个，空 = 不叠加')
     # 感知取帧源，跟 connection 一样各启动脚本写死：sim=ros（订 Gazebo 的
     # /camera/image_raw）、真机=shm（读 camera_service 的 NV12，图不进 ROS）。
     frame_source_arg = DeclareLaunchArgument(

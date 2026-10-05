@@ -145,7 +145,7 @@ sim 侧对应 `run_flight_check_sim.sh` / `run_flight_suite_sim.sh`（连 SITL�
 ros2 topic pub -t 5 -r 2 /cuadc_decision/sim/task_start_trigger std_msgs/msg/Empty "{}"
 ```
 投放区中心在起飞时机头前方 2m（`drop_zone_bench.real.yaml`），投 1 次、看到第一个可信筒就去投。
-换末端算法（默认 `cone_descent_ibvs`）：追加 `approach:=position_lock_descent`（[ADR-0012](adr/0012-terminal-position-lock.md)）或 `approach_variant:=lowgain`；启动日志 `approach=... variant=...` 可核对。
+换末端算法（默认 `cone_descent_ibvs`）：追加 `approach:=position_lock_descent`（[ADR-0012](adr/0012-terminal-position-lock.md)）或 `approach_variant:=lowgain`；变体可逗号叠加（如 `approach_variant:=high,fastgate`，见各 `approaches/<approach>.<variant>.yaml`）；启动日志 `approach=... variant=...` 可核对。
 现场看失效处理：日志里的 `[FAULT]` 行，或另开终端
 `ros2 topic echo /cuadc_decision/fault_events`（代码表见 [failure-handling.md](failure-handling.md)）。
 ⚠ **首飞前核对 `mission.real.yaml`**：投放区中心/扫描航点是**场地坐标**（+x = 起飞时机头方向，+y = 右），

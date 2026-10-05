@@ -100,7 +100,7 @@ class CvPerceptionNode(Node):
         # 默认取规则书投放筒高（cuadc_physical/targets.yaml）；仍可用参数临时覆盖。
         self.declare_parameter('cylinder_height_m', cuadc_physical.load_targets().drop_cylinder_height_m)
         self.declare_parameter('min_radius_m', 0.05)
-        self.declare_parameter('max_radius_m', 0.18)
+        self.declare_parameter('max_radius_m', 0.30)  # 最大筒 0.125m；暗光/阴影把筒洞撑大到 ~0.17m（10-05 实飞），0.18 会整帧丢
         self.declare_parameter('detector', detectors.ACTIVE_DEFAULT)
         self.declare_parameter('profile', 'sim')
         for view in _DEBUG_VIEWS:

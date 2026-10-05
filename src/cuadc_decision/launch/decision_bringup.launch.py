@@ -29,7 +29,7 @@ def generate_launch_description():
         description='接近模块名（cone_descent_ibvs / position_lock_descent / ...），空 = approaches.ACTIVE')
     approach_variant_arg = DeclareLaunchArgument(
         'approach_variant', default_value='',
-        description='叠加 <approach>.<variant>.yaml（如 lowgain），空 = 不叠加')
+        description='叠加 <approach>.<variant>.yaml（如 lowgain；逗号分隔可多个），空 = 不叠加')
 
     decision_node = Node(
         package='cuadc_decision',

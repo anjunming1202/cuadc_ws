@@ -31,14 +31,14 @@ ACTIVE = cone_descent_ibvs.NAME  # 默认；现场用启动参数 approach:= 切
 
 
 def create_active(profile=None, config=None, name=None, variant=None):
-    """建 approach 实例（name 缺省 = ACTIVE）。给 profile 就从它的 yaml 读配置，再叠加
-    <name>.<variant>.yaml（只含要改的键）；给 config 直接用；都不给用 dataclass 默认
-    (纯单测/import 期,不读文件)。"""
+    """建 approach 实例（name 缺省 = ACTIVE）。给 profile 就从它的 yaml 读配置，再按顺序叠加
+    variant（逗号分隔，如 'high,fastgate'）各自的 <name>.<variant>.yaml（只含要改的键）；
+    给 config 直接用；都不给用 dataclass 默认(纯单测/import 期,不读文件)。"""
     name = name or ACTIVE
     mod = APPROACHES[name]
     if config is None and profile is not None:
         config = mod.load_config(profile)
-        if variant:
-            with open(Path(mod.__file__).parent / f'{name}.{variant}.yaml') as fh:
+        for v in filter(None, (variant or '').split(',')):
+            with open(Path(mod.__file__).parent / f'{name}.{v.strip()}.yaml') as fh:
                 config = replace(config, **(yaml.safe_load(fh) or {}))
     return mod.create(config)
