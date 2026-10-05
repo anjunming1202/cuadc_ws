@@ -1,0 +1,10 @@
+# 精确投放门（approach_variant:=high,precise）：track 时用图像偏差判断投放口相对筒心，并预测瓶子离开时的偏差。
+# 2026-10-06 hf1：过门时偏 3.2 cm，舵机启动约 1.15 s 后瓶子才离开，这期间又漂了 4–5 cm，砸在中筒筒壁。
+# 最小筒 Ø0.15：瓶心需在 7.5 − 3.3 ≈ 4 cm 内，门取 3 cm。
+image_gate: true
+drop_tol_m: 0.03
+relaxed_drop_tol_m: 0.06   # stable_timeout_s（15 s）仍没过门才放宽
+stable_hold_s: 0.3
+gate_speed_mps: 0.08
+release_delay_s: 1.1
+pred_window_s: 0.5

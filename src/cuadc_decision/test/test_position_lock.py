@@ -171,3 +171,81 @@ def test_mission_tick_caps_speed_in_terminal_only(monkeypatch):
         assert r.speed_target_mps == a.cfg.v_max_mps
     finally:
         ml.configure_approach('sim')
+
+
+# ---- 精确投放门（precise：图像偏差 + 预测瓶子离开时的偏差）----
+
+def _precise_at_drop_alt(port=0):
+    a = approaches.create_active('sim', name='position_lock_descent', variant='precise')
+    ctx = ml.MissionContext(current_state=ml.State.APPROACH_DROP_TARGET, drop_port_start=port)
+    ctx.local_position_z = -a.cfg.drop_alt_m
+    ctx.horizontal_speed = ctx.vertical_speed = 0.0
+    ctx.roll_rad = ctx.pitch_rad = ctx.yaw_rad = 0.0
+    ctx.drop_task.selected_target = Candidate(*TARGET, 0.075)
+    a.enter(ctx)
+    st = a.state
+    st.phase, st.mode, st.terminal_since, st.h_cmd, st.est = 'terminal', 'track', 1000.0, a.cfg.drop_alt_m, TARGET
+    return a, ctx
+
+
+def _seen_with_port_offset(a, ctx, res):
+    """飞机摆在"筒心相对投放口 = res（前,右）"的位置（yaw 0、水平），返回按真实几何算出的检测。"""
+    port = (a.cfg.camera_offset_m[0] + a.state.lever[0], a.cfg.camera_offset_m[1] + a.state.lever[1])
+    ctx.local_position_xy = (TARGET[0] - res[0] - port[0], TARGET[1] - res[1] - port[1])
+    cam = (ctx.local_position_xy[0] + a.cfg.camera_offset_m[0], ctx.local_position_xy[1] + a.cfg.camera_offset_m[1])
+    depth = a._depth(-ctx.local_position_z)
+    fwd, right = TARGET[0] - cam[0], TARGET[1] - cam[1]
+    return det(*TARGET, bearing=(right / depth, -fwd / depth))
+
+
+def test_precise_gate_blocks_drift_then_drops_when_still():
+    a, ctx = _precise_at_drop_alt()
+    t, res = 1000.0, [0.0, -0.025]
+    ctx.horizontal_speed = 0.05                       # 速度门（0.08）放行，只靠预测挡
+    for _ in range(12):                               # 以 5 cm/s 横向漂移，当前偏差一度 < 3 cm
+        ctx.detections = [_seen_with_port_offset(a, ctx, res)]
+        out = a.loop(ctx, now=t)
+        assert not out.drop_ready, (res, a.state.gate_res, a.state.gate_pred)
+        t += DT
+        res[1] += 0.005
+    assert a.state.gate_pred[1] > a.state.gate_res[1] + 0.04   # 预测领先当前约 5.5 cm
+    ctx.horizontal_speed, res = 0.01, (0.005, 0.01)
+    drop_t = None
+    for i in range(20):                               # 静止对准后：拟合窗口刷新 + 0.3 s 保持
+        ctx.detections = [_seen_with_port_offset(a, ctx, res)]
+        if a.loop(ctx, now=t).drop_ready:
+            drop_t = i * DT
+            break
+        t += DT
+    assert drop_t is not None and drop_t <= 1.0
+    assert math.hypot(*a.state.gate_res) < 0.015
+
+
+def test_precise_gate_needs_frame_history_and_rejects_offset():
+    a, ctx = _precise_at_drop_alt()
+    t = 1000.0
+    for _ in range(2):                                # 帧不够拟合：不放料
+        ctx.detections = [_seen_with_port_offset(a, ctx, (0.0, 0.0))]
+        assert not a.loop(ctx, now=t).drop_ready
+        t += DT
+    for _ in range(15):                               # 静止但偏 4 cm（> 3 cm 门）：不放料
+        ctx.detections = [_seen_with_port_offset(a, ctx, (0.0, 0.04))]
+        assert not a.loop(ctx, now=t).drop_ready
+        t += DT
+    assert abs(a.state.gate_res[1] - 0.04) < 0.002
+
+
+def test_first_drop_port_selects_right_lever_and_trim():
+    left, _ = _precise_at_drop_alt(port=0)
+    right, _ = _precise_at_drop_alt(port=1)
+    arms = right.cfg.lever_arms_m
+    assert left.state.lever == tuple(arms[0]) and right.state.lever == tuple(arms[1])
+    assert right.state.lever[1] > left.state.lever[1]
+
+
+def test_high_precise_overlay():
+    a = approaches.create_active('sim', name='position_lock_descent', variant='high,precise')
+    c = a.cfg
+    assert (c.drop_alt_m, c.drop_tol_m, c.image_gate, c.release_delay_s) == (1.4, 0.03, True, 1.1)
+    base = approaches.create_active('sim', name='position_lock_descent')
+    assert base.cfg.image_gate is False and base.cfg.release_delay_s == 0.0

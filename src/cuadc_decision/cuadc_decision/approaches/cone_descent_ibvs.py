@@ -134,7 +134,7 @@ class ConeDescentIbvs:
         self.state = ApproachState()
 
     def enter(self, ctx):
-        i = ctx.drop_task.drop_count
+        i = ctx.drop_task.drop_count + ctx.drop_port_start
         arms, trims = self.cfg.lever_arms_m, self.cfg.aim_trims_m
         arm = arms[min(i, len(arms) - 1)]
         trim = trims[min(i, len(trims) - 1)]

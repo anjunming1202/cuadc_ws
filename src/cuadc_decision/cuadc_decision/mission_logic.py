@@ -211,6 +211,7 @@ class MissionContext:
     pilot_arm_ready: bool = False             # 进 WAIT_PILOT_ARM 后已看到过未解锁（下一次解锁才算数）
     already_armed_noted: bool = False
     pi_in_control: bool = False               # 起飞指令被接受起 = Pi 接管；之后飞手改模式/上锁即夺控
+    drop_port_start: int = 0                  # 第一投用第几个投放口（0 左 / 1 右），单点测右口时设 1
     rtl_commanded: bool = False               # RTL_OR_LAND 已切过 RTL（或飞控已在 RTL）：不再重发
 
     connected: bool = False

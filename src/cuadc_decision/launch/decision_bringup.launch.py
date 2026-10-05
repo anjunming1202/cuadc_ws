@@ -31,6 +31,9 @@ def generate_launch_description():
         'approach_variant', default_value='',
         description='叠加 <approach>.<variant>.yaml（如 lowgain；逗号分隔可多个），空 = 不叠加')
 
+    first_drop_port_arg = DeclareLaunchArgument(
+        'first_drop_port', default_value='0', description='第一投用的投放口：0 左 / 1 右（单点测右口）')
+
     decision_node = Node(
         package='cuadc_decision',
         executable='decision_node',
@@ -42,8 +45,9 @@ def generate_launch_description():
             'scenario': LaunchConfiguration('scenario'),
             'approach': LaunchConfiguration('approach'),
             'approach_variant': LaunchConfiguration('approach_variant'),
+            'first_drop_port': LaunchConfiguration('first_drop_port'),
         }],
     )
 
     return LaunchDescription([tick_rate_arg, profile_arg, scenario_arg, approach_arg, approach_variant_arg,
-                              decision_node])
+                              first_drop_port_arg, decision_node])

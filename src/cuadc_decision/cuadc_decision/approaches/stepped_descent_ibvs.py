@@ -135,7 +135,7 @@ class SteppedDescentIbvs:
     def enter(self, ctx):
         """进入 APPROACH 时调:以 SEARCH 选定的目标为锁定种子,按投放次序选投放口杆臂
         (+经验修正),清内部状态。"""
-        i = ctx.drop_task.drop_count
+        i = ctx.drop_task.drop_count + ctx.drop_port_start
         arms, trims = self.cfg.lever_arms_m, self.cfg.aim_trims_m
         arm = arms[min(i, len(arms) - 1)]
         trim = trims[min(i, len(trims) - 1)]

@@ -33,6 +33,12 @@ class ApproachConfig(cone.ApproachConfig):
     est_window_s: float = 1.0                         # 目标估计取最近这么久的关联检测
     h_lead_max_m: float = 0.3                         # 指令高度最多领先实际高度这么多（飞控跟不上时不越拉越远）
     camera_offset_m: Tuple[float, float] = (0.0, 0.0)  # 相机相对飞控(前,右)，load_config 从 cuadc_physical 注入
+    # 图像投放门（track 时）：用拍照时刻的图像偏差判断投放口相对筒心（不经 GPS/目标估计），并按偏差变化率预测
+    # release_delay_s 后瓶子离开时的偏差；当前值和预测值都在容差内才放料
+    image_gate: bool = False
+    gate_speed_mps: float = 0.0                       # 投放门水平速度上限；0 = 用 speed_tol_mps
+    release_delay_s: float = 0.0                      # 舵机启动到瓶子离开的时间（实测约 1.1 s）
+    pred_window_s: float = 0.5                        # 偏差变化率取最近这么久的帧做直线拟合
 
 
 def _read(name):
@@ -58,6 +64,9 @@ class LockState(cone.ApproachState):
     est: Optional[Tuple[float, float]] = None     # 目标位置估计（窗口中位数；丢失时保持最后值）
     h_cmd: Optional[float] = None                 # 指令高度
     prev_t: Optional[float] = None
+    res_hist: list = field(default_factory=list)  # (t, 前, 右) 图像算出的筒心相对投放口
+    gate_res: Optional[Tuple[float, float]] = None   # 最近的图像偏差（3 帧均值，诊断日志用）
+    gate_pred: Optional[Tuple[float, float]] = None  # 预测的瓶子离开时偏差
 
 
 class PositionLockDescent(cone.ConeDescentIbvs):
@@ -84,6 +93,7 @@ class PositionLockDescent(cone.ConeDescentIbvs):
         st.prev_off_meas, st.off_window = None, []
         st.hover_since, st.drop_alt_since, st.relaxed = None, None, False
         st.samples, st.h_cmd, st.stable_since = [], None, None
+        st.res_hist, st.gate_res, st.gate_pred = [], None, None
         if st.est is not None:
             st.locked = Candidate(st.est[0], st.est[1], st.locked.size if st.locked else 0.0)
         st.est, st.prev_t = None, None
@@ -111,7 +121,8 @@ class PositionLockDescent(cone.ConeDescentIbvs):
             st.locked = Candidate(best.position.x, best.position.y, best.apparent_size)
             st.samples.append((now, best.position.x, best.position.y))
             st.last_bearing = (best.bearing_x, best.bearing_y)
-            off = self._bearing_to_off(st.last_bearing, ctx, h)  # 仅诊断/DROP_AIM 快照
+            off = self._bearing_to_off(st.last_bearing, ctx, h)  # 图像投放门 + DROP_AIM 快照
+            st.res_hist.append((now, off[0] - st.lever[0], off[1] - st.lever[1]))
             st.off_window = (st.off_window + [off])[-cone._OFF_WINDOW:]
             st.prev_off_meas = (sum(o[0] for o in st.off_window) / len(st.off_window),
                                 sum(o[1] for o in st.off_window) / len(st.off_window))
@@ -148,8 +159,13 @@ class PositionLockDescent(cone.ConeDescentIbvs):
         st.h_cmd = max(st.h_cmd, cfg.drop_alt_m)
         target = (fx, fy, -st.h_cmd)
 
-        stable = (at_drop_alt and st.mode in ('track', 'endgame') and port_err < tol
-                  and ctx.horizontal_speed is not None and ctx.horizontal_speed < cfg.speed_tol_mps
+        st.res_hist = [r for r in st.res_hist if now - r[0] <= cfg.pred_window_s]
+        aligned = port_err < tol
+        if cfg.image_gate and st.mode == 'track':  # endgame（已丢检测）没有图像，仍按目标估计
+            aligned = self._image_aligned(tol)
+        stable = (at_drop_alt and st.mode in ('track', 'endgame') and aligned
+                  and ctx.horizontal_speed is not None
+                  and ctx.horizontal_speed < (cfg.gate_speed_mps or cfg.speed_tol_mps)
                   and ctx.vertical_speed is not None and abs(ctx.vertical_speed) < cfg.speed_tol_mps
                   and ctx.roll_rad is not None and abs(ctx.roll_rad) < cfg.level_tol_rad
                   and ctx.pitch_rad is not None and abs(ctx.pitch_rad) < cfg.level_tol_rad)
@@ -160,3 +176,19 @@ class PositionLockDescent(cone.ConeDescentIbvs):
         elif now - st.stable_since >= cfg.stable_hold_s:
             return ApproachOutput(position_target=target, speed_mps=cfg.v_max_mps, drop_ready=True)
         return ApproachOutput(position_target=target, speed_mps=cfg.v_max_mps)  # 末端限速：估计跳变时不在低空快速横移
+
+    def _image_aligned(self, tol):
+        """图像偏差（最近 3 帧均值）和按变化率外推 release_delay_s 后的偏差都 < tol。帧不够拟合时不放料。"""
+        st, cfg = self.state, self.cfg
+        hist = st.res_hist
+        st.gate_res = st.gate_pred = None
+        if len(hist) < 3 or hist[-1][0] - hist[0][0] < 0.2:
+            return False
+        last = hist[-3:]
+        cur = (sum(r[1] for r in last) / 3, sum(r[2] for r in last) / 3)
+        tm = sum(r[0] for r in hist) / len(hist)
+        var = sum((r[0] - tm) ** 2 for r in hist)
+        rate = tuple(sum((r[0] - tm) * r[k] for r in hist) / var for k in (1, 2))
+        pred = (cur[0] + rate[0] * cfg.release_delay_s, cur[1] + rate[1] * cfg.release_delay_s)
+        st.gate_res, st.gate_pred = cur, pred
+        return math.hypot(*cur) < tol and math.hypot(*pred) < tol
