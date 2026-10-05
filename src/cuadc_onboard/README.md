@@ -84,11 +84,13 @@ sudo systemctl disable --now dronelink-telemetry.service dronelink-video.service
 
 ## 现场（2026-10-03）
 
-- **波特率**：单元 `--baud 57600`（`SERIAL*_BAUD=57`）。USB 的 115200 不是 TELEM 默认。
+- **波特率**：单元 `--baud 921600` ↔ 飞控 `SERIAL5_BAUD=921`（TELEM3 = SERIAL5，Pixhawk 6C），两端一起改、再整机断电重启。
+  57600 被请求的数据流 100% 占满（实测 5775 B/s），线路从不空闲 → Pi 5（RP1 PL011）接收端的超时冲刷不触发，
+  数据攒满 4 KB 才交给用户态：遥测每 ~0.7s 成批到一次、比最新样本多旧 ~0.5s。链路要留足空闲。
 - **物理口**：本架 TELEM2 无心跳；改插 **TELEM3** 后扇出出现 `heartbeat sys=1`。图传 UDP 与飞控串口无关。
 - **禁止 30s 重开串口**：心跳超时若 `close` 再 `open`，这块飞控 TELEM 会哑到断电。`mav_fanout.py` 改为一直持有 `/dev/ttyAMA0`，只打 `still no heartbeat; keeping serial open`。
 - **OpenCV 预览**：`cuadc-onboard-cv-preview-ctl` 开机默认关，地面 viewer 按钮经 UDP 5611 才起检测（省 CPU）。worker 就是 `cuadc_perception.cv_preview --from-rtp-port 5602`（5602 是 shmsrc 接不上时的回退取帧口）。原 cv-preview/cv-forward 自启单元已退役（deploy.sh 会把老 Pi 上装过的收敛掉）；手动 shm 模式调试直接跑 `python3 -m cuadc_perception.cv_preview`。
 
 > 状态：底座（扇出 + 相机 tee）与数传消费者、profile、deploy.sh 已就位；
-> 扇出多消费者共存已真机验证（2026-09-19）；2026-10-03 TELEM3@57600 地面 HUD 有飞控数据。
+> 扇出多消费者共存已真机验证（2026-09-19）；2026-10-03 TELEM3 地面 HUD 有飞控数据。
 > ground-bus（5700→地面 topic 转发）暂缓。为何用自写扇出见 ADR-0004。

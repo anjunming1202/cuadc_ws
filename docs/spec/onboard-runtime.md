@@ -72,7 +72,7 @@ PLAYING 态即改曝光/增益/对焦（实测该机 `libcamerasrc` 这些属性
 三种典型用法：
 
 - **读飞控**：`mavutil.mavlink_connection('udpin:127.0.0.1:14550')` 取代
-  `('/dev/ttyAMA0', baud=57600)`，下游不变，且不再独占串口。
+  `('/dev/ttyAMA0', baud=921600)`，下游不变，且不再独占串口。
 - **取相机帧**：从 `:5602` 的本地 RTP 取，不碰相机。
 - **往地面发自定义数据**：`bus.send({"topic": "cv/cylinder", ...})`。加一路
   数据 = 新起一个 topic；减一路 = 不投。**底座代码不改**——它是通用的带

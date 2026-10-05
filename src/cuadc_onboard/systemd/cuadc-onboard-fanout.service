@@ -8,8 +8,8 @@ Type=simple
 User=wly
 # 上电后给 USB-serial / 飞控几秒（欠压重启慢）。
 ExecStartPre=/bin/sleep 5
-# 路径由 deploy.sh 落位。默认可配 SERIAL*_BAUD=57 → 57600（本架现场走 TELEM3）。
-ExecStart=/home/wly/dronelink-venv/bin/python3 /opt/cuadc-onboard/mav_fanout.py --udp 14550,14551 --baud 57600
+# 路径由 deploy.sh 落位。本架走 TELEM3 = SERIAL5，飞控 SERIAL5_BAUD=921 ↔ 这里 921600（必须一致）。
+ExecStart=/home/wly/dronelink-venv/bin/python3 /opt/cuadc-onboard/mav_fanout.py --udp 14550,14551 --baud 921600
 Restart=always
 RestartSec=5
 

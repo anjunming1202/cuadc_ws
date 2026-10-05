@@ -48,7 +48,7 @@ def request_streams(m, rate: int) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description="MAVLink serial<->UDP fanout (mavutil)")
     ap.add_argument("--serial", default="/dev/ttyAMA0")
-    ap.add_argument("--baud", type=int, default=57600)
+    ap.add_argument("--baud", type=int, default=921600)
     ap.add_argument("--udp", default="14550,14551",
                     help="逗号分隔本地 UDP 端口；消费者用 udpin:127.0.0.1:<port> 收")
     ap.add_argument("--host", default="127.0.0.1")

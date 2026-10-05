@@ -134,6 +134,7 @@ settle）→RTL 降落。基准 3m 是因为 1m 地效下实机明显发飘。ya
 默认 15m；本项目定 5m（同 sim `mission_defaults.parm`），首飞前在 Mission Planner 核对（本固件单位是米）。
 ⚠ **速度参数**（同 sim `mission_defaults.parm`）：`WP_SPD` 3（搜索/粗对准，也是兜底）、`RTL_SPEED_MS` 5；
 升降 `WP_SPD_UP`/`WP_SPD_DN` 保持飞控默认 2.5/1.5。转场 5 m/s、区内升降复写由任务按阶段下发，不靠参数。
+⚠ **Pi 串口 `SERIAL5_BAUD` = 921**（TELEM3，与 `cuadc-onboard-fanout` 的 `--baud 921600` 一致；改后整机断电重启）。
 sim 侧对应 `run_flight_check_sim.sh` / `run_flight_suite_sim.sh`（连 SITL，先在仿真验逻辑；sim
 没有飞手，由节点代飞手切 STABILIZE+解锁）。
 
