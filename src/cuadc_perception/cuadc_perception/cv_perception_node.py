@@ -14,6 +14,7 @@ docs/spec/05-perception-decision-interface.md。
 
 import math
 import threading
+import time
 from collections import deque
 
 import cv2
@@ -22,12 +23,13 @@ import rclpy
 from cv_bridge import CvBridge
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from geometry_msgs.msg import PoseStamped
+from rclpy.duration import Duration
 from rclpy.node import Node
 from sensor_msgs.msg import Image, Imu
 from std_msgs.msg import Header, String
 
 from cuadc_perception import detectors, geometry
-from cuadc_perception.frame_sources import DEFAULT_RAW_SHM, ShmFrameSource
+from cuadc_perception.frame_sources import DEFAULT_RAW_SHM, DEFAULT_STAMP_PORT, ShmFrameSource
 from cuadc_perception.perception_core import PerceptionCore
 from cuadc_perception.sinks import DEFAULT_PREVIEW_PORT, RtpPreviewSink, draw_overlay
 from cuadc_perception_msgs.msg import Detection, DetectionArray
@@ -116,6 +118,9 @@ class CvPerceptionNode(Node):
         self.declare_parameter('src_fps', 10)
         self.declare_parameter('cv_width', 960)    # shm 源出帧/检测/预览的分辨率
         self.declare_parameter('cv_height', 540)
+        # shm 源的帧时间戳：相机服务旁路发来的拍照时刻(SensorTimestamp)；配不上时退回到达时刻并告警。
+        self.declare_parameter('capture_stamps', True)
+        self.declare_parameter('stamp_port', DEFAULT_STAMP_PORT)
         # RTP 标注预览(真机给地面看的 CV 框):默认关,真机 launch 打开。
         self.declare_parameter('preview_enabled', False)
         self.declare_parameter('preview_port', DEFAULT_PREVIEW_PORT)
@@ -178,6 +183,7 @@ class CvPerceptionNode(Node):
 
         # 取帧源接线
         self._shm_source = None
+        self._stamp_stats, self._stamp_ages, self._stamp_log_t = [0, 0], [], time.monotonic()
         source = self.get_parameter('frame_source').value
         if source == 'shm':
             self._shm_source = ShmFrameSource(
@@ -187,6 +193,8 @@ class CvPerceptionNode(Node):
                 src_fps=self.get_parameter('src_fps').value,
                 out_w=self.get_parameter('cv_width').value,
                 out_h=self.get_parameter('cv_height').value,
+                stamp_port=(self.get_parameter('stamp_port').value
+                            if self.get_parameter('capture_stamps').value else 0),
             )
             if not self._shm_source.start(self._on_shm_frame):
                 self.get_logger().error('shm 取帧源启动失败(相机服务在跑吗?)')
@@ -200,8 +208,30 @@ class CvPerceptionNode(Node):
 
     def _on_shm_frame(self, frame_bgr):
         header = Header()
-        header.stamp = self.get_clock().now().to_msg()
+        now = self.get_clock().now()
+        captured = self._shm_source.last_capture_ns()
+        if captured is None:
+            header.stamp = now.to_msg()  # 退回到达时刻（比拍照晚 ~30ms）
+            self._stamp_stats[1] += 1
+        else:
+            age_ns = time.monotonic_ns() - captured
+            header.stamp = (now - Duration(nanoseconds=age_ns)).to_msg()
+            self._stamp_stats[0] += 1
+            self._stamp_ages.append(age_ns / 1e6)
+        self._log_stamp_stats()
         self._process_frame(frame_bgr, header, ros_image_msg=None)
+
+    def _log_stamp_stats(self):
+        """每 10s 一条：拍照时刻配对率 + 拍照->打戳时延（录进 bag，现场延迟有没有漂一看便知）。"""
+        t = time.monotonic()
+        if t - self._stamp_log_t < 10.0:
+            return
+        matched, fallback = self._stamp_stats
+        ages = sorted(self._stamp_ages)
+        lat = f'capture->stamp p50 {ages[len(ages) // 2]:.0f} / max {ages[-1]:.0f} ms' if ages else 'no capture stamps'
+        log = self.get_logger().warn if fallback and not matched else self.get_logger().info
+        log(f'[CAPTURE_STAMP] matched {matched}/{matched + fallback} frames, {lat}')
+        self._stamp_log_t, self._stamp_stats, self._stamp_ages = t, [0, 0], []
 
     # ---- 遥测/状态 ----
     def _on_mission_state(self, msg):

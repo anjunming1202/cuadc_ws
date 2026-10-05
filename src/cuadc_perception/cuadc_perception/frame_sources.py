@@ -9,6 +9,9 @@
 """
 from __future__ import annotations
 
+import collections
+import socket
+import struct
 import sys
 import threading
 import time
@@ -17,6 +20,9 @@ from pathlib import Path
 import numpy as np
 
 DEFAULT_RAW_SHM = "/tmp/cuadc-cam-raw.shm"
+DEFAULT_STAMP_PORT = 5615          # camera_service 的拍照时刻旁路（同 camera_service.DEFAULT_STAMP_PORT）
+_STAMP_FORMAT = "<qq"              # (发送时刻, 拍照时刻) CLOCK_MONOTONIC ns
+_STAMP_MATCH_NS = 50_000_000       # 到达与旁路发送时刻相差超过 50ms（半个帧间隔）不认
 
 _GST = None
 
@@ -57,6 +63,7 @@ class _AppsinkFrameSource:
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._on_frame = None
+        self.last_arrival_ns: int | None = None  # 当前回调这帧进管线的时刻（CLOCK_MONOTONIC ns）
 
     def _describe(self) -> str:
         raise NotImplementedError
@@ -100,6 +107,9 @@ class _AppsinkFrameSource:
                 continue
             frame = self._to_bgr(sample)
             if frame is not None and self._on_frame is not None:
+                pts = sample.get_buffer().pts
+                self.last_arrival_ns = (self._pipeline.get_base_time() + pts
+                                        if pts != self._gst.CLOCK_TIME_NONE else time.monotonic_ns())
                 self._on_frame(frame)
 
     def stop(self) -> None:
@@ -109,13 +119,37 @@ class _AppsinkFrameSource:
 
 
 class ShmFrameSource(_AppsinkFrameSource):
-    """读 camera_service 的原始 NV12 shm，缩放/转 BGR。首选源：零解码。"""
+    """读 camera_service 的原始 NV12 shm，缩放/转 BGR。首选源：零解码。
+    stamp_port>0 时另收相机服务的拍照时刻旁路，`last_capture_ns()` 给出当前帧的真实拍照时刻。"""
 
     def __init__(self, raw_shm: str, src_w: int, src_h: int, src_fps: int,
-                 out_w: int, out_h: int) -> None:
+                 out_w: int, out_h: int, stamp_port: int = 0) -> None:
         super().__init__(out_w, out_h)
         self._raw_shm = raw_shm
         self._src_w, self._src_h, self._src_fps = src_w, src_h, src_fps
+        self._stamps = collections.deque(maxlen=64)  # (发送时刻, 拍照时刻)
+        self._stamp_port = stamp_port
+
+    def start(self, on_frame) -> bool:
+        if self._stamp_port:
+            threading.Thread(target=self._stamp_loop, name="capture-stamps", daemon=True).start()
+        return super().start(on_frame)
+
+    def _stamp_loop(self) -> None:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("127.0.0.1", self._stamp_port))
+        sock.settimeout(0.5)
+        while not self._stop.is_set():
+            try:
+                data = sock.recv(64)
+            except socket.timeout:
+                continue
+            if len(data) == struct.calcsize(_STAMP_FORMAT):
+                self._stamps.append(struct.unpack(_STAMP_FORMAT, data))
+
+    def last_capture_ns(self) -> int | None:
+        """当前回调这帧的拍照时刻：取发送时刻不晚于本帧进管线时刻、且相差 <50ms 的最近一条。"""
+        return match_capture_ns(list(self._stamps), self.last_arrival_ns)
 
     def _ready(self) -> bool:
         if _wait_for_shm(self._raw_shm):
@@ -133,6 +167,18 @@ class ShmFrameSource(_AppsinkFrameSource):
             f"video/x-raw,format=BGR,width={self._out_w},height={self._out_h} ! "
             f"appsink name=sink max-buffers=1 drop=true sync=false emit-signals=false"
         )
+
+
+def match_capture_ns(stamps, arrival_ns):
+    """stamps=[(发送时刻, 拍照时刻)…]，返回与 arrival_ns 配对的拍照时刻；配不上返回 None。"""
+    if arrival_ns is None:
+        return None
+    best = None
+    for sent, captured in stamps:
+        if sent <= arrival_ns + 2_000_000 and arrival_ns - sent < _STAMP_MATCH_NS:
+            if best is None or sent > best[0]:
+                best = (sent, captured)
+    return best[1] if best else None
 
 
 class RtpFrameSource(_AppsinkFrameSource):

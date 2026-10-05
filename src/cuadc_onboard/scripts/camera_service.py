@@ -4,8 +4,10 @@
 - libcamerasrc 出 NV12 后立刻 tee：
   - 一路 x264 → 本地 H.264/RTP 5602(兼容读帧) + 5603(video-forward→地面)
     + 5605(onboard_record 全质量录制;无人读则内核丢弃)
-  - 一路 shmsink raw NV12（本机 OpenCV/cv-preview 直吃，无需再解码）
+  - 一路 shmsink raw NV12（任务感知直吃，无需再解码）
 - 自己不发地面——干净图传 video-forward(5603→5600),CV 预览 cv-preview-ctl(按钮启停)。
+- shm 每帧的拍照时刻(libcamera SensorTimestamp)经旁路 udp:127.0.0.1:5615 发出——shm 不带时间戳,
+  感知按到达时刻配对取回(见 attach_capture_stamps)。
 - 控制口(默认 udp:127.0.0.1:5610)收 JSON,PLAYING 态直接 g_object_set 到
   libcamerasrc,例如 {"ae":false,"exposure_us":1000,"gain":8.0,"af":"manual","lens":1.5}。
 """
@@ -14,8 +16,10 @@ from __future__ import annotations
 import argparse
 import json
 import socket
+import struct
 import sys
 import threading
+import time
 from pathlib import Path
 
 import gi
@@ -25,6 +29,8 @@ from gi.repository import GLib, Gst  # noqa: E402
 
 _AF_MODE = {"manual": 0, "auto": 1, "continuous": 2}
 DEFAULT_RAW_SHM = "/tmp/cuadc-cam-raw.shm"
+DEFAULT_STAMP_PORT = 5615
+STAMP_FORMAT = "<qq"  # (发送时刻, 拍照时刻)，均为 CLOCK_MONOTONIC 纳秒
 
 
 def _shm_bytes(w: int, h: int, n_buffers: int = 8) -> int:
@@ -67,10 +73,31 @@ def build_pipeline(
         # Raw NV12 for local CV — drop to cv_fps *before* shm (matches detect rate).
         f"raw. ! queue max-size-buffers=2 leaky=downstream ! "
         f"videorate drop-only=true ! video/x-raw,framerate={cv_fps}/1 ! "
-        f"shmsink socket-path={raw_shm} shm-size={shm_size} "
+        f"shmsink name=rawshm socket-path={raw_shm} shm-size={shm_size} "
         f"wait-for-connection=false sync=false async=false"
     )
     return Gst.parse_launch(desc)
+
+
+def attach_capture_stamps(pipeline: Gst.Pipeline, port: int, sink_name: str = "rawshm",
+                          host: str = "127.0.0.1") -> None:
+    """每个写进 shm 的帧，发一条 (发送时刻, 拍照时刻) 到本机 UDP。libcamerasrc 的 PTS 由
+    SensorTimestamp 换算而来，PTS + base_time = 拍照时刻（GstSystemClock = CLOCK_MONOTONIC）。
+    shm 只传像素，读端用自己的到达时刻配对最近一条（帧间隔 100ms，两边只差 shm 一跳）。"""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    pad = pipeline.get_by_name(sink_name).get_static_pad("sink")
+
+    def on_buffer(_pad, info):
+        buf = info.get_buffer()
+        if buf is not None and buf.pts != Gst.CLOCK_TIME_NONE:
+            try:
+                sock.sendto(struct.pack(STAMP_FORMAT, time.monotonic_ns(),
+                                        pipeline.get_base_time() + buf.pts), (host, port))
+            except OSError:
+                pass
+        return Gst.PadProbeReturn.OK
+
+    pad.add_probe(Gst.PadProbeType.BUFFER, on_buffer)
 
 
 def apply_controls(cam: Gst.Element, d: dict) -> None:
@@ -134,6 +161,8 @@ def main() -> None:
     )
     ap.add_argument("--control-host", default="127.0.0.1")
     ap.add_argument("--control-port", type=int, default=5610)
+    ap.add_argument("--stamp-port", type=int, default=DEFAULT_STAMP_PORT,
+                    help="shm 帧拍照时刻旁路 UDP 端口；0 = 不发")
     args = ap.parse_args()
 
     Gst.init(None)
@@ -151,6 +180,8 @@ def main() -> None:
         print(f"failed to build pipeline: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
     cam = pipeline.get_by_name("cam")
+    if args.stamp_port:
+        attach_capture_stamps(pipeline, args.stamp_port)
     loop = GLib.MainLoop()
 
     def on_bus(_bus, msg):
@@ -175,7 +206,7 @@ def main() -> None:
     print(
         f"camera-service: {args.width}x{args.height}@{args.fps} "
         f"raw-tee -> h264 udp:5602+5603+5605 + shm:{args.raw_shm}@{args.cv_fps}fps; "
-        f"ctrl {args.control_port}",
+        f"ctrl {args.control_port}; capture stamps udp:{args.stamp_port or 'off'}",
         flush=True,
     )
     try:

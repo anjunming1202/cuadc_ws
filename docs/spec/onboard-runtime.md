@@ -58,7 +58,8 @@ PLAYING 态即改曝光/增益/对焦（实测该机 `libcamerasrc` 这些属性
 |---|---|---|---|
 | 飞控 MAVLink | `udpin:127.0.0.1:14550` / `14551` / … | MAVLink | 每个消费者绑定一个即收（扇出主动推流）；授权者可写指令（自主飞行走这条） |
 | 相机本地帧 | `udp:127.0.0.1:5602` | H.264/RTP | CV/采集/调参 取帧（编码后兼容口），**不开相机** |
-| 相机 raw 帧 | `shm:/tmp/cuadc-cam-raw.shm` | NV12 raw | OpenCV/cv-preview 直吃（相机 raw tee，无需解码） |
+| 相机 raw 帧 | `shm:/tmp/cuadc-cam-raw.shm` | NV12 raw | 任务感知直吃（相机 raw tee，无需解码）；CV 预览不读它 |
+| raw 帧拍照时刻 | `udp:127.0.0.1:5615` | `<qq>` (发送 ns, 拍照 ns) | 每帧进 shm 时相机服务发一条（CLOCK_MONOTONIC）；感知按到达时刻配对，检测结果打拍照时刻 |
 | 图传转发输入 | `udp:127.0.0.1:5603` | H.264/RTP | 相机服务 tee 的一路；video-forward 读它转地面 |
 | 机载录制 tap | `udp:127.0.0.1:5605` | H.264/RTP | 相机服务 tee 的一路(同干净编码)；onboard_record 读它录全质量；无人读则内核丢弃 |
 | CV 预览本地 | `udp:127.0.0.1:5604` | H.264/RTP | cv-preview-ctl 的检测 worker 标注后的画面；其转发读它转地面 |
