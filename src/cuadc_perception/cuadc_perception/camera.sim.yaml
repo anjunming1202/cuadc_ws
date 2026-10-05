@@ -1,17 +1,8 @@
-# 相机内参 + 挂载 —— sim（cuadc_iris strapdown 相机 960×540, hfov=1.0090）。
+# 相机内参 —— sim（cuadc_iris strapdown 相机 960×540, hfov=1.0090）。
 # fx=(960/2)/tan(0.5045)≈869.4 = 真机标定 fx —— sim/real 内参一致(见 ADR-0010 簇①)；
 # 主点取 gz 渲染中心(480/270)，真机标定值(486.5/260.1)差<7px 忽略。
-# 挂载/平移必须与 cuadc_iris/model.sdf 的 camera_link 一致，否则 sim 自相矛盾。
 fx: 869.37
 fy: 869.37
 cx: 480.0
 cy: 270.0
-mount_roll_rad: 0.0
-mount_pitch_rad: 1.5708     # nadir（垂直向下）
-mount_yaw_rad: 0.0
-# 相机光心相对 FC/EKF 原点的平移，机体 FRD(前/右/下)，米（=真机实测，簇①）
-t_forward_m: 0.11
-t_right_m: 0.0
-t_down_m: 0.20
-# 飞控停在地面时离地高（位姿原点=解锁时飞控位置，地面在其下方；实测，见 ADR-0010 簇①）
-fc_rest_clearance_m: 0.31
+# 安装位置/角度、飞控离地高是机体固定几何，在 cuadc_physical/airframe.yaml（单一真源）。

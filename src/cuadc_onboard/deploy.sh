@@ -8,6 +8,7 @@
 set -euo pipefail
 
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$SRC_DIR/../.." && pwd)"   # 部署所用检出；CV 预览从这里引用感知代码
 OPT=/opt/cuadc-onboard
 ETC=/etc/cuadc-onboard
 UNIT_DIR=/etc/systemd/system
@@ -23,13 +24,18 @@ install -m 0755 "$SRC_DIR/scripts/mav_fanout.py"     "$OPT/mav_fanout.py"
 install -m 0755 "$SRC_DIR/scripts/telem_ground.py"   "$OPT/telem_ground.py"
 install -m 0755 "$SRC_DIR/scripts/camera_service.py" "$OPT/camera_service.py"
 install -m 0755 "$SRC_DIR/scripts/cv_preview_ctl.py" "$OPT/cv_preview_ctl.py"
+install -m 0755 "$SRC_DIR/scripts/video_forward_ctl.py" "$OPT/video_forward_ctl.py"
 install -m 0755 "$SRC_DIR/systemd/apply-profile.sh"  "$OPT/apply-profile.sh"
-# CV 检测/预览的代码在 cuadc_perception(cv_preview_ctl 按 PYTHONPATH 引用它,
-# 见 ADR-0008),不拷到 /opt。
+# CV 预览 worker 是 cuadc_perception.cv_preview(cv_preview_ctl 按 PYTHONPATH 引用 $REPO，读 5602、不占 shm，
+# 见 ADR-0008)，不拷到 /opt。
 
 for u in "$SRC_DIR"/systemd/*.service; do
-  install -m 0644 "$u" "$UNIT_DIR/$(basename "$u")"
+  sed "s#@REPO@#$REPO#g" "$u" > "$UNIT_DIR/$(basename "$u")"
+  chmod 0644 "$UNIT_DIR/$(basename "$u")"
 done
+# 单元文件是唯一真源：现场手写的扇出 drop-in 会静默盖掉 ExecStart(波特率)，收敛掉。
+rm -f "$UNIT_DIR/cuadc-onboard-fanout.service.d/override.conf"
+rmdir "$UNIT_DIR/cuadc-onboard-fanout.service.d" 2>/dev/null || true
 
 # 已退役单元(被 cv-preview-ctl 的按钮路径取代):老 Pi 上可能还装着,收敛掉。
 for u in cuadc-onboard-cv-preview.service cuadc-onboard-cv-forward.service; do

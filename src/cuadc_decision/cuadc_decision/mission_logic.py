@@ -17,7 +17,7 @@ docs/spec/05-perception-decision-interface.md。
 （区中心、扫描航点、一般巡航高度、要投几次、跑哪些阶段…）是新的**单一真源配置层**
 `mission/`（sim/real 分文件），由 decision_node 载入后经 `configure_mission()` 注入这里；
 本 FSM 本体的通用调参（到点容差/阶段超时/安全守卫）在挨着本文件的
-`mission_logic.{sim,real}.yaml`（`FsmTuning`/`load_tuning`）；SEARCH 的聚类/选目标算法
+`fsm_tuning.{sim,real}.yaml`（`FsmTuning`/`load_tuning`）；SEARCH 的聚类/选目标算法
 及其参数在 `search_strategy.py`（+ 同名 yaml）；投放目标选哪个在 `drop_strategy.py`；
 接近算法在 `approaches/`。本文件不再持有这些为模块级常量。
 """
@@ -64,7 +64,7 @@ _PI_MODES = frozenset({'GUIDED', 'RTL'})
 @dataclass
 class FsmTuning:
     """顶层任务 FSM 本体的通用调参（B′）——不属于任何可替换算法，是这个唯一的状态机
-    自己的机制。字段名 = `mission_logic.<profile>.yaml` 的键。默认值只是兜底（纯单测/
+    自己的机制。字段名 = `fsm_tuning.<profile>.yaml` 的键。默认值只是兜底（纯单测/
     import 期不读文件），正常由 decision_node `load_tuning(profile)` 读入后注入。"""
     position_tolerance_m: float = 0.5
     altitude_tolerance_m: float = 0.5
@@ -74,32 +74,35 @@ class FsmTuning:
     battery_critical_fraction: float = 0.20   # sensor_msgs/BatteryState.percentage 是 0~1
     gps_fix_ok_threshold: int = 3             # MAVLink GPS_FIX_TYPE：3 = 3D fix
     emulate_pilot_arm: bool = False           # 仅 sim：没有飞手，WAIT_PILOT_ARM 里替飞手切 STABILIZE+解锁
+    transit_speed_mps: float = 5.0            # 飞往投放区/侦察区的水平限速
+    search_speed_mps: float = 3.0             # 搜索/侦察航点之间、接近粗对准的水平限速；飞控 WP_SPD 设同值兜底
+    zone_climb_mps: float = 0.0               # 投放/侦察区内爬升限速复写；0 = 用飞控 WP_SPD_UP
+    zone_descent_mps: float = 0.0             # 投放/侦察区内下降限速复写；0 = 用飞控 WP_SPD_DN
+    # 失效处理阈值，全部失效路径见 docs/spec/failure-handling.md
+    takeoff_timeout_s: float = 20.0           # 起飞爬不到巡航高度 -> RTL
+    nav_timeout_margin_s: float = 10.0        # 转场每段超时 = 2×距离/转场速度 + 此余量，到时直接进区作业
+    search_rescans: int = 1                   # 扫完没有可选目标时重扫的轮数，用完放弃投放阶段
+    release_max_retries: int = 2              # release_payload 失败重试次数，用完记为已尝试、继续
+    perception_stale_log_s: float = 3.0       # 作业中感知断流超过此时长记一条 FAULT（只记录，不改任务逻辑）
 
 
 def load_tuning(profile: str) -> FsmTuning:
-    """从挨着本文件的 `mission_logic.<profile>.yaml` 读 FSM 本体调参。"""
-    path = Path(__file__).parent / f'mission_logic.{profile}.yaml'
+    """从挨着本文件的 `fsm_tuning.<profile>.yaml` 读 FSM 本体调参。"""
+    path = Path(__file__).parent / f'fsm_tuning.{profile}.yaml'
     with open(path) as fh:
         data = yaml.safe_load(fh) or {}
     return FsmTuning(**data)
 
 
-def _world_xy_to_ned(world_x, world_y, takeoff_point):
-    """场地坐标（cuadc_sim/field/config.py 的 x=飞行前进方向、y=侧向）
-    转成接口层 telemetry/local_position 用的 NED (north, east)。local_position 原点是
-    起飞（解锁）点，先减去起飞点的场地坐标 `takeoff_point`；再 X/Y 对调，换算依据同
-    cuadc_perception/stub_perception_node.py 里的同名函数（仿真机型
-    cuadc_iris 的 `gazeboXYZToNED` 插件参数）。2026-07-19 实机
-    测试（SITL+Gazebo）发现飞机往侧边飞，就是这里之前没做这个换算、
-    直接把场地坐标当 NED 坐标用导致的。
-    """
-    return (world_y - takeoff_point[1], world_x - takeoff_point[0])
+def _field_to_takeoff(field_x, field_y, takeoff_point):
+    """任务配置的场地坐标 -> 起飞坐标系 (前, 右)：只减起飞点。场地坐标轴与起飞坐标系一致（+x = 起飞时
+    机头方向，+y = 其右侧），所以不旋转——东南西北不参与（见 docs/spec/coordinate-frames.md）。"""
+    return (field_x - takeoff_point[0], field_y - takeoff_point[1])
 
 
-def _scan_waypoints_ned(center, offsets, takeoff_point):
-    """场景配置里的区中心 + 相对 offsets（场地坐标）算成 NED 扫描航点列表。"""
-    return [_world_xy_to_ned(center[0] + dx, center[1] + dy, takeoff_point)
-            for dx, dy in offsets]
+def _scan_waypoints(center, offsets, takeoff_point):
+    """场景配置里的区中心 + 相对 offsets（场地坐标）算成起飞坐标系扫描航点列表。"""
+    return [_field_to_takeoff(center[0] + dx, center[1] + dy, takeoff_point) for dx, dy in offsets]
 
 
 _DROP_STATES = frozenset({State.SEARCH_DROP_TARGETS, State.APPROACH_DROP_TARGET, State.DROP_PAYLOAD})
@@ -110,10 +113,10 @@ _RECON_STATES = frozenset({State.SURVEY_RECON_ZONE})
 _WORLD = mission_config.MissionWorld()          # A：世界/任务/场景
 _TUNING = FsmTuning()                            # B′：FSM 本体调参
 _SEARCH = search_strategy.SearchConfig()         # B：SEARCH 算法参数
-_DROP_SCAN_WAYPOINTS = _scan_waypoints_ned(
-    _WORLD.drop_zone_center, _WORLD.drop_scan_offsets, _WORLD.takeoff_point)
-_RECON_SCAN_WAYPOINTS = _scan_waypoints_ned(
-    _WORLD.recon_zone_center, _WORLD.recon_scan_offsets, _WORLD.takeoff_point)
+_DROP_SCAN_WAYPOINTS = _scan_waypoints(_WORLD.drop_zone_center, _WORLD.drop_scan_offsets,
+                                       _WORLD.takeoff_point)
+_RECON_SCAN_WAYPOINTS = _scan_waypoints(_WORLD.recon_zone_center, _WORLD.recon_scan_offsets,
+                                        _WORLD.takeoff_point)
 
 # 可替换的接近阶段策略实例（粗 PBVS -> 末端 IBVS 等，见 approaches/）。持有跨 tick 的接近
 # 内部状态（锁定目标）;进入 APPROACH 时 _tick_search 调 .enter() 重置。换算法改
@@ -130,12 +133,12 @@ def configure_approach(profile):
 
 def configure_mission(world, tuning, search):
     """注入世界/任务配置(A)、FSM 本体调参(B′)、SEARCH 算法配置(B)，并按 world 里的区中心/
-    offsets 重算 NED 扫描航点。decision_node 在 __init__ 里调一次。"""
+    offsets 重算起飞坐标系扫描航点。decision_node 在 __init__ 里调一次。"""
     global _WORLD, _TUNING, _SEARCH, _DROP_SCAN_WAYPOINTS, _RECON_SCAN_WAYPOINTS
     _WORLD, _TUNING, _SEARCH = world, tuning, search
-    _DROP_SCAN_WAYPOINTS = _scan_waypoints_ned(
+    _DROP_SCAN_WAYPOINTS = _scan_waypoints(
         world.drop_zone_center, world.drop_scan_offsets, world.takeoff_point)
-    _RECON_SCAN_WAYPOINTS = _scan_waypoints_ned(
+    _RECON_SCAN_WAYPOINTS = _scan_waypoints(
         world.recon_zone_center, world.recon_scan_offsets, world.takeoff_point)
 
 
@@ -154,12 +157,24 @@ class ServiceResult:
 
 
 @dataclass
+class Fault:
+    """一次失效/异常处理事件：decision_node 打 [FAULT] WARN 并发到 ~/fault_events。代码表见
+    docs/spec/failure-handling.md。"""
+    code: str
+    reason: str
+
+
+@dataclass
 class TickResult:
     next_state: Optional[str] = None
     position_target: Optional[Tuple[float, float, float]] = None  # (x, y, z)，同 telemetry/local_position 坐标系
     velocity_target: Optional[Tuple[float, float, float]] = None  # (前,右,下) 机体系速度 m/s，末端 IBVS 用，见 04-interfaces.md cmd/velocity
+    speed_target_mps: Optional[float] = None  # 位置类移动的水平限速，见 04-interfaces.md cmd/speed
+    climb_speed_mps: Optional[float] = None   # 爬升限速复写（与 descent 至多一个），见 cmd/climb_speed
+    descent_speed_mps: Optional[float] = None  # 下降限速复写，见 cmd/descent_speed
     service_call: Optional[ServiceCallRequest] = None
     notice: Optional[str] = None  # 给现场操作员看的提示（decision_node 打 WARN），只在状况变化时给
+    fault: Optional[Fault] = None
 
 
 @dataclass
@@ -170,6 +185,9 @@ class DropTaskState:
     selected_target: Optional[Candidate] = None
     phase_entered_monotonic: Optional[float] = None
     waypoint_index: int = 0
+    rejected_positions: List[Tuple[float, float]] = field(default_factory=list)  # 放弃过的目标，不再选/不再改锁
+    rescans: int = 0                          # 本轮找目标已重扫次数，选中目标即清零
+    release_failures: int = 0                 # 本次投放 release_payload 失败次数
 
 
 @dataclass
@@ -202,11 +220,12 @@ class MissionContext:
     battery_fraction: Optional[float] = None
     failsafe_active: bool = False
     local_position_xy: Optional[Tuple[float, float]] = None
-    local_position_z: Optional[float] = None  # NED，向下为正
+    local_position_z: Optional[float] = None  # 起飞坐标系 z，向下为正（高度 = -z）
     horizontal_speed: Optional[float] = None  # 水平合速度，米/秒
-    vertical_speed: Optional[float] = None  # NED vz，向下为正，米/秒
+    vertical_speed: Optional[float] = None  # 起飞坐标系 vz，向下为正，米/秒
     roll_rad: Optional[float] = None
     pitch_rad: Optional[float] = None
+    yaw_rad: Optional[float] = None          # 起飞坐标系航向（0=起飞时机头方向，向右转为正）
     detections: list = field(default_factory=list)  # 元素需要有 .target_type/.position.x/.position.y/.apparent_size
     # 当前 detections 那帧图像**拍照时刻**的姿态/离地高(来自 DetectionArray.vehicle_pose)。
     # IBVS 姿态补偿/米换算必须用它(与 bearing 同刻)；投放门等"当下状态"判断仍用实时遥测。
@@ -214,6 +233,9 @@ class MissionContext:
     det_pitch_rad: Optional[float] = None
     det_height_m: Optional[float] = None
     task_start_triggered: bool = False
+    takeoff_wait_since: Optional[float] = None   # 起飞指令被接受、开始等爬升的时刻
+    nav_timeout_key: Optional[float] = None      # 当前转场段的超时按进入该状态时刻算一次
+    nav_timeout_s: float = 0.0
 
     drop_task: DropTaskState = field(default_factory=DropTaskState)
     recon_task: ReconTaskState = field(default_factory=ReconTaskState)
@@ -225,6 +247,65 @@ def _arrived(current_xy, target_xy, tolerance):
     if current_xy is None:
         return False
     return math.hypot(current_xy[0] - target_xy[0], current_xy[1] - target_xy[1]) <= tolerance
+
+
+def _at_scan_waypoint(ctx, waypoint):
+    """扫描航点要水平到点且到了搜索高度才算到：从过渡高度爬升途中不推进航点，保证按 search_alt_m 的覆盖扫。"""
+    return (_arrived(ctx.local_position_xy, waypoint, _TUNING.position_tolerance_m)
+            and ctx.local_position_z is not None
+            and abs(-ctx.local_position_z - _WORLD.search_alt_m) <= _TUNING.altitude_tolerance_m)
+
+
+def _zone_speeds(ctx, target_z):
+    """投放/侦察区内位置类移动的限速。飞控一次只认一个竖直复写（设爬升会把下降打回默认），只发当前升降方向那个。"""
+    speeds = {'speed_target_mps': _TUNING.search_speed_mps}
+    if ctx.local_position_z is not None:
+        if target_z < ctx.local_position_z - 0.05 and _TUNING.zone_climb_mps > 0.0:
+            speeds['climb_speed_mps'] = _TUNING.zone_climb_mps
+        elif target_z > ctx.local_position_z + 0.05 and _TUNING.zone_descent_mps > 0.0:
+            speeds['descent_speed_mps'] = _TUNING.zone_descent_mps
+    return speeds
+
+
+def _nav_timed_out(ctx, target_xy):
+    """转场段超时：进入该状态时按 2×距离/转场速度 + 余量定一次时限。"""
+    if ctx.nav_timeout_key != ctx.state_entered_monotonic:
+        ctx.nav_timeout_key = ctx.state_entered_monotonic
+        dist = (math.hypot(ctx.local_position_xy[0] - target_xy[0], ctx.local_position_xy[1] - target_xy[1])
+                if ctx.local_position_xy is not None else 0.0)
+        ctx.nav_timeout_s = 2.0 * dist / _TUNING.transit_speed_mps + _TUNING.nav_timeout_margin_s
+    return time.monotonic() - ctx.state_entered_monotonic > ctx.nav_timeout_s
+
+
+def _excluded(ctx):
+    """不再作为目标的位置：已投过的 + 放弃过的。"""
+    return ctx.drop_task.used_positions + ctx.drop_task.rejected_positions
+
+
+def _leave_drop_phase():
+    """放弃/结束投放阶段的去向由场景 phases 决定（同阶段超时守卫）。"""
+    return State.NAVIGATE_TO_RECON_ZONE if 'recon' in _WORLD.phases else State.RTL_OR_LAND
+
+
+def _start_approach(ctx, target):
+    ctx.drop_task.selected_target = target
+    ctx.drop_task.rescans = 0
+    _ACTIVE_APPROACH.enter(ctx)  # 以选定目标为锁定种子，清接近内部状态
+    return TickResult(next_state=State.APPROACH_DROP_TARGET)
+
+
+def _next_target_or_search(ctx, fault=None):
+    """投完一个/放弃一个目标后：先用已有聚类里的下一个候选直接粗对准（不再整轮搜索）；
+    没有可选候选才回 SEARCH 从头扫。"""
+    target = drop_strategy.ACTIVE_STRATEGY(
+        search_strategy.candidates(ctx, _SEARCH), _excluded(ctx), ctx.drop_task.drop_count)
+    if target is not None:
+        result = _start_approach(ctx, target)
+    else:
+        ctx.drop_task.waypoint_index = 0
+        result = TickResult(next_state=State.SEARCH_DROP_TARGETS)
+    result.fault = fault
+    return result
 
 
 def _is_near_any(x, y, points, threshold):
@@ -322,7 +403,8 @@ def _abort_takeoff(ctx, why):
     ctx.takeoff_step = 'set_mode'
     ctx.pilot_arm_step = 'set_mode'
     ctx.pilot_arm_ready = False
-    return TickResult(next_state=State.WAIT_PILOT_ARM, notice=f'takeoff aborted: {why}')
+    return TickResult(next_state=State.WAIT_PILOT_ARM, notice=f'takeoff aborted: {why}',
+                      fault=Fault('TAKEOFF_ABORTED', why))
 
 
 def _tick_takeoff(ctx):
@@ -349,6 +431,7 @@ def _tick_takeoff(ctx):
 
         def on_success():
             ctx.takeoff_step = 'wait_altitude'
+            ctx.takeoff_wait_since = time.monotonic()
             ctx.pi_in_control = True
             return TickResult()
         return _dispatch_and_await(ctx, 'takeoff', {'alt': _WORLD.cruise_alt_m}, on_success)
@@ -357,83 +440,128 @@ def _tick_takeoff(ctx):
     # 已经爬升到位，得自己比对遥测（04-interfaces.md 的边界约定）。
     if ctx.local_position_z is not None and -ctx.local_position_z >= _WORLD.cruise_alt_m - _TUNING.altitude_tolerance_m:
         return TickResult(next_state=State.NAVIGATE_TO_DROP_ZONE)
+    if ctx.takeoff_wait_since is not None and time.monotonic() - ctx.takeoff_wait_since > _TUNING.takeoff_timeout_s:
+        h = -ctx.local_position_z if ctx.local_position_z is not None else float('nan')
+        return TickResult(next_state=State.RTL_OR_LAND, fault=Fault(
+            'TAKEOFF_TIMEOUT', f'h={h:.2f}m < {_WORLD.cruise_alt_m}m after {_TUNING.takeoff_timeout_s:.0f}s'))
     return TickResult()
 
 
 def _tick_navigate_to_drop_zone(ctx):
     first_waypoint = _DROP_SCAN_WAYPOINTS[0]
-    if _arrived(ctx.local_position_xy, first_waypoint, _TUNING.position_tolerance_m):
+    arrived = _arrived(ctx.local_position_xy, first_waypoint, _TUNING.position_tolerance_m)
+    if arrived or _nav_timed_out(ctx, first_waypoint):
         ctx.drop_task.phase_entered_monotonic = time.monotonic()
-        return TickResult(next_state=State.SEARCH_DROP_TARGETS)
-    return TickResult(position_target=(first_waypoint[0], first_waypoint[1], -_WORLD.cruise_alt_m))
+        fault = None if arrived else Fault(
+            'NAV_TIMEOUT', f'not within {_TUNING.position_tolerance_m}m of {first_waypoint} after '
+                           f'{ctx.nav_timeout_s:.0f}s -> start SEARCH anyway')
+        return TickResult(next_state=State.SEARCH_DROP_TARGETS, fault=fault)
+    return TickResult(position_target=(first_waypoint[0], first_waypoint[1], -_WORLD.cruise_alt_m),
+                      speed_target_mps=_TUNING.transit_speed_mps)
 
 
 def _tick_search_drop_targets(ctx):
     # 逐帧检测的过滤/时序聚类/候选提取/选目标门都在 search_strategy（可替换的 SEARCH
     # 算法）。这里只管：喂本帧检测、按扫描航点飞、把选中的目标交给接近阶段。只看投放区
-    # 那一侧的检测由 _WORLD.drop_recon_split_y_m 分界（field-layout.md：投放区/侦察区中
-    # 间隔 20m 空档，用中点粗分即可；判断的是 position.y=NED east，场地 x/y 转 NED 对调，
-    # 见 `_world_xy_to_ned`）。
-    search_strategy.observe(ctx, _SEARCH, _WORLD.drop_recon_split_y_m - _WORLD.takeoff_point[0])
+    # 那一侧的检测：检测点换算到场地 x，小于 drop_recon_split_x_m（field-layout.md：投放区/
+    # 侦察区中间隔 20m 过渡区，取中点粗分即可）。
+    search_strategy.observe(
+        ctx, _SEARCH,
+        lambda x, _y: x + _WORLD.takeoff_point[0] < _WORLD.drop_recon_split_x_m)
 
     # 候选还不够/还没扫完，按扫描航点继续飞，攒更多样本
     index = min(ctx.drop_task.waypoint_index, len(_DROP_SCAN_WAYPOINTS) - 1)
     waypoint = _DROP_SCAN_WAYPOINTS[index]
-    scan_complete = index == len(_DROP_SCAN_WAYPOINTS) - 1 and _arrived(
-        ctx.local_position_xy, waypoint, _TUNING.position_tolerance_m)
-    if _arrived(ctx.local_position_xy, waypoint, _TUNING.position_tolerance_m):
+    scan_complete = index == len(_DROP_SCAN_WAYPOINTS) - 1 and _at_scan_waypoint(ctx, waypoint)
+    if _at_scan_waypoint(ctx, waypoint):
         if index < len(_DROP_SCAN_WAYPOINTS) - 1:
             ctx.drop_task.waypoint_index = index + 1
             waypoint = _DROP_SCAN_WAYPOINTS[ctx.drop_task.waypoint_index]
 
     target = search_strategy.select_target(
-        ctx, _SEARCH, scan_complete, time.monotonic(), drop_strategy.ACTIVE_STRATEGY)
+        ctx, _SEARCH, scan_complete, time.monotonic(), drop_strategy.ACTIVE_STRATEGY, _excluded(ctx))
     if target is not None:
-        ctx.drop_task.selected_target = target
-        _ACTIVE_APPROACH.enter(ctx)  # 以选定目标为锁定种子，清接近内部状态
-        return TickResult(next_state=State.APPROACH_DROP_TARGET)
+        return _start_approach(ctx, target)
+    if scan_complete:
+        # 扫完一整轮仍没有可选目标（没看到 / 全部已投或已放弃）：重扫，次数用完放弃投放阶段。
+        n = len(search_strategy.candidates(ctx, _SEARCH))
+        if ctx.drop_task.rescans < _TUNING.search_rescans:
+            ctx.drop_task.rescans += 1
+            ctx.drop_task.waypoint_index = 0
+            return TickResult(fault=Fault(
+                'SEARCH_EMPTY_RESCAN', f'scan complete, no selectable target ({n} candidates, '
+                                       f'{len(_excluded(ctx))} excluded) -> rescan {ctx.drop_task.rescans}'))
+        return TickResult(next_state=_leave_drop_phase(), fault=Fault(
+            'SEARCH_EMPTY_GIVE_UP', f'no selectable target after {ctx.drop_task.rescans} rescan(s), '
+                                    f'drops={ctx.drop_task.drop_count} -> leave drop phase'))
 
-    return TickResult(position_target=(waypoint[0], waypoint[1], -_WORLD.cruise_alt_m))
+    return TickResult(position_target=(waypoint[0], waypoint[1], -_WORLD.search_alt_m),
+                      **_zone_speeds(ctx, -_WORLD.search_alt_m))
 
 
 def _tick_approach_drop_target(ctx):
     # 接近的内部实现是可替换的 approach 单元（粗 PBVS -> 末端 IBVS 等），见
     # approaches/ / cuadc_decision/README.md。这里只把它的输出翻成 TickResult：
     # 对齐并稳住（drop_ready）就转 DROP，否则发它要的运动指令（粗段位置、末端速度）。
+    # 放弃（give_up）= 该目标确认不了/对不上：拉黑，换已知的下一个候选或回 SEARCH。
     out = _ACTIVE_APPROACH.loop(ctx)
+    event = Fault(*out.event) if out.event is not None else None
+    if out.give_up is not None:
+        target = ctx.drop_task.selected_target
+        ctx.drop_task.rejected_positions.append((target.x, target.y))
+        ctx.drop_task.selected_target = None
+        return _next_target_or_search(ctx, Fault(
+            out.give_up[0], f'{out.give_up[1]}; target ({target.x:.2f},{target.y:.2f}) rejected'))
     if out.drop_ready:
-        return TickResult(next_state=State.DROP_PAYLOAD)
-    return TickResult(position_target=out.position_target, velocity_target=out.velocity_target)
+        return TickResult(next_state=State.DROP_PAYLOAD, fault=event)
+    speeds = _zone_speeds(ctx, out.position_target[2]) if out.position_target is not None else {}
+    return TickResult(position_target=out.position_target, velocity_target=out.velocity_target,
+                      fault=event, **speeds)
 
 
 def _tick_drop_payload(ctx):
-    def on_success():
+    def finish(fault=None):
         target = ctx.drop_task.selected_target
         ctx.drop_task.used_positions.append((target.x, target.y))
         ctx.drop_task.drop_count += 1
         ctx.drop_task.selected_target = None
+        ctx.drop_task.release_failures = 0
         if ctx.drop_task.drop_count >= _WORLD.drop_count_target:
             # 投放阶段结束后去不去侦察由场景的 phases 决定（取代旧 stop_after_drop）。
-            if 'recon' in _WORLD.phases:
-                return TickResult(next_state=State.NAVIGATE_TO_RECON_ZONE)
-            return TickResult(next_state=State.RTL_OR_LAND)
-        # 再次搜索前把扫描进度归零:否则 waypoint_index 停在末点，二次搜索原地
-        # 不动、只吃上一轮欠采样的旧簇；归零后重走整条扫描路径给剩余筒补采样
-        # （clusters 保留，样本跨投放累积）。
-        ctx.drop_task.waypoint_index = 0
-        return TickResult(next_state=State.SEARCH_DROP_TARGETS)
+            return TickResult(next_state=_leave_drop_phase(), fault=fault)
+        # 下一投先直接飞已知的下一个候选；没有才回 SEARCH（扫描进度归零重走整条路径，
+        # clusters 保留、样本跨投放累积）。
+        return _next_target_or_search(ctx, fault)
+
+    res = ctx.last_service_result
+    if res is not None and res.name == 'release_payload' and not res.success:
+        ctx.drop_task.release_failures += 1
+        if ctx.drop_task.release_failures > _TUNING.release_max_retries:
+            ctx.last_service_result = None
+            ctx.command_dispatched = False
+            return finish(Fault('RELEASE_GAVE_UP', f'release_payload failed '
+                                f'{ctx.drop_task.release_failures}x -> counted as attempted, moving on'))
+        result = _dispatch_and_await(ctx, 'release_payload', {}, finish)
+        result.fault = Fault('RELEASE_FAILED', f'release_payload failed '
+                                               f'({ctx.drop_task.release_failures}/{_TUNING.release_max_retries + 1}), retrying')
+        return result
 
     # 投放执行是接口层的 release_payload（DO_SET_SERVO 定时序列，投放物理完成才返回；见
     # docs/spec/adr/0007）。DROP_PAYLOAD 态不发运动指令=飞机悬停，等投放跑完才转下一阶段。
-    return _dispatch_and_await(ctx, 'release_payload', {}, on_success)
+    return _dispatch_and_await(ctx, 'release_payload', {}, finish)
 
 
 def _tick_navigate_to_recon_zone(ctx):
     first_waypoint = _RECON_SCAN_WAYPOINTS[0]
-    if _arrived(ctx.local_position_xy, first_waypoint, _TUNING.position_tolerance_m):
+    arrived = _arrived(ctx.local_position_xy, first_waypoint, _TUNING.position_tolerance_m)
+    if arrived or _nav_timed_out(ctx, first_waypoint):
         ctx.recon_task.phase_entered_monotonic = time.monotonic()
-        return TickResult(next_state=State.SURVEY_RECON_ZONE)
-    return TickResult(position_target=(first_waypoint[0], first_waypoint[1], -_WORLD.cruise_alt_m))
+        fault = None if arrived else Fault(
+            'NAV_TIMEOUT', f'not within {_TUNING.position_tolerance_m}m of {first_waypoint} after '
+                           f'{ctx.nav_timeout_s:.0f}s -> start SURVEY anyway')
+        return TickResult(next_state=State.SURVEY_RECON_ZONE, fault=fault)
+    return TickResult(position_target=(first_waypoint[0], first_waypoint[1], -_WORLD.cruise_alt_m),
+                      speed_target_mps=_TUNING.transit_speed_mps)
 
 
 def _tick_survey_recon_zone(ctx):
@@ -448,11 +576,12 @@ def _tick_survey_recon_zone(ctx):
 
     index = min(ctx.recon_task.waypoint_index, len(_RECON_SCAN_WAYPOINTS) - 1)
     waypoint = _RECON_SCAN_WAYPOINTS[index]
-    if _arrived(ctx.local_position_xy, waypoint, _TUNING.position_tolerance_m):
+    if _at_scan_waypoint(ctx, waypoint):
         if index < len(_RECON_SCAN_WAYPOINTS) - 1:
             ctx.recon_task.waypoint_index = index + 1
             waypoint = _RECON_SCAN_WAYPOINTS[ctx.recon_task.waypoint_index]
-    return TickResult(position_target=(waypoint[0], waypoint[1], -_WORLD.cruise_alt_m))
+    return TickResult(position_target=(waypoint[0], waypoint[1], -_WORLD.search_alt_m),
+                      **_zone_speeds(ctx, -_WORLD.search_alt_m))
 
 
 def _tick_rtl_or_land(ctx):
@@ -486,7 +615,7 @@ _DISPATCH = {
 
 
 def _check_guards(ctx):
-    """跨状态的强制打断：满足条件就返回强制目标状态，命中就跳过当前
+    """跨状态的强制打断：满足条件就返回 (强制目标状态, Fault)，命中就跳过当前
     状态本来该跑的 tick 逻辑，见 docs/spec/06-planning.md"跨状态的强制
     打断"一节——真安全响应和任务时间预算共用这同一种机制，具体阈值都
     是占位值。还没起飞、或已经在收尾阶段时，强制打断没有意义。
@@ -495,28 +624,33 @@ def _check_guards(ctx):
     转 PILOT_TAKEOVER 永久停手——否则后面的电量/failsafe 守卫会再切 RTL 把控制权抢回来。"""
     if ctx.pi_in_control and ctx.current_state != State.PILOT_TAKEOVER:
         if not ctx.armed and ctx.current_state != State.RTL_OR_LAND:
-            return State.PILOT_TAKEOVER
+            return State.PILOT_TAKEOVER, Fault('PILOT_TAKEOVER', 'disarmed in flight')
         if ctx.armed and ctx.mode is not None and ctx.mode not in _PI_MODES:
-            return State.PILOT_TAKEOVER
+            return State.PILOT_TAKEOVER, Fault('PILOT_TAKEOVER', f'mode changed to {ctx.mode}')
 
     if not ctx.armed or ctx.current_state in (State.RTL_OR_LAND, State.PILOT_TAKEOVER):
-        return None
+        return None, None
 
     if ctx.battery_fraction is not None and ctx.battery_fraction < _TUNING.battery_critical_fraction:
-        return State.RTL_OR_LAND
+        return State.RTL_OR_LAND, Fault('BATTERY_CRITICAL', f'battery {ctx.battery_fraction:.0%} '
+                                        f'< {_TUNING.battery_critical_fraction:.0%}')
     if ctx.failsafe_active:
-        return State.RTL_OR_LAND
+        return State.RTL_OR_LAND, Fault('FC_FAILSAFE', 'interface reports failsafe active')
 
     if ctx.current_state in _DROP_STATES and ctx.drop_task.phase_entered_monotonic is not None:
         if time.monotonic() - ctx.drop_task.phase_entered_monotonic > _TUNING.drop_phase_timeout_s:
             # 放弃投放阶段后去不去侦察同样看 phases（bench phases=[drop] 时超时直接 RTL）。
-            return State.NAVIGATE_TO_RECON_ZONE if 'recon' in _WORLD.phases else State.RTL_OR_LAND
+            return _leave_drop_phase(), Fault(
+                'DROP_PHASE_TIMEOUT', f'{_TUNING.drop_phase_timeout_s:.0f}s in drop phase, '
+                                      f'drops={ctx.drop_task.drop_count}/{_WORLD.drop_count_target}')
 
     if ctx.current_state in _RECON_STATES and ctx.recon_task.phase_entered_monotonic is not None:
         if time.monotonic() - ctx.recon_task.phase_entered_monotonic > _TUNING.recon_phase_timeout_s:
-            return State.RTL_OR_LAND
+            return State.RTL_OR_LAND, Fault(
+                'RECON_PHASE_TIMEOUT', f'{_TUNING.recon_phase_timeout_s:.0f}s in survey, '
+                                       f'covered {len(ctx.recon_task.covered)}/{_WORLD.recon_cylinder_count}')
 
-    return None
+    return None, None
 
 
 def tick(ctx):
@@ -524,7 +658,7 @@ def tick(ctx):
     当前状态自己的 tick 逻辑。是否需要重置 `command_dispatched`/
     `state_entered_monotonic` 由 `decision_node.py` 在应用返回的
     `next_state` 时统一处理，这里不重复做。"""
-    forced = _check_guards(ctx)
+    forced, fault = _check_guards(ctx)
     if forced is not None and forced != ctx.current_state:
-        return TickResult(next_state=forced)
+        return TickResult(next_state=forced, fault=fault)
     return _DISPATCH[ctx.current_state](ctx)

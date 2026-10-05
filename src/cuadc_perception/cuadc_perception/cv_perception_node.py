@@ -14,19 +14,22 @@ docs/spec/05-perception-decision-interface.md。
 
 import math
 import threading
+import time
 from collections import deque
 
 import cv2
+import cuadc_physical
 import rclpy
 from cv_bridge import CvBridge
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from geometry_msgs.msg import PoseStamped
+from rclpy.duration import Duration
 from rclpy.node import Node
 from sensor_msgs.msg import Image, Imu
 from std_msgs.msg import Header, String
 
 from cuadc_perception import detectors, geometry
-from cuadc_perception.frame_sources import DEFAULT_RAW_SHM, ShmFrameSource
+from cuadc_perception.frame_sources import DEFAULT_RAW_SHM, DEFAULT_STAMP_PORT, ShmFrameSource
 from cuadc_perception.perception_core import PerceptionCore
 from cuadc_perception.sinks import DEFAULT_PREVIEW_PORT, RtpPreviewSink, draw_overlay
 from cuadc_perception_msgs.msg import Detection, DetectionArray
@@ -94,7 +97,8 @@ class CvPerceptionNode(Node):
         super().__init__('cuadc_perception_cv')
 
         # 相机内参 + 挂载角按 profile 从 camera.<profile>.yaml 读(见 geometry.load_camera_params)。
-        self.declare_parameter('cylinder_height_m', 0.3)
+        # 默认取规则书投放筒高（cuadc_physical/targets.yaml）；仍可用参数临时覆盖。
+        self.declare_parameter('cylinder_height_m', cuadc_physical.load_targets().drop_cylinder_height_m)
         self.declare_parameter('min_radius_m', 0.05)
         self.declare_parameter('max_radius_m', 0.18)
         self.declare_parameter('detector', detectors.ACTIVE_DEFAULT)
@@ -114,6 +118,9 @@ class CvPerceptionNode(Node):
         self.declare_parameter('src_fps', 10)
         self.declare_parameter('cv_width', 960)    # shm 源出帧/检测/预览的分辨率
         self.declare_parameter('cv_height', 540)
+        # shm 源的帧时间戳：相机服务旁路发来的拍照时刻(SensorTimestamp)；配不上时退回到达时刻并告警。
+        self.declare_parameter('capture_stamps', True)
+        self.declare_parameter('stamp_port', DEFAULT_STAMP_PORT)
         # RTP 标注预览(真机给地面看的 CV 框):默认关,真机 launch 打开。
         self.declare_parameter('preview_enabled', False)
         self.declare_parameter('preview_port', DEFAULT_PREVIEW_PORT)
@@ -145,7 +152,7 @@ class CvPerceptionNode(Node):
         self._pose_at_latest = self.get_parameter('pose_at').value == 'latest'
         if self._pose_at_latest:
             self.get_logger().warn('pose_at=latest: TEST ONLY -- capture-time alignment disabled')
-        self._latest_position_ned = None
+        self._latest_position = None
         self._latest_orientation_xyzw = None
         self._recon_zone_active = False
         self._frame_idx = 0
@@ -176,6 +183,7 @@ class CvPerceptionNode(Node):
 
         # 取帧源接线
         self._shm_source = None
+        self._stamp_stats, self._stamp_ages, self._stamp_log_t = [0, 0], [], time.monotonic()
         source = self.get_parameter('frame_source').value
         if source == 'shm':
             self._shm_source = ShmFrameSource(
@@ -185,6 +193,8 @@ class CvPerceptionNode(Node):
                 src_fps=self.get_parameter('src_fps').value,
                 out_w=self.get_parameter('cv_width').value,
                 out_h=self.get_parameter('cv_height').value,
+                stamp_port=(self.get_parameter('stamp_port').value
+                            if self.get_parameter('capture_stamps').value else 0),
             )
             if not self._shm_source.start(self._on_shm_frame):
                 self.get_logger().error('shm 取帧源启动失败(相机服务在跑吗?)')
@@ -198,8 +208,30 @@ class CvPerceptionNode(Node):
 
     def _on_shm_frame(self, frame_bgr):
         header = Header()
-        header.stamp = self.get_clock().now().to_msg()
+        now = self.get_clock().now()
+        captured = self._shm_source.last_capture_ns()
+        if captured is None:
+            header.stamp = now.to_msg()  # 退回到达时刻（比拍照晚 ~30ms）
+            self._stamp_stats[1] += 1
+        else:
+            age_ns = time.monotonic_ns() - captured
+            header.stamp = (now - Duration(nanoseconds=age_ns)).to_msg()
+            self._stamp_stats[0] += 1
+            self._stamp_ages.append(age_ns / 1e6)
+        self._log_stamp_stats()
         self._process_frame(frame_bgr, header, ros_image_msg=None)
+
+    def _log_stamp_stats(self):
+        """每 10s 一条：拍照时刻配对率 + 拍照->打戳时延（录进 bag，现场延迟有没有漂一看便知）。"""
+        t = time.monotonic()
+        if t - self._stamp_log_t < 10.0:
+            return
+        matched, fallback = self._stamp_stats
+        ages = sorted(self._stamp_ages)
+        lat = f'capture->stamp p50 {ages[len(ages) // 2]:.0f} / max {ages[-1]:.0f} ms' if ages else 'no capture stamps'
+        log = self.get_logger().warn if fallback and not matched else self.get_logger().info
+        log(f'[CAPTURE_STAMP] matched {matched}/{matched + fallback} frames, {lat}')
+        self._stamp_log_t, self._stamp_stats, self._stamp_ages = t, [0, 0], []
 
     # ---- 遥测/状态 ----
     def _on_mission_state(self, msg):
@@ -207,7 +239,7 @@ class CvPerceptionNode(Node):
 
     def _on_local_position(self, msg):
         p = msg.pose.position
-        self._latest_position_ned = (p.x, p.y, p.z)
+        self._latest_position = (p.x, p.y, p.z)
         self._pos_buf.append((_stamp_sec(msg.header.stamp), (p.x, p.y, p.z)))
 
     def _on_attitude(self, msg):
@@ -221,9 +253,9 @@ class CvPerceptionNode(Node):
         时钟域失配守卫: 拍照戳与最新遥测戳差 >5s = 图像/遥测不在同一时钟(sim 忘开
         use_sim_time 之类) -> 告警一次并退化用最新位姿,绝不静默钳到远古位姿。"""
         if self._pose_at_latest:  # 证据链 A/B 对照旋钮,见参数声明
-            if self._latest_position_ned is None or self._latest_orientation_xyzw is None:
+            if self._latest_position is None or self._latest_orientation_xyzw is None:
                 return None
-            return geometry.VehiclePose(position_ned=self._latest_position_ned,
+            return geometry.VehiclePose(position=self._latest_position,
                                         orientation_xyzw=self._latest_orientation_xyzw)
         if self._att_buf and abs(t_capture - self._att_buf[-1][0]) > 5.0:
             if not self._clock_mismatch_warned:
@@ -232,18 +264,18 @@ class CvPerceptionNode(Node):
                     f'image stamp {t_capture:.1f} vs telemetry {self._att_buf[-1][0]:.1f}: '
                     'clock domains differ (sim without use_sim_time?) -- falling back to '
                     'latest pose, capture-time alignment DISABLED')
-            if self._latest_position_ned is None or self._latest_orientation_xyzw is None:
+            if self._latest_position is None or self._latest_orientation_xyzw is None:
                 return None
-            return geometry.VehiclePose(position_ned=self._latest_position_ned,
+            return geometry.VehiclePose(position=self._latest_position,
                                         orientation_xyzw=self._latest_orientation_xyzw)
         pos = _interp_vec(self._pos_buf, t_capture)
         quat = _interp_quat(self._att_buf, t_capture)
         if pos is None or quat is None:
-            if self._latest_position_ned is None or self._latest_orientation_xyzw is None:
+            if self._latest_position is None or self._latest_orientation_xyzw is None:
                 return None
-            return geometry.VehiclePose(position_ned=self._latest_position_ned,
+            return geometry.VehiclePose(position=self._latest_position,
                                         orientation_xyzw=self._latest_orientation_xyzw)
-        return geometry.VehiclePose(position_ned=pos, orientation_xyzw=quat)
+        return geometry.VehiclePose(position=pos, orientation_xyzw=quat)
 
     # ---- 主处理:检测一次,结果扇出 ----
     def _process_frame(self, frame_bgr, header, ros_image_msg=None):
@@ -260,9 +292,9 @@ class CvPerceptionNode(Node):
         out = DetectionArray()
         out.header = Header()
         out.header.stamp = header.stamp
-        out.vehicle_pose.position.x = pose.position_ned[0]
-        out.vehicle_pose.position.y = pose.position_ned[1]
-        out.vehicle_pose.position.z = pose.position_ned[2]
+        out.vehicle_pose.position.x = pose.position[0]
+        out.vehicle_pose.position.y = pose.position[1]
+        out.vehicle_pose.position.z = pose.position[2]
         (out.vehicle_pose.orientation.x, out.vehicle_pose.orientation.y,
          out.vehicle_pose.orientation.z, out.vehicle_pose.orientation.w) = pose.orientation_xyzw
         out.detections = [self._to_msg(d) for d in result.detections]

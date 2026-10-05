@@ -25,34 +25,64 @@ import time
 
 from pymavlink import mavutil
 
-_STREAMS = (
-    mavutil.mavlink.MAV_DATA_STREAM_RAW_SENSORS,
-    mavutil.mavlink.MAV_DATA_STREAM_EXTENDED_STATUS,
-    mavutil.mavlink.MAV_DATA_STREAM_RC_CHANNELS,
-    mavutil.mavlink.MAV_DATA_STREAM_POSITION,
-    mavutil.mavlink.MAV_DATA_STREAM_EXTRA1,
-    mavutil.mavlink.MAV_DATA_STREAM_EXTRA2,
-    mavutil.mavlink.MAV_DATA_STREAM_EXTRA3,
-)
+# 按消费者实际用到的消息定各流速率（Hz，0=停）。不发 ALL：它会把各流重置成同一速率。
+# 位姿要密：感知按图像时刻在位姿缓冲里插值，遥测越稀、钳到的最近样本越旧。
+_STREAM_RATES = {
+    mavutil.mavlink.MAV_DATA_STREAM_EXTRA1: 50,           # ATTITUDE
+    mavutil.mavlink.MAV_DATA_STREAM_POSITION: 25,         # GLOBAL_POSITION_INT, LOCAL_POSITION_NED
+    mavutil.mavlink.MAV_DATA_STREAM_EXTENDED_STATUS: 5,   # SYS_STATUS, GPS_RAW_INT, GPS2_RAW
+    mavutil.mavlink.MAV_DATA_STREAM_EXTRA2: 5,            # VFR_HUD
+    mavutil.mavlink.MAV_DATA_STREAM_EXTRA3: 5,            # EKF_STATUS_REPORT, BATTERY_STATUS（不能停）
+    mavutil.mavlink.MAV_DATA_STREAM_RAW_SENSORS: 0,       # RAW_IMU/SCALED_*：没人用
+    mavutil.mavlink.MAV_DATA_STREAM_RC_CHANNELS: 0,       # RC_CHANNELS/SERVO_OUTPUT_RAW：没人用
+}
 
 
-def request_streams(m, rate: int) -> None:
+_RATE_CMDS = {mavutil.mavlink.MAV_CMD_SET_MESSAGE_INTERVAL}
+
+
+def _drop_rate_requests(data: bytes):
+    """丢掉消费者（地面站等）发来的数据流速率请求，其余原样转发：速率只归本扇出配置。
+    返回 (要写串口的字节, 被丢的速率指令列表)。解析不出完整消息时原样转发（不因解析问题吞掉指令）。"""
+    parser = mavutil.mavlink.MAVLink(None)  # 每个报文新建：残帧不跨报文/跨消费者拼接
+    parser.robust_parsing = True
+    try:
+        msgs = parser.parse_buffer(data) or []
+    except Exception:
+        return data, []
+    keep, dropped_cmds = [], []
+    for x in msgs:
+        if x.get_type() == "REQUEST_DATA_STREAM":
+            continue
+        if x.get_type() in ("COMMAND_LONG", "COMMAND_INT") and x.command in _RATE_CMDS:
+            dropped_cmds.append(x)
+            continue
+        keep.append(x)
+    if len(keep) == len(msgs):
+        return data, []
+    return b"".join(x.get_msgbuf() for x in keep), dropped_cmds
+
+
+def _deny_ack(cmd, fc_sys: int, fc_comp: int) -> bytes:
+    """被丢的速率指令回 DENIED，免得地面站等不到 ACK 反复重发。"""
+    enc = mavutil.mavlink.MAVLink(None, srcSystem=fc_sys, srcComponent=fc_comp)
+    return enc.command_ack_encode(cmd.command, mavutil.mavlink.MAV_RESULT_DENIED).pack(enc)
+
+
+def request_streams(m) -> None:
     sysid = m.target_system or 1
     compid = m.target_component or 1
-    m.mav.request_data_stream_send(
-        sysid, compid, mavutil.mavlink.MAV_DATA_STREAM_ALL, rate, 1)
-    for s in _STREAMS:
-        m.mav.request_data_stream_send(sysid, compid, s, rate, 1)
+    for stream, rate in _STREAM_RATES.items():
+        m.mav.request_data_stream_send(sysid, compid, stream, rate, 1 if rate > 0 else 0)
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="MAVLink serial<->UDP fanout (mavutil)")
     ap.add_argument("--serial", default="/dev/ttyAMA0")
-    ap.add_argument("--baud", type=int, default=57600)
+    ap.add_argument("--baud", type=int, default=921600)
     ap.add_argument("--udp", default="14550,14551",
                     help="逗号分隔本地 UDP 端口；消费者用 udpin:127.0.0.1:<port> 收")
     ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--rate", type=int, default=10, help="向飞控请求数据流的速率 Hz")
     args = ap.parse_args()
 
     ports = [int(p) for p in args.udp.split(",") if p.strip()]
@@ -80,7 +110,7 @@ def main() -> None:
                 continue
             got_hb = False
             backoff = 1.0
-            request_streams(m, args.rate)  # sysid 默认 1；未解锁也会发心跳
+            request_streams(m)  # sysid 默认 1；未解锁也会发心跳
             last_req = time.monotonic()
             last_wait_log = last_req
             print("serial held open; waiting for heartbeat (will not reopen)", flush=True)
@@ -88,7 +118,7 @@ def main() -> None:
         try:
             now = time.monotonic()
             if now - last_req > 2.0:  # 持续重请求，喂活数据流
-                request_streams(m, args.rate)
+                request_streams(m)
                 last_req = now
             if not got_hb and now - last_wait_log > 30.0:
                 print("still no heartbeat; keeping serial open", file=sys.stderr, flush=True)
@@ -104,8 +134,12 @@ def main() -> None:
             for u in socks:
                 if u.fileno() in ready:
                     try:
-                        data, _ = u.recvfrom(65535)
-                        m.write(data)
+                        data, addr = u.recvfrom(65535)
+                        data, denied = _drop_rate_requests(data)
+                        if data:
+                            m.write(data)
+                        for cmd in denied:
+                            u.sendto(_deny_ack(cmd, m.target_system or 1, m.target_component or 1), addr)
                     except OSError:
                         pass
 

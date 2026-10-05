@@ -1,0 +1,20 @@
+# 顶层任务 FSM 本体通用调参 —— real 档。字段 = FsmTuning 字段。真机按真实定位精度/时间预算/
+# 电量安全余量重调；先以 sim 档为起点（真机 GPS/EKF 抖动更大时可放宽到点容差、提高电量下限）。
+position_tolerance_m: 0.5
+altitude_tolerance_m: 0.5
+recon_coverage_match_m: 0.6
+drop_phase_timeout_s: 90.0
+recon_phase_timeout_s: 90.0
+battery_critical_fraction: 0.20
+gps_fix_ok_threshold: 3
+emulate_pilot_arm: false         # 真机：解锁/上锁只归飞手 RC，Pi 不发 arm
+transit_speed_mps: 5.0           # 飞往投放区/侦察区
+search_speed_mps: 3.0            # 搜索航点之间 + 粗对准；= 飞控 WP_SPD（飞控重进位置控制会退回它）
+zone_climb_mps: 0.0              # 投放/侦察区内爬升限速复写；0 = 飞控 WP_SPD_UP
+zone_descent_mps: 0.0            # 投放/侦察区内下降限速复写；0 = 飞控 WP_SPD_DN
+# ---- 失效处理阈值，全部失效路径见 docs/spec/failure-handling.md ----
+takeoff_timeout_s: 20.0          # 起飞爬不到巡航高度 -> RTL
+nav_timeout_margin_s: 10.0       # 转场每段超时 = 2×距离/转场速度 + 此余量，到时直接进区作业
+search_rescans: 1                # 扫完没有可选目标时重扫轮数，用完放弃投放阶段
+release_max_retries: 2           # release_payload 失败重试次数，用完记为已尝试、继续
+perception_stale_log_s: 3.0      # 作业中感知断流超过此时长记一条 FAULT（只记录）

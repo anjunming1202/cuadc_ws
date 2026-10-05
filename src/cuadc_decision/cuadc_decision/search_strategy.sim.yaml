@@ -4,3 +4,4 @@ min_cluster_samples: 3
 settle_seconds: 1.5
 min_detection_confidence: 0.5
 min_candidates_before_select: 3     # = 投放区筒数（规则固定 3 个）；bench 场景覆盖成 1
+max_tilt_deg: 10.0                  # 倾斜超过此角的帧不进聚类：放过匀速巡航(~7°)、挡急加减速

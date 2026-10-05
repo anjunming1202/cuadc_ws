@@ -79,7 +79,7 @@ class PerceptionCore:
         contour_results: list = []
         if pose is not None:
             cam_to_world = geometry.cam_to_world_matrix(self._camera, pose)
-            cam_origin = geometry.camera_origin_ned(self._camera, pose)
+            cam_origin = geometry.camera_origin(self._camera, pose)
             t_reproject = time.monotonic()
             for obs in observations:
                 world_xy, range_m = geometry.reproject_to_cylinder_top(
@@ -91,7 +91,10 @@ class PerceptionCore:
                     range_m = None
                     reason = 'reproject_fail'
                 else:
-                    radius_m = obs.radius_px * range_m / self._camera.fx
+                    radius_m = geometry.transverse_radius_m(
+                        obs.contour, obs.u, obs.v, self._camera, cam_to_world, range_m)
+                    if radius_m is None:  # 轮廓点太少：退回面积等效半径
+                        radius_m = obs.radius_px * range_m / self._camera.fx
                     if radius_m < self._min_radius_m:
                         reason = 'too_small'
                     elif radius_m > self._max_radius_m:

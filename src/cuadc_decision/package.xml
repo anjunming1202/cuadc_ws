@@ -13,6 +13,7 @@
   <depend>sensor_msgs</depend>
   <depend>cuadc_interface_msgs</depend>
   <depend>cuadc_perception_msgs</depend>
+  <depend>cuadc_physical</depend>
   <depend>launch</depend>
   <depend>launch_ros</depend>
 

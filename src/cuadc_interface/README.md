@@ -29,39 +29,9 @@ ros2 launch cuadc_interface interface_bringup.launch.py
 ros2 launch cuadc_interface interface_bringup.launch.py connection:=udp:127.0.0.1:14550
 ```
 
-验收测试（需要先在另一个终端起好上面的节点并连上 SITL/真机，不在
-launch 文件里，单独手动跑）：
+飞行测试节点（`cuadc_interface/tests/`：起降 `interface_takeoff_land_test`、动作合集
+`interface_flight_suite_test`、解锁/接管检查 `interface_arm_test`）都走"放行 + 飞手 RC 解锁"流程，
+用 `scripts/run_*_{sim,real}.sh` 起（脚本自带接口层并收尾），见
+[`field-test-runbook.md`](../../docs/spec/field-test-runbook.md)。
 
-```
-ros2 run cuadc_interface interface_acceptance_test
-```
-
-机动测试（更完整的多段路径，覆盖水平/爬升/下降组合、转向、连续换
-目标，跑得比验收测试慢，见文件顶部说明）：
-
-```
-ros2 run cuadc_interface interface_maneuver_test
-```
-
-精细机动测试（Set Position Target 局部坐标精调 + Release Payload 投放模拟，
-见文件顶部说明）：
-
-```
-ros2 run cuadc_interface interface_precision_test
-```
-
-速度测试（Set Velocity 快速验证：发速度真的会动、停止发送真的会停，
-比其它测试脚本简单很多，见文件顶部说明）：
-
-```
-ros2 run cuadc_interface interface_velocity_test
-```
-
-真机首次短距（会解锁起飞；默认验收仍是 10 m / 正北 5 m）：
-
-```
-ros2 run cuadc_interface interface_acceptance_test --ros-args \
-  -p takeoff_altitude_m:=1.0 -p hop_north_m:=3.0 -p skip_release_payload:=true
-```
-
-水平段是 **GPS 正北**，不是机头前方。台架未解锁测舵机：launch 加 `allow_disarmed_drop:=true`（飞之前关掉）。拆桨台架脚本在 [`local/flight_ctrl_tests/`](../../local/flight_ctrl_tests/)：电机只听遥控 arm；投放用 `DO_SET_SERVO` 写 **SERVO9(=AUX1)**，不是 RC9 override。
+台架未解锁测舵机：launch 加 `allow_disarmed_drop:=true`（飞之前关掉）。拆桨台架脚本在 [`local/flight_ctrl_tests/`](../../local/flight_ctrl_tests/)：电机只听遥控 arm；投放用 `DO_SET_SERVO` 写 **SERVO9(=AUX1)**，不是 RC9 override。

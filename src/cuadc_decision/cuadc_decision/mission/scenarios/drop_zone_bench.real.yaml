@@ -1,0 +1,3 @@
+# drop_zone_bench 的 real 专属偏离：现场摆筒单点测试，不按规则书场地。
+drop_zone_center: [2.0, 0.0]         # 中间那只筒：起飞时机头正前方 2m
+drop_count_target: 1                 # 单点只投一次

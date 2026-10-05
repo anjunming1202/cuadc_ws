@@ -34,7 +34,9 @@ LATIN_FONT_PATH = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
 # gen_world.py's PLACARD_YAW_DEG. Unverified -- adjust if it renders wrong.
 HAZMAT_UP_ROTATION_DEG = -90
 
-GRAY = (128, 128, 128)
+# 比赛场地=水泥地：真机白天地面 luma 均值 ~180、p1–p99 ~135–200；sim 渲染约为贴图 ×0.875
+CONCRETE = (200, 200, 200)
+CONCRETE_NOISE = 35
 WHITE = (255, 255, 255)
 BLUE = (30, 120, 220)
 
@@ -52,13 +54,10 @@ def save(img, model_name, filename):
 
 
 # ---------------------------------------------------------------------------
-# Ground base: flat gray with light noise, sized to config.GROUND_LENGTH x
+# Ground base: concrete-bright gray with patchy noise, sized to config.GROUND_LENGTH x
 # config.GROUND_WIDTH (meters) at config.GROUND_PIXELS_PER_METER.
 # ---------------------------------------------------------------------------
-def gen_ground_base():
-    ppm = config.GROUND_PIXELS_PER_METER
-    w = round(config.GROUND_LENGTH * ppm)
-    h = round(config.GROUND_WIDTH * ppm)
+def _concrete(w, h):
     # Low-res noise upscaled with smoothing, not per-pixel noise -- the
     # latter is incompressible (12MB of unstructured noise for what should
     # be a cheap flat-ish texture, defeating the whole "keep the ground
@@ -66,9 +65,14 @@ def gen_ground_base():
     import numpy as np
     low_w, low_h = max(1, w // 20), max(1, h // 20)
     rng = np.random.default_rng(0)
-    noise = rng.integers(-10, 11, size=(low_h, low_w, 1)).astype(np.float32)
-    low = np.clip(np.array(GRAY, dtype=np.float32) + noise, 0, 255).astype(np.uint8)
-    img = Image.fromarray(low, mode='RGB').resize((w, h), Image.BICUBIC)
+    noise = rng.integers(-CONCRETE_NOISE, CONCRETE_NOISE + 1, size=(low_h, low_w, 1)).astype(np.float32)
+    low = np.clip(np.array(CONCRETE, dtype=np.float32) + noise, 0, 255).astype(np.uint8)
+    return Image.fromarray(low, mode='RGB').resize((w, h), Image.BICUBIC)
+
+
+def gen_ground_base():
+    ppm = config.GROUND_PIXELS_PER_METER
+    img = _concrete(round(config.GROUND_LENGTH * ppm), round(config.GROUND_WIDTH * ppm))
     save(img, 'cuadc_ground', 'ground_base.png')
 
 
@@ -93,7 +97,7 @@ def gen_field_markings():
     ppm = config.GROUND_PIXELS_PER_METER
     w = round(config.GROUND_LENGTH * ppm)
     h = round(config.GROUND_WIDTH * ppm)
-    img = Image.new('RGB', (w, h), GRAY)
+    img = _concrete(w, h)  # 不透明贴图会盖住 ground_base，底色须同为水泥地
     draw = ImageDraw.Draw(img)
 
     # Landing circle: blue disc + white "H", rotated to face the same way

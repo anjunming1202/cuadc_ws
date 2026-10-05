@@ -69,18 +69,18 @@
 ```
 string target_type       # 目前只有 "cylinder" 一种，字段先留着占位
 geometry_msgs/Point position  # 世界坐标；与接口层 telemetry/local_position
-                               # 同一坐标系（相对起飞点的局部 NED），由
+                               # 同一坐标系（起飞坐标系，前/右/下，见 coordinate-frames.md），由
                                # 感知内部完成坐标转换后再发布（粗接近/PBVS 用）
 float64 bearing_x        # 归一化像平面坐标 (u-cx)/fx（无量纲），末端 IBVS 用
 float64 bearing_y        # 归一化像平面坐标 (v-cy)/fy（无量纲），末端 IBVS 用
-float64 apparent_size     # 视在尺寸（比如外接圆半径），供"挑最小的"
-                           # 这类判断用
+float64 apparent_size     # 筒口物理半径（米）：轮廓垂直于"正下方点->筒"方向的宽度，
+                           # 不受侧壁露出影响（geometry.transverse_radius_m）；供"挑最小的"
 float64 confidence
 ```
 
 `DetectionArray.msg`：`std_msgs/Header header` + `geometry_msgs/Pose vehicle_pose`
 + `Detection[] detections`。**`header.stamp` = 这帧图像的拍照时刻**（不是感知处理完成
-时刻）；`vehicle_pose` = 拍照时刻的机体位姿（NED 位置 + 机体→世界四元数，感知按拍照
+时刻）；`vehicle_pose` = 拍照时刻的机体位姿（起飞坐标系位置 + 机体→起飞坐标系四元数，感知按拍照
 时刻从位姿缓冲插值）。测量与其时刻绑定发布：决策 IBVS 的姿态补偿/高度换算必须用
 `vehicle_pose`（与 `bearing` 同刻），不能用决策 tick 时的最新遥测——链路有延迟时两个
 时刻不同，用错时刻补偿本身就是错的（见 ADR-0010 B）。投放门等"当下状态"判断仍用实时

@@ -1,23 +1,22 @@
 # cone_descent_ibvs —— sim 档。字段 = ApproachConfig 字段。
-cruise_alt_m: 2.0
+approach_alt_m: 3.0              # 粗接近飞行高度，交接末端后锥面/阶梯降到 drop_alt_m
 drop_alt_m: 1.0
-cylinder_height_m: 0.3
-fc_rest_clearance_m: 0.31       # 飞控静止离地(ADR-0010 簇①);h 是解锁点参照,加它才是离地高
-camera_below_fc_m: 0.20         # 相机在飞控下方(ADR-0010 簇①)
 dt_s: 0.1
 min_conf: 0.5
 min_conf_terminal: 0.25       # 末端放低:近距圆盘残缺置信度塌落;硬锁关联门挡垃圾(见 ApproachConfig 注释)
 coarse_radius_m: 1.0
 refine_gate_m: 0.65
+relock_radius_m: 1.5             # 到点门内无检测时，1.5m 内持续可见的检测改锁（SEARCH 机动采样可偏 ~1m）
+relock_ticks: 5                   # 同一检测连续可见 0.5s(@10Hz) 才改锁
 handoff_off_m: 0.4             # 收紧:末端从更小初始误差起步,压交接过冲振荡
 handoff_speed_mps: 0.25        # 收紧:先停稳再交接(多等1-2s换无过冲)
+handoff_alt_tol_m: 0.3         # 先到 approach_alt_m 再交接末端(从搜索高度下来时不在半空直接交接)
 kp: 1.2
 ki: 0.4
 kd: 0.3
-v_max_mps: 1.0
+v_max_mps: 0.6                  # 末端水平限速
 brake_decel_mps2: 0.8           # 抛物线刹车:v≤√(2·a·herr),0.4m 误差→0.8m/s、4cm→0.25m/s
 i_zone_m: 0.4
-lever_arms_m: [[-0.11, -0.04], [-0.11, 0.04]]  # 按投放次序:筒1左口/筒2右口(实测,ADR-0010 簇②),与脱钩次序一致
 aim_trims_m: [[0.0, 0.0], [0.0, 0.0]]           # 经验瞄准修正(前,右)米/每口:实测落点偏差均值反填;[DROP_AIM] 日志是标定输入
 
 max_coast_ticks: 4
@@ -27,7 +26,15 @@ alt_hold_p: 1.2                 # 末端高度P:比例减速进 drop_alt+过低�
 drop_tol_m: 0.04
 speed_tol_mps: 0.15
 level_tol_rad: 0.1
-stable_hold_s: 1.0
+stable_hold_s: 0.5
+# ---- 失效处理(放弃 = 任务拉黑本目标换下一个,见 docs/spec/failure-handling.md) ----
+coarse_confirm_timeout_s: 8.0     # 粗段到点后这么久没交接末端 -> 放弃
+max_reacquire: 3                  # 末端丢失退回粗段次数上限
+stable_timeout_s: 15.0            # 到投放高度这么久没过门 -> 放宽容差
+relaxed_drop_tol_m: 0.08
+relaxed_timeout_s: 10.0           # 放宽后仍没过门 -> 放弃
+drop_alt_band_m: 0.1              # 进入 drop_alt+此带宽即开始投放门计时，之后不论高度持续计
+terminal_timeout_s: 60.0          # 本目标末端总时长上限（首次交接起算，回退粗段不清零）
 # ---- 锥面/迁移/重捕获(本模块专属) ----
 fov_half_deg: 17.25             # 纵向半FOV(实测标定 33.4°/2)
 fov_margin_deg: 4.0             # 可见性余量(俯仰瞬态+圆盘半径的角预算)
@@ -36,3 +43,4 @@ aim_migrate_top_m: 1.8          # 以上瞄画面中心
 aim_migrate_bot_m: 1.15         # 以下全量杆臂
 climb_rate_mps: 0.3             # 持续丢失原地爬升重捕获
 reacquire_ceiling_m: 1.9        # 爬到此高度仍未重见 -> 退回粗段
+# 飞控离地高/相机下移/投放口杠杆臂/筒高是固定物理量，由 load_config 从 cuadc_physical 注入。

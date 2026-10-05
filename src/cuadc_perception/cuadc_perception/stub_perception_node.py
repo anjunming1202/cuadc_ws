@@ -14,6 +14,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import Imu
 from std_msgs.msg import Header
 
+import cuadc_physical
 from cuadc_perception import geometry
 from cuadc_perception_msgs.msg import Detection, DetectionArray
 
@@ -47,23 +48,18 @@ _LOCAL_POSITION_TOPIC = '/cuadc_interface/telemetry/local_position'
 _ATTITUDE_TOPIC = '/cuadc_interface/telemetry/attitude'
 
 # 桩也要发 bearing（末端 IBVS 用，见 05 契约）。前向投影用：内参对方位方向
-# 无影响（方位=射线在相机系的比值），只需默认 nadir 挂载；圆筒顶面在
-# down=-高度，跟真实感知反投影到筒顶平面一致。
+# 无影响（方位=射线在相机系的比值），只需默认 nadir 挂载；圆筒顶面在地面（起飞坐标系
+# down = 飞控离地高）之上一个筒高，跟真实感知反投影到筒顶平面一致。
 _CAM_MOUNT = geometry.CameraParams(fx=1.0, fy=1.0, cx=0.0, cy=0.0)
-_CYLINDER_TOP_DOWN_M = -0.3
+_CYLINDER_TOP_DOWN_M = (cuadc_physical.load_airframe().fc_rest_clearance_m
+                        - cuadc_physical.load_targets().drop_cylinder_height_m)
 
 
-def _world_xy_to_ned(world_x, world_y):
-    """场地坐标（cuadc_sim/field/config.py 的 x=飞行前进方向、y=侧向）
-    转成接口层 telemetry/local_position 用的 NED (north, east)——两者
-    不是恒等映射，X/Y 是对调的。换算依据：仿真用的机型
-    `cuadc_iris/model.sdf`(vendored)里
-    `gazeboXYZToNED`（roll=180°, yaw=90°）这个 ArduPilotPlugin 参数，
-    换算出来是 NED north = Gazebo 世界系 Y、NED east = Gazebo 世界系 X。
-    2026-07-19 实机测试（SITL+Gazebo）发现飞机往侧边飞，就是这里之前
-    直接把场地 (x, y) 当 NED (x, y) 用、没做这个换算导致的。
-    """
-    return (world_y, world_x)
+def _world_xy_to_takeoff(world_x, world_y):
+    """仿真世界（Gazebo / field/config.py，x=前进方向、y=左）坐标 -> 起飞坐标系 (前, 右)。仿真飞机出生在
+    起降点 (0, 0)、机头朝世界 +x，所以 前 = 世界 x、右 = −世界 y（见 docs/spec/coordinate-frames.md）。
+    忽略 EKF 航向估计与真朝向的 1–2° 偏差（桩只供决策打通闭环）。"""
+    return (world_x, -world_y)
 
 
 class StubPerceptionNode(Node):
@@ -90,7 +86,7 @@ class StubPerceptionNode(Node):
             PoseStamped, _LOCAL_POSITION_TOPIC, self._on_local_position, 10)
         self.create_subscription(Imu, _ATTITUDE_TOPIC, self._on_attitude, 10)
         self._current_xy = None
-        self._pos_ned = None   # (north, east, down)，前向投影 bearing 用
+        self._pos = None   # 起飞坐标系 (前, 右, 下)，前向投影 bearing 用
         self._orient = None    # (x, y, z, w) 机体->世界，前向投影 bearing 用
 
         rate_hz = self.get_parameter('publish_rate_hz').value
@@ -98,7 +94,7 @@ class StubPerceptionNode(Node):
 
     def _on_local_position(self, msg):
         self._current_xy = (msg.pose.position.x, msg.pose.position.y)
-        self._pos_ned = (msg.pose.position.x, msg.pose.position.y, msg.pose.position.z)
+        self._pos = (msg.pose.position.x, msg.pose.position.y, msg.pose.position.z)
 
     def _on_attitude(self, msg):
         q = msg.orientation
@@ -109,28 +105,28 @@ class StubPerceptionNode(Node):
             return
 
         started = time.monotonic()
-        cur_north, cur_east = self._current_xy
+        cur_x, cur_y = self._current_xy
         radius = self.get_parameter('visibility_radius_m').value
         noise_stddev = self.get_parameter('position_noise_stddev').value
 
         detections = []
         for label, diameter in _DROP_CYLINDERS:
-            north, east = _world_xy_to_ned(*_DROP_CYLINDER_POSITIONS[label])
-            if math.hypot(north - cur_north, east - cur_east) <= radius:
-                detections.append(self._make_detection(north, east, diameter / 2.0, noise_stddev))
+            x, y = _world_xy_to_takeoff(*_DROP_CYLINDER_POSITIONS[label])
+            if math.hypot(x - cur_x, y - cur_y) <= radius:
+                detections.append(self._make_detection(x, y, diameter / 2.0, noise_stddev))
         for world_x, world_y in _RECON_CYLINDER_POSITIONS.values():
-            north, east = _world_xy_to_ned(world_x, world_y)
-            if math.hypot(north - cur_north, east - cur_east) <= radius:
-                detections.append(self._make_detection(north, east, _RECON_CYLINDER_DIAMETER / 2.0, noise_stddev))
+            x, y = _world_xy_to_takeoff(world_x, world_y)
+            if math.hypot(x - cur_x, y - cur_y) <= radius:
+                detections.append(self._make_detection(x, y, _RECON_CYLINDER_DIAMETER / 2.0, noise_stddev))
 
         msg = DetectionArray()
         msg.header = Header()
         # 桩感知没有真图像："拍照时刻"=本 tick 时刻，vehicle_pose=当前遥测位姿
         # （同刻自洽，满足 DetectionArray 契约，下游不区分桩/真）。
         msg.header.stamp = self.get_clock().now().to_msg()
-        if self._pos_ned is not None:
+        if self._pos is not None:
             (msg.vehicle_pose.position.x, msg.vehicle_pose.position.y,
-             msg.vehicle_pose.position.z) = self._pos_ned
+             msg.vehicle_pose.position.z) = self._pos
         if self._orient is not None:
             (msg.vehicle_pose.orientation.x, msg.vehicle_pose.orientation.y,
              msg.vehicle_pose.orientation.z, msg.vehicle_pose.orientation.w) = self._orient
@@ -145,27 +141,27 @@ class StubPerceptionNode(Node):
             f'[PERF] frame built in {elapsed_ms:.2f}ms, n={len(detections)}',
             throttle_duration_sec=1.0)
 
-    def _make_detection(self, north, east, radius, noise_stddev):
+    def _make_detection(self, x, y, radius, noise_stddev):
         detection = Detection()
         detection.target_type = 'cylinder'
-        detection.position.x = north + (random.gauss(0.0, noise_stddev) if noise_stddev > 0.0 else 0.0)
-        detection.position.y = east + (random.gauss(0.0, noise_stddev) if noise_stddev > 0.0 else 0.0)
+        detection.position.x = x + (random.gauss(0.0, noise_stddev) if noise_stddev > 0.0 else 0.0)
+        detection.position.y = y + (random.gauss(0.0, noise_stddev) if noise_stddev > 0.0 else 0.0)
         detection.position.z = 0.0
-        detection.bearing_x, detection.bearing_y = self._bearing_of(north, east)
+        detection.bearing_x, detection.bearing_y = self._bearing_of(x, y)
         detection.apparent_size = radius
         detection.confidence = 1.0
         return detection
 
-    def _bearing_of(self, north, east):
+    def _bearing_of(self, x, y):
         """前向投影圆筒顶中心 -> 归一化方位 (u-cx)/fx, (v-cy)/fy，与感知
         normalize_bearing 一致（方向只取决于射线在相机系的比值，与内参无关，
         所以决策 _bearing_to_off 能精确反出真实相对偏移）。缺姿态时回 (0,0)。"""
-        if self._pos_ned is None or self._orient is None:
+        if self._pos is None or self._orient is None:
             return (0.0, 0.0)
-        pose = geometry.VehiclePose(position_ned=self._pos_ned, orientation_xyzw=self._orient)
+        pose = geometry.VehiclePose(position=self._pos, orientation_xyzw=self._orient)
         cam_to_world = geometry.cam_to_world_matrix(_CAM_MOUNT, pose)
-        rel = np.array([north - self._pos_ned[0], east - self._pos_ned[1],
-                        _CYLINDER_TOP_DOWN_M - self._pos_ned[2]])
+        rel = np.array([x - self._pos[0], y - self._pos[1],
+                        _CYLINDER_TOP_DOWN_M - self._pos[2]])
         cam_vec = cam_to_world.T @ rel  # world -> cam
         if cam_vec[2] <= 1e-3:
             return (0.0, 0.0)  # 目标在相机后方/接近成像平面，方位无意义

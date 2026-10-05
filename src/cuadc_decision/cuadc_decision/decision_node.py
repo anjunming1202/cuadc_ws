@@ -16,6 +16,7 @@ docs/spec/06-planning.md 前置讨论。同一时刻只允许一个 service 调�
 在途，`mission_logic.py` 的状态机本来就是线性的，不需要并发调用。
 """
 
+import json
 import math
 import time
 from dataclasses import replace
@@ -24,7 +25,7 @@ import rclpy
 from geometry_msgs.msg import PoseStamped, TwistStamped
 from rclpy.node import Node
 from sensor_msgs.msg import BatteryState, Imu
-from std_msgs.msg import Bool, Empty, String
+from std_msgs.msg import Bool, Empty, Float64, String
 
 from cuadc_interface_msgs.msg import FailsafeState, GpsStatus, EkfStatus, PositionTarget
 from cuadc_interface_msgs.srv import Arm, SetMode, Takeoff, ReleasePayload
@@ -78,7 +79,6 @@ class DecisionNode(Node):
         self._ctx = mission_logic.MissionContext(current_state=world.initial_state)
         self._pending_service_name = None
         self._pending_service_future = None
-        self._yaw_rad = 0.0  # 仅诊断用：确认全程锁 yaw（末端伺服时机头不转），不进 ctx
 
         self._service_clients = {
             name: self.create_client(request_cls, topic)
@@ -90,6 +90,14 @@ class DecisionNode(Node):
         self._velocity_pub = self.create_publisher(
             TwistStamped, f'{_INTERFACE_NS}/cmd/velocity', 10)
         self._status_pub = self.create_publisher(String, '~/mission_state', 10)
+        # 失效/异常处理事件（JSON 一条一事件）：机载录制 -a 自动进 rosbag，地面站可订阅。
+        self._fault_pub = self.create_publisher(String, '~/fault_events', 10)
+        self._perception_outage_since = None
+        self._speed_pubs = {
+            field: self.create_publisher(Float64, f'{_INTERFACE_NS}/cmd/{topic}', 10)
+            for field, topic in (('speed_target_mps', 'speed'), ('climb_speed_mps', 'climb_speed'),
+                                 ('descent_speed_mps', 'descent_speed'))}
+        self._speed_sent = {}  # field -> (m/s, monotonic)
 
         self.create_subscription(Bool, f'{_INTERFACE_NS}/status/connected', self._on_connected, 10)
         self.create_subscription(Bool, f'{_INTERFACE_NS}/status/armed', self._on_armed, 10)
@@ -139,7 +147,7 @@ class DecisionNode(Node):
 
     def _on_attitude(self, msg):
         q = msg.orientation
-        self._ctx.roll_rad, self._ctx.pitch_rad, self._yaw_rad = _rpy_from_quaternion(q.x, q.y, q.z, q.w)
+        self._ctx.roll_rad, self._ctx.pitch_rad, self._ctx.yaw_rad = _rpy_from_quaternion(q.x, q.y, q.z, q.w)
 
     def _on_battery(self, msg):
         self._ctx.battery_fraction = msg.percentage
@@ -162,6 +170,29 @@ class DecisionNode(Node):
             roll, pitch, _yaw = _rpy_from_quaternion(q.x, q.y, q.z, q.w)
             self._ctx.det_roll_rad, self._ctx.det_pitch_rad = roll, pitch
             self._ctx.det_height_m = -msg.vehicle_pose.position.z
+
+    def _emit_fault(self, code, reason, next_state=None):
+        state = self._ctx.current_state
+        arrow = f' -> {next_state}' if next_state is not None and next_state != state else ''
+        self.get_logger().warn(f'[FAULT] {code} state={state}{arrow} {reason}')
+        self._fault_pub.publish(String(data=json.dumps({
+            'stamp': time.time(), 'code': code, 'state': state, 'next_state': next_state,
+            'reason': reason, 'drop_count': self._ctx.drop_task.drop_count})))
+
+    def _check_perception_outage(self):
+        # 只记录、不改任务逻辑：作业状态里感知流断超过阈值记一条，恢复时再记一条带时长。
+        working = self._ctx.current_state in (mission_logic.State.SEARCH_DROP_TARGETS,
+                                              mission_logic.State.APPROACH_DROP_TARGET,
+                                              mission_logic.State.SURVEY_RECON_ZONE)
+        gap = time.monotonic() - self._last_detections_monotonic
+        if self._perception_outage_since is None:
+            if working and gap > mission_logic._TUNING.perception_stale_log_s:
+                self._perception_outage_since = self._last_detections_monotonic
+                self._emit_fault('PERCEPTION_STALE', f'no detection message for {gap:.1f}s')
+        elif gap <= _DETECTIONS_STALE_S:
+            lasted = time.monotonic() - self._perception_outage_since
+            self._perception_outage_since = None
+            self._emit_fault('PERCEPTION_RESUMED', f'detections back after {lasted:.1f}s')
 
     def _on_task_start_trigger(self, msg):
         self._ctx.task_start_triggered = True
@@ -199,6 +230,7 @@ class DecisionNode(Node):
                 f'[STALE] detections older than {_DETECTIONS_STALE_S}s -> cleared '
                 '(perception stream down?)', throttle_duration_sec=5.0)
 
+        self._check_perception_outage()
         self._ctx.last_service_result = self._poll_pending_service_result()
 
         tick_started = time.monotonic()
@@ -214,6 +246,8 @@ class DecisionNode(Node):
 
         if result.notice:
             self.get_logger().warn(f'[PILOT] {result.notice}')
+        if result.fault is not None:
+            self._emit_fault(result.fault.code, result.fault.reason, result.next_state)
         if result.next_state is not None and result.next_state != self._ctx.current_state:
             if result.next_state == mission_logic.State.DROP_PAYLOAD:
                 # 投放瞬间的瞄准快照:跨轮对比 bearing/冻结偏移的可复现性,是
@@ -242,6 +276,17 @@ class DecisionNode(Node):
             target_msg.z = z
             self._position_target_pub.publish(target_msg)
 
+        # 飞控重新进入位置控制会退回参数默认限速，1Hz 重发保证本阶段限速生效
+        now = time.monotonic()
+        for field, pub in self._speed_pubs.items():
+            value = getattr(result, field)
+            if value is None:
+                continue
+            last = self._speed_sent.get(field)
+            if last is None or value != last[0] or now - last[1] >= 1.0:
+                pub.publish(Float64(data=value))
+                self._speed_sent[field] = (value, now)
+
         if result.velocity_target is not None:
             vx, vy, vz = result.velocity_target
             twist_msg = TwistStamped()
@@ -268,8 +313,8 @@ class DecisionNode(Node):
             # 看均值有没有被斜视早样本拖偏 / 有没有把两个筒并成一簇。
             parts = []
             for c in self._ctx.drop_task.clusters:
-                mx, my, _ = search_strategy._cluster_mean(c)
-                parts.append(f'({mx:.1f},{my:.1f})x{len(c)}')
+                mx, my, mr = search_strategy._cluster_estimate(c)
+                parts.append(f'({mx:.1f},{my:.1f})r{mr:.3f}x{len(c)}')
             self.get_logger().info(
                 f'[SEARCH] clusters={len(parts)} used={len(self._ctx.drop_task.used_positions)} '
                 f'[{"; ".join(parts)}]', throttle_duration_sec=1.0)
@@ -304,7 +349,7 @@ class DecisionNode(Node):
             hstr = f'{-self._ctx.local_position_z:.2f}' if self._ctx.local_position_z is not None else 'None'
             self.get_logger().info(
                 f'[APPROACH] phase={ast.phase} lever=({ast.lever[0]:.2f},{ast.lever[1]:.2f}) '
-                f'yaw={self._yaw_rad:.3f} v={vstr} '
+                f'yaw={self._ctx.yaw_rad or 0.0:.3f} v={vstr} '
                 f'off={offstr} miss={ast.miss} dist2lock={diststr} near_det={ndstr} h={hstr} '
                 f'hspeed={self._ctx.horizontal_speed}',
                 throttle_duration_sec=0.3)

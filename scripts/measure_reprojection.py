@@ -23,7 +23,7 @@ _ALT_M = 2.0                 # 量测悬停高度 = 任务巡航高度
 _OFFSET_E_M = 0.55           # 侧偏视点的东向偏移(锁 yaw=0 后筒落在水平半FOV内)
 _SETTLE_S = 5.0              # 到点后先稳定再采样
 _SAMPLE_S = 6.0              # 每视点采样时长（10Hz 检测 ≈ 60 帧）
-_SPAWN_E, _SPAWN_N = field_config.DROP_ZONE_BENCH_SPAWN  # 场地 x->NED east, y->NED north
+_SPAWN_E, _SPAWN_N = field_config.DROP_ZONE_BENCH_SPAWN  # 仿真世界 x->NED east, y->NED north
 _ASSOC_GATE_M = 0.8          # 检测←→真值筒关联门（筒间距≥1.5m，不会串）
 _BIAS_LIMIT_M = 0.05         # 干净 sim 判定门限（只加在 nadir 视点上,见下）
 _STD_LIMIT_M = 0.03
@@ -33,8 +33,8 @@ _STD_LIMIT_M = 0.03
 
 
 def _tubes_ned():
-    """真值筒表 -> [(label, north, east, radius_m)]，world->NED 换算同
-    mission_logic._world_xy_to_ned（x/y 对调）。"""
+    """真值筒表 -> [(label, north, east, radius_m)]：仿真世界 -> 飞控 NED（世界 x = 东、y = 北）。
+    本工具直接用飞控 NED 飞行和比对；感知检测在起飞坐标系，见 _Collector._cb 的换算。"""
     out = []
     for label, dia, _h in field_config.DROP_CYLINDERS:
         wx, wy = field_config.DROP_CYLINDER_POSITIONS[label]
@@ -47,6 +47,7 @@ class _Collector(Node):
         super().__init__('measure_reprojection')
         self.samples = []            # (north, east, apparent_size)
         self.enabled = False
+        self.yaw0 = None             # 解锁时航向(飞控 NED)，= 接口层冻结的起飞坐标系 +x
         self.create_subscription(DetectionArray, '/perception/detections', self._cb, 10)
 
     def _cb(self, msg):
@@ -54,8 +55,11 @@ class _Collector(Node):
             return
         for d in msg.detections:
             if d.target_type == 'cylinder':
-                # 检测在接口层坐标系（原点 = 解锁点 = bench 出生点），本工具用世界 NED 飞/比对，加回出生点。
-                self.samples.append((d.position.x + _SPAWN_N, d.position.y + _SPAWN_E,
+                # 检测在起飞坐标系（原点 = 解锁点 = bench 出生点，x = 解锁时机头），本工具用飞控 NED
+                # 飞行/比对：按解锁航向转回 NED 再加回出生点（见 docs/spec/coordinate-frames.md）。
+                c, s = math.cos(self.yaw0), math.sin(self.yaw0)
+                x, y = d.position.x, d.position.y
+                self.samples.append((x * c - y * s + _SPAWN_N, x * s + y * c + _SPAWN_E,
                                      d.apparent_size))
 
 
@@ -135,6 +139,9 @@ def main():
     if not armed:
         print('FAIL: arm rejected')
         return 1
+    att = mav.recv_match(type='ATTITUDE', blocking=True, timeout=5)
+    node.yaw0 = att.yaw
+    print(f'takeoff heading (frame +x) = {math.degrees(att.yaw):.1f}deg')
     mav.mav.command_long_send(mav.target_system, mav.target_component,
                               mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 0, 0, 0, 0, 0, _ALT_M)
     time.sleep(10)

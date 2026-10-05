@@ -58,9 +58,11 @@ Set Home Position、Air Speed（多旋翼不适用）。
 | Takeoff | service | `~/takeoff` | 自定义 `Takeoff.srv`（float64 alt → bool success） | 底层 `MAV_CMD_NAV_TAKEOFF`。2026-07-15 SITL 实测确认：光发 `Go To Location`/`Set Velocity` 不会让停在地面的飞机爬升，ArduCopter GUIDED 模式必须先收到这个指令才会真正起飞——原契约漏了这一项，任务状态机的 `ARM_AND_TAKEOFF` 步骤离不开它。**`alt` 是相对起飞点的高度，不是海拔**（见下方"高度基准"） |
 | Go To Location | service | `~/goto_location` | 自定义 `GotoLocation.srv`（lat/lon/alt → bool success） | 目标点式指令，假设已在空中（先 Takeoff）；2026-07-15 SITL 实测确认单次调用即可，不需要持续发送。**`alt` 是相对起飞点的高度，不是海拔**（见下方"高度基准"） |
 | Set Position Target | topic | `~/cmd/position_target` | 自定义 `PositionTarget.msg`（局部坐标 x/y/z） | 精确悬停微调用（对准圆筒/降落点），规划/决策按需持续发布。**x/y/z 是相对当前位置和当前朝向的偏移量**（前/右/下，`MAV_FRAME_BODY_OFFSET_NED`）——调用方不需要读当前位置再加，飞控收到指令那一刻用自己最新状态现算，避免遥测往返延迟导致目标基于过时位置。**不会自动转向**，见下方"自动朝向行为" |
-| Set Position Target (Local) | topic | `~/cmd/position_target_local` | 复用 `PositionTarget.msg`（局部坐标 x/y/z） | 跟上面那个区别是坐标系：**x/y/z 是绝对局部坐标**（相对起飞点，跟 `~/telemetry/local_position` 同一坐标系；接口层下发前加回起飞点原点换成飞控 `MAV_FRAME_LOCAL_NED`，见下方"局部坐标原点"），不随发指令时机身朝向变化——适合"目标点在一个不随机身转动的局部坐标里已知"的场景（比如回到一个之前记下的局部坐标点，不用每次重新算相对偏移）。同样**不会自动转向**，见下方"自动朝向行为" |
+| Set Position Target (Local) | topic | `~/cmd/position_target_local` | 复用 `PositionTarget.msg`（局部坐标 x/y/z） | 跟上面那个区别是坐标系：**x/y/z 是起飞坐标系的绝对坐标**（前/右/下，跟 `~/telemetry/local_position` 同一坐标系；接口层下发前转回飞控 `MAV_FRAME_LOCAL_NED`，见 [coordinate-frames.md](coordinate-frames.md)），不随发指令时机身朝向变化——适合"目标点在一个不随机身转动的局部坐标里已知"的场景（比如回到一个之前记下的局部坐标点，不用每次重新算相对偏移）。同样**不会自动转向**，见下方"自动朝向行为"。**航向锁定在固定值**：解锁时 = 起飞航向，之后只由 `~/cmd/yaw` 改——机身被扭矩带偏会被拉回（不是追当前航向） |
 | Set Velocity | topic | `~/cmd/velocity` | `geometry_msgs/TwistStamped` | 速度向量控制。**`linear.x/y/z` 是相对当前朝向的机身系速度**（前/右/下，`MAV_FRAME_BODY_OFFSET_NED`），不是地理北/东/地——跟 `Set Position Target` 同样的理由。**`angular.z` 是 yaw 角速度（rad/s），已在 `type_mask` 里标为有效：发 `0` 就是锁定当前航向、不自动转向，不发（默认 0）也锁航向**——跟两个 `Set Position Target` 一样不会自动转向，见下方"自动朝向行为"（视觉伺服连续发速度时不希望飞控把机头转向飞行方向而绕圈）。2026-07-16 SITL 实测确认：停止发送后飞机不会一直按最后速度漂移，但 ArduCopter `GUID_TIMEOUT`（默认 3.0s）之内还是会按惯性继续飞，之后才真正清零速度目标——观察"是否安全停下"要给够超过 3s 的等待时间，否则会误判。**规划/决策不需要为了安全兜底专门维护持续重发的看门狗逻辑**（丢失保护已经内建），但仍建议按合理频率（比如几 Hz）持续发布让控制更平滑——这是体验建议，不是协议要求的安全刚需 |
-| Set Yaw | topic | `~/cmd/yaw` | `std_msgs/Float64`（目标偏航角，弧度） | 摄像头对位/环视用；用 topic 是因为跟 `Set Position Target`/`Set Velocity` 这两个精细控制类原语用法一致（连续流式发布、不用等回应），三者保持统一，方便视觉模块同一套调用风格。**只有飞机静止（没有并发的位置类指令）时才是独立可控的**，见下方"自动朝向行为"。接口层内部会把弧度转度并归一化到 `[0,360)` 再发送——ArduCopter 收到负数会直接拒绝该指令（2026-07-16 SITL 实测确认） |
+| Set Yaw | topic | `~/cmd/yaw` | `std_msgs/Float64`（目标偏航角，弧度，**起飞坐标系航向**：0 = 起飞时机头方向，右转为正） | 摄像头对位/环视用；用 topic 是因为跟 `Set Position Target`/`Set Velocity` 这两个精细控制类原语用法一致（连续流式发布、不用等回应），三者保持统一，方便视觉模块同一套调用风格。**只有飞机静止（没有并发的位置类指令）时才是独立可控的**，见下方"自动朝向行为"。接口层内部会把弧度转度并归一化到 `[0,360)` 再发送——ArduCopter 收到负数会直接拒绝该指令（2026-07-16 SITL 实测确认） |
+| Set Speed | topic | `~/cmd/speed` | `std_msgs/Float64`（m/s） | GUIDED 位置类移动（两个 `Set Position Target`）的水平限速，发 `MAV_CMD_DO_CHANGE_SPEED`（地速）。飞控每次重新进入位置控制都会退回 `WP_SPD`，所以要在位置类阶段持续重发（决策 1Hz），且 `WP_SPD` 应设成最常用的那档作兜底 |
+| Set Climb / Descent Speed | topic | `~/cmd/climb_speed`、`~/cmd/descent_speed` | `std_msgs/Float64`（m/s，正数） | 同上，复写位置类移动的爬升 / 下降限速（`DO_CHANGE_SPEED` 类型 2 / 3），重进位置控制退回 `WP_SPD_UP` / `WP_SPD_DN`。**飞控一次只认一个竖直复写**：设爬升会把下降打回默认，反之亦然——只发当前升降方向那个 |
 | 投放执行 | service | `~/release_payload` | 自定义 `ReleasePayload.srv`（空请求 → bool success, string message） | 底层是 `MAV_CMD_DO_SET_SERVO` 定时序列（forward 跑 `drop_run_s`→neutral 停，每步等 COMMAND_ACK）直接驱动投放舵机输出口（飞控该口 `SERVO*_FUNCTION=0`，台架验证链路）。投放物理动作完成才返回，调用方（决策 `DROP_PAYLOAD` 态）随之悬停等它跑完——原 relay 布尔量方案（2026-07-15）与 RC override 方案（2026-10-03 台架推翻）见 [ADR-0007](adr/0007-drop-servo-vs-relay.md) |
 
 ## 契约总览：遥测（ArduPilot → 接口层 → 规划/决策）
@@ -71,9 +73,10 @@ Set Home Position、Air Speed（多旋翼不适用）。
 | Armed State | `~/status/armed` | `std_msgs/Bool` | |
 | Current Mode | `~/status/mode` | `std_msgs/String` | |
 | Global Position | `~/telemetry/global_position` | `sensor_msgs/NavSatFix` | `altitude` 是**海拔**（MSL），不是相对起飞点高度，见下方"高度基准" |
-| Local Position + Relative Altitude | `~/telemetry/local_position` | `geometry_msgs/PoseStamped` | `position.x/y/z` 是局部 NED 坐标，**相对起飞点**（接口层换算，见下方"局部坐标原点"），z 轴向下为正——"离地高度"要用 `-position.z`，见下方"高度基准" |
-| Velocity | `~/telemetry/velocity` | `geometry_msgs/TwistStamped` | |
-| Attitude/Heading | `~/telemetry/attitude` | `sensor_msgs/Imu`（`orientation`+`angular_velocity`，不发线加速度） | |
+| Local Position + Relative Altitude | `~/telemetry/local_position` | `geometry_msgs/PoseStamped` | `position.x/y/z` 是**起飞坐标系**（前/右/下，接口层换算，见 [coordinate-frames.md](coordinate-frames.md)），z 轴向下为正——高度用 `-position.z`，见下方"高度基准" |
+| Velocity | `~/telemetry/velocity` | `geometry_msgs/TwistStamped` | 起飞坐标系（前/右/下） |
+| Attitude/Heading | `~/telemetry/attitude` | `sensor_msgs/Imu`（`orientation`+`angular_velocity`，不发线加速度） | `orientation` = 机体 → 起飞坐标系；航向相对起飞时机头 |
+| FC Time（诊断） | `~/telemetry/fc_time` | `sensor_msgs/TimeReference` | 每条 ATTITUDE 一条：`header.stamp` = Pi 到达时刻（同 attitude），`time_ref` = 飞控 `time_boot_ms`。录进 bag 后离线算链路延迟/抖动（`scripts/analyze_recording.py`），任务逻辑不用 |
 | Battery | `~/telemetry/battery` | `sensor_msgs/BatteryState` | 任务逻辑安全响应（提前 RTL）依赖这个 |
 | GPS Status | `~/telemetry/gps_status` | 自定义（fix_type, satellites_visible, hdop） | |
 | EKF Status | `~/telemetry/ekf_status` | 自定义 | |
@@ -81,19 +84,17 @@ Set Home Position、Air Speed（多旋翼不适用）。
 | 投放执行状态反馈 | `~/status/drop` | 自定义 `DropStatus`（bool actuated） | 确认投放序列真的执行了（ACK/完成≠载荷一定脱离，无称重/角度闭环，见 [ADR-0007](adr/0007-drop-servo-vs-relay.md)） |
 | Command ACK | `~/status/command_ack` | 自定义（string command, bool result） | |
 
-## 局部坐标原点：起飞点，由接口层换算
+## 坐标换算：飞控坐标只在接口层内部
 
-飞控 `LOCAL_POSITION_NED` 的原点是 EKF 原点，**不是起飞点**：真机在开机时定，2026-10-04 实测离起飞
-地面 z 偏 0.9–2.1m、xy 偏数米；sim 里则是固定的世界原点（出生点不在世界原点时读数非零）。接口层
-统一换算，对外只有"相对起飞点"一种坐标：
-- **原点 = 最近一次解锁瞬间的位置**（同 ArduPilot 解锁时设 home）。上锁后保持不变，落地后读数
-  仍相对起飞点；下次解锁时重新设定。从未解锁过时跟随当前位置（读数≈0）。
-- `~/telemetry/local_position` 发布前减去原点；`~/cmd/position_target_local` 下发前加回原点。
-- 接口层起来时飞机已解锁（空中重启）：拿不到真正的起飞点，退化为当前位置并打 WARN。
-
-决策层的场地坐标通过 `takeoff_point`（起飞点的场地坐标）换算成这个坐标系，见
-[mission-config-layer.md](mission-config-layer.md)。设计依据见
-[ADR-0011](adr/0011-pilot-arm-takeoff-point-frame.md)。
+对外的位置、速度、航向、位置目标都在**起飞坐标系**（原点 = 解锁时飞控位置，x = 起飞时机头方向、
+y = 右、z = 下），定义见 [coordinate-frames.md](coordinate-frames.md)。飞控的 `LOCAL_POSITION_NED`
+（EKF 原点、北东地）不是这个坐标系：真机 EKF 原点在开机时定，2026-10-04 实测离起飞地面 z 偏
+0.9–2.1m、xy 偏数米；sim 里是固定的世界原点。接口层的换算：
+- 解锁瞬间冻结起飞点（EKF NED 位置）和起飞航向（EKF 航向）；上锁后保持，下次解锁重新确定；
+  从未解锁过时两者跟随当前状态。
+- 遥测：位置减起飞点再按起飞航向旋转；速度旋转；姿态航向减起飞航向。
+- 指令：`position_target_local` 反向旋转再加回起飞点；`cmd/yaw` 加回起飞航向。
+- 接口层起来时飞机已解锁（空中重启）：拿不到真正的起飞点和朝向，退化为当前状态并打 WARN。
 
 ## 高度基准：相对高度 vs 海拔，不能混用
 

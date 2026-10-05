@@ -3,13 +3,14 @@
 （cuadc_groundstation）实时看位置/高度/速度，并开 onboard_record 录制回看——
 但那两者是解耦的独立组件，本节点只驱动飞行，不启停它们。飞手 RC 全程待命。
 
-坐标系：local_position 是相对起飞点（解锁点）的绝对局部 NED（x=北 y=东 z=下，接口层已换算），
+坐标系：local_position 是起飞坐标系（原点=解锁点，x=起飞时机头方向 y=右 z=下，接口层换算，与东南西北无关，
+见 docs/spec/coordinate-frames.md），
 高度用 -z；水平以起飞后的 home_x/home_y 为方框/速度段中心。全程 yaw 固定=起飞朝向：位置指令走 `~/cmd/position_target_local`（绝对局部坐标，interface_node
 已锁 yaw、不触发 ArduCopter 自动朝向）。
 
 阶段（takeoff/land 恒有；中间段由 `phases` 参数选，逗号分隔，默认全开）：
   takeoff  飞手 RC 解锁 → Pi 切 GUIDED → 起飞到 takeoff_altitude_m（默认 3m；1m 地效实机发飘）
-  box      定 yaw 方框（**以起飞点为中心**，±L/2 绕 NE→NW→SW→SE 再回中心）：yaw 不变
+  box      定 yaw 方框（**以起飞点为中心**，±L/2 绕 前右→前左→后左→后右 再回中心）：yaw 不变
            却全向平移=定yaw全向移动，每角量单次到位误差、闭环量累计误差、并断言机头没转
   altitude 高度扫描（1→2→3→5→回起飞高度）：垂直位置控制，1m 贴近地效谨慎
   velocity 速度扫描（0.25/0.5/1/1.5/2 m/s）：**从起飞 xy 出发、沿起飞时机头方向前进→停悬
@@ -398,12 +399,12 @@ class InterfaceFlightSuiteTest(Node):
             f'takeoff confirmed (alt={self._relative_altitude():.2f}m, '
             f'home=({self._home_x:.2f},{self._home_y:.2f}), yaw={math.degrees(self._takeoff_yaw):.0f}deg)')
 
-    # -- 位置指令：绝对局部坐标，等到收敛 --
+    # -- 位置指令：起飞坐标系绝对坐标，等到收敛 --
 
-    def _goto_local(self, north, east, alt, label):
-        """飞到相对起飞点 (north,east) 高度 alt（米），yaw 不变。收敛后记录到位误差。"""
-        tx, ty, tz = self._home_x + north, self._home_y + east, -alt
-        self.get_logger().info(f'{label}: -> N={north:+.1f} E={east:+.1f} alt={alt:.1f} ...')
+    def _goto_local(self, fwd, right, alt, label):
+        """飞到起飞坐标系 (前 fwd, 右 right)（相对方框中心 home）、高度 alt（米），yaw 不变。收敛后记录到位误差。"""
+        tx, ty, tz = self._home_x + fwd, self._home_y + right, -alt
+        self.get_logger().info(f'{label}: -> F={fwd:+.1f} R={right:+.1f} alt={alt:.1f} ...')
         self._position_target_local_pub.publish(PositionTarget(x=tx, y=ty, z=tz))
         # 收敛要同时满足水平到位 + 高度到位:高度扫描段 N/E 不变、水平距离一开始就≈0,
         # 只查水平会在垂直还没走完时就误判"到位"(alt_err 很大),必须把高度也纳入判据。
@@ -413,23 +414,23 @@ class InterfaceFlightSuiteTest(Node):
             f'{label} reaching target', self._leg_timeout, settle_sec=self._pos_settle)
         pos_err = self._distance_xy(tx, ty)
         alt_err = self._relative_altitude() - alt
-        self._record_result(label, f'N={north:+.1f} E={east:+.1f} alt={alt:.1f}m',
+        self._record_result(label, f'F={fwd:+.1f} R={right:+.1f} alt={alt:.1f}m',
                             f'pos_err={pos_err:.2f}m', f'{pos_err:.2f}m (alt_err={alt_err:+.2f}m)')
         self.get_logger().info(f'{label}: reached (pos_err={pos_err:.2f}m, alt_err={alt_err:+.2f}m)')
 
     def _run_box(self):
         h = self._box_leg / 2.0                 # 以起飞点为中心的方框：各向 ±half
         alt = self._takeoff_altitude
-        # 起飞点在中心 → 对角飞到 NE 角，绕一圈(边沿 N/E 轴对齐)，再回中心闭环。
+        # 起飞点在中心 → 对角飞到前右角，绕一圈(边与起飞时的前/右轴对齐)，再回中心闭环。
         corners = [
-            (+h, +h, 'Box corner NE'),
-            (+h, -h, 'Box corner NW'),
-            (-h, -h, 'Box corner SW'),
-            (-h, +h, 'Box corner SE'),
+            (+h, +h, 'Box corner front-right'),
+            (+h, -h, 'Box corner front-left'),
+            (-h, -h, 'Box corner back-left'),
+            (-h, +h, 'Box corner back-right'),
             (0.0, 0.0, 'Box back to center (close loop)'),
         ]
-        for north, east, label in corners:
-            self._goto_local(north, east, alt, label)
+        for fwd, right, label in corners:
+            self._goto_local(fwd, right, alt, label)
         cum_err = self._distance_xy(self._home_x, self._home_y)
         self._record_result('Box cumulative (closed loop)', 'back to takeoff point',
                             f'pos_err={cum_err:.2f}m', f'{cum_err:.2f}m')

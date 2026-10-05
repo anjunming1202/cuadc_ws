@@ -18,25 +18,45 @@ with the vehicle already statically included (the same approach already
 verified end-to-end without ROS2 involved) and bridges only the camera
 topic into ROS2 ourselves via ros_gz_bridge's parameter_bridge.
 
-Runs SITL with MAVProxy enabled, same dual-output convention as
-sitl_bringup.launch.py: udp:14550 free for QGroundControl, udp:14551
-reserved for our own scripts/nodes.
+Runs SITL with MAVProxy enabled, two outputs: udp:14550 (our interface
+layer / task and test scripts) and udp:14551 (spare: GCS / ad-hoc tools).
 
 First run in a fresh sitl_run_dir needs a EEPROM wipe, e.g.:
     ros2 launch cuadc_sim gazebo_bringup.launch.py extra_sitl_args:=-w
+
+Real-world imperfections are ON by default (imperfections:=false turns them all
+off): the SITL realism parm (sensor noise, config/sim_realism.parm), the camera->CV
+image latency, and wind drag / yaw torque on the airframe (sim_disturbance_node; the
+last two from config/disturbances.yaml -- ArduPilot's SIM_WIND does nothing in JSON mode). Both model the sensor/airframe
+side, so every sim task/test started on top of this world inherits them. Override one
+layer with sim_realism_params:='' or image_latency_ms:=0. See
+docs/spec/sim-stress-testbed.md §3.2.
 
 The cuadc_iris camera is a rigid nadir strapdown mount (same as the real
 airframe, no gimbal) -- its view tilts with vehicle attitude; no startup
 gimbal-lock command needed (see ADR-0010).
 """
 import os
+from pathlib import Path
 
+import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess
 from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
+
+_CAPTURE_TOPIC = '/camera/image_capture'  # bridged camera, before the simulated latency
+
+
+def _disturbance_table() -> dict:
+    path = Path(get_package_share_directory('cuadc_sim')) / 'config' / 'disturbances.yaml'
+    with open(path) as fh:
+        return yaml.safe_load(fh) or {}
+
+
+_BODY_DISTURBANCE_KEYS = ('wind_force_n', 'wind_dir_deg', 'gust_std_n', 'gust_tau_s', 'yaw_torque_nm')
 
 
 def generate_launch_description():
@@ -77,12 +97,23 @@ def generate_launch_description():
         default_value='',
         description="Extra args appended to sim_vehicle.py, e.g. '-w' to wipe EEPROM on first run",
     )
+    imperfections_arg = DeclareLaunchArgument(
+        'imperfections',
+        default_value='true',
+        description='Master switch for all sim imperfections below; false = clean sim',
+    )
     sim_realism_params_arg = DeclareLaunchArgument(
         'sim_realism_params',
-        default_value='',
-        description=('Absolute path to an extra SITL .parm layered on top (wind / sensor noise, '
-                     'see config/sim_realism.parm). Empty = clean sim, behaviour unchanged. '
-                     'Used by the SEARCH stress testbed; see docs/spec/sim-stress-testbed.md.'),
+        default_value=os.path.join(
+            get_package_share_directory('cuadc_sim'), 'config', 'sim_realism.parm'),
+        description=('SITL .parm layered last (wind / sensor noise). Empty = no FC-side '
+                     'imperfections. Ignored when imperfections:=false.'),
+    )
+    image_latency_arg = DeclareLaunchArgument(
+        'image_latency_ms',
+        default_value=str(float(_disturbance_table().get('image_latency_ms', 0.0))),
+        description=('Camera->CV image latency in ms, capture stamp preserved (default = '
+                     'config/disturbances.yaml). 0 = pass-through. Ignored when imperfections:=false.'),
     )
     camera_gz_topic_arg = DeclareLaunchArgument(
         'camera_gz_topic',
@@ -182,11 +213,12 @@ def generate_launch_description():
             ' --add-param-file ',
             PathJoinSubstitution([get_package_share_directory('cuadc_sim'),
                                    'config', 'mission_defaults.parm']),
-            # Optional realism overlay (wind / sensor noise) layered last so it
-            # wins; empty sim_realism_params -> nothing appended -> clean sim.
+            # Realism overlay (wind / sensor noise) layered last so it wins;
+            # skipped when imperfections:=false or sim_realism_params is empty.
             PythonExpression([
                 "' --add-param-file ' + '", LaunchConfiguration('sim_realism_params'),
-                "' if '", LaunchConfiguration('sim_realism_params'), "' else ''"]),
+                "' if '", LaunchConfiguration('imperfections'), "'.lower() == 'true' and '",
+                LaunchConfiguration('sim_realism_params'), "' else ''"]),
             # SITL's default build has HAL_WITH_ESC_TELEM=0 (no CAN/serial
             # RCOut), which compiles out the entire body of
             # Copter::takeoff_check() -- the only place that ever clears
@@ -197,7 +229,9 @@ def generate_launch_description():
             # src/cuadc_sim/README.md "已解决问题".
             ' --configure-define=HAL_WITH_ESC_TELEM=1',
             ' --no-wsl2-network --use-dir ', LaunchConfiguration('sitl_run_dir'),
-            ' -m "--out 127.0.0.1:14551"',
+            # --streamrate 8: MAVProxy re-requests all streams every ~15s, like the onboard
+            # mav_fanout does; real FC link (57600 baud) delivers ~7.5 Hz telemetry.
+            ' -m "--out 127.0.0.1:14551 --streamrate 8"',
             ' ', LaunchConfiguration('extra_sitl_args'),
         ]],
         shell=True,
@@ -222,8 +256,38 @@ def generate_launch_description():
             '/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock',
         ],
         remappings=[
-            (LaunchConfiguration('camera_gz_topic'), '/camera/image_raw'),
+            (LaunchConfiguration('camera_gz_topic'), _CAPTURE_TOPIC),
         ],
+    )
+
+    # The "camera" every consumer sees (/camera/image_raw) is the bridged image after
+    # the camera->CV latency, capture stamp preserved -- same as the real camera's
+    # output arriving late at CV. 0 ms = straight pass-through.
+    image_latency_node = Node(
+        package='cuadc_sim',
+        executable='image_delay_node',
+        name='image_latency',
+        output='screen',
+        parameters=[{
+            'use_sim_time': True,
+            'delay_ms': PythonExpression([
+                LaunchConfiguration('image_latency_ms'), " if '",
+                LaunchConfiguration('imperfections'), "'.lower() == 'true' else 0.0"]),
+            **{k: PythonExpression([str(float(_disturbance_table().get(k, 0.0))), " if '",
+                                    LaunchConfiguration('imperfections'), "'.lower() == 'true' else 0.0"])
+               for k in ('blur_sigma_px', 'vignetting_k')},
+        }],
+        remappings=[('image_in', _CAPTURE_TOPIC), ('image_out', '/camera/image_raw')],
+    )
+
+    table = _disturbance_table()
+    body_disturbance_node = Node(
+        package='cuadc_sim',
+        executable='sim_disturbance_node',
+        name='sim_disturbance',
+        output='screen',
+        parameters=[{k: float(table.get(k, 0.0)) for k in _BODY_DISTURBANCE_KEYS}],
+        condition=IfCondition(LaunchConfiguration('imperfections')),
     )
 
     return LaunchDescription([
@@ -233,10 +297,14 @@ def generate_launch_description():
         world_arg,
         gui_arg,
         extra_sitl_args_arg,
+        imperfections_arg,
         sim_realism_params_arg,
+        image_latency_arg,
         camera_gz_topic_arg,
         gz_sim_gui,
         gz_sim_headless,
         sitl_process,
         camera_bridge_node,
+        image_latency_node,
+        body_disturbance_node,
     ])

@@ -1,16 +1,8 @@
-# 相机内参 + 挂载角 —— real（真机 CV 处理分辨率 960×540）。
+# 相机内参 —— real（真机 CV 处理分辨率 960×540）。
 # 来自 cylinder_dataset 棋盘格标定（原图 1920×1080, RMS 0.30）×0.5 换算到 960×540。
 # 换相机 / 重标定只改这里。
 fx: 869.37
 fy: 871.03
 cx: 486.48
 cy: 260.11
-mount_roll_rad: 0.0
-mount_pitch_rad: 1.5708     # nadir（垂直向下）
-mount_yaw_rad: 0.0
-# 相机光心相对 FC/EKF 原点的平移，机体 FRD(前/右/下)，米（实测，见 ADR-0010 簇①）
-t_forward_m: 0.11
-t_right_m: 0.0
-t_down_m: 0.20
-# 飞控停在地面时离地高（位姿原点=解锁时飞控位置，地面在其下方；实测，见 ADR-0010 簇①）
-fc_rest_clearance_m: 0.31
+# 安装位置/角度、飞控离地高是机体固定几何，在 cuadc_physical/airframe.yaml（单一真源）。

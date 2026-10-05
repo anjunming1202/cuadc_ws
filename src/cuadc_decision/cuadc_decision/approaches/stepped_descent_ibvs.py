@@ -19,7 +19,7 @@ from typing import Optional, Tuple
 import yaml
 
 from cuadc_decision.approaches.base import (
-    ApproachOutput, bearing_to_ground_offset, clip as _clip, nearest_within as _nearest_within)
+    ApproachOutput, physical_fields, bearing_to_ground_offset, clip as _clip, nearest_within as _nearest_within)
 from cuadc_decision.drop_strategy import Candidate
 
 NAME = 'stepped_descent_ibvs'
@@ -33,13 +33,13 @@ class ApproachConfig:
     """approach 的可调参数。字段名 = yaml 键。默认值只是兜底(纯单测/import 用),
     正常从 <NAME>.<profile>.yaml 读:sim 是 Gazebo 验证值,real 上真机按真实
     延迟/动力学重调。"""
-    cruise_alt_m: float = 2.0
-    drop_alt_m: float = 1.0               # 停降高度,h(EKF 解锁点参照)计;飞控离地=此值+fc_rest_clearance_m
-    cylinder_height_m: float = 0.3        # 圆筒高;相机到筒顶深度见 _bearing_to_off
-    # h 是飞控相对解锁点(EKF 原点)的高度,不是离地高:解锁时飞控已离地 fc_rest_clearance_m。
+    approach_alt_m: float = 3.0           # 粗接近飞行高度（≠ 任务的 cruise_alt_m / search_alt_m）
+    drop_alt_m: float = 1.0               # 停降高度,h(起飞坐标系高度)计;飞控离地=此值+fc_rest_clearance_m
+    cylinder_height_m: float = 0.3        # 投放筒高，load_config 从 cuadc_physical 注入
+    # h 是飞控在起飞坐标系的高度(相对解锁时飞控位置),不是离地高:解锁时飞控已离地 fc_rest_clearance_m。
     # 相机又在飞控下方 camera_below_fc_m。二者都为 0 时退化为"h=相机离地"(纯单测兜底)。
-    fc_rest_clearance_m: float = 0.0      # 飞控静止离地高(ADR-0010 簇①: 0.31)
-    camera_below_fc_m: float = 0.0        # 相机在飞控下方(ADR-0010 簇①: 0.20)
+    fc_rest_clearance_m: float = 0.0      # 飞控静止离地高，load_config 从 cuadc_physical 注入
+    camera_below_fc_m: float = 0.0        # 相机在飞控下方，同上注入
     dt_s: float = 0.1                     # tick 周期(对应 decision tick_rate_hz=10),积分/微分用
     min_conf: float = 0.5                 # 粗段/锁定:只对置信度够的检测伺服
     # 末端置信度门单独放低:近距圆盘贴画面边缘残缺,检测器置信度塌落(实测 h<1.1 时
@@ -51,6 +51,7 @@ class ApproachConfig:
     refine_gate_m: float = 0.4            # 硬锁世界坐标关联门:粗/末段都只认离锁定目标这么近的检测(筒间距~1.5m,足够区分)
     handoff_off_m: float = 0.6            # 末端交接:估计水平误差小于此且有检测才切
     handoff_speed_mps: float = 0.4        # 交接还要求对地速度降到此以下:粗段先在目标上方停稳再交接,否则带大动量冲进末端必过冲
+    handoff_alt_tol_m: float = 0.3        # 交接还要求已到粗接近高度 approach_alt_m(±此值)
     # 末端 IBVS PID(条件积分 + D on measurement)
     kp: float = 1.2
     ki: float = 0.4
@@ -60,13 +61,13 @@ class ApproachConfig:
     # 的速度,天然无过冲(位置伺服标准做法);0=关(退化为纯 v_max 限幅)。
     brake_decel_mps2: float = 0.0
     i_zone_m: float = 0.4                 # 只在近端积分,防大接近段积分饱和回弹
-    # 投放口杆臂表,机体系(前,右)米=投放口相对相机,按投放次序排:第 N 次投放用第 N 项
-    # (与 drop_bottle_bridge/真机机构的脱钩次序同一约定,见 ADR-0010 簇②)。enter 时按
+    # 投放口杆臂表,机体系(前,右)米=投放口相对相机,按投放次序排:第 N 次投放用第 N 项。
+    # load_config 从 cuadc_physical 注入(投放口位置 − 相机位置)。enter 时按
     # ctx.drop_task.drop_count 选定本次杆臂,超出表长用最后一项。
     lever_arms_m: Tuple[Tuple[float, float], ...] = ((0.0, 0.0),)
     # 经验瞄准修正,机体系(前,右)米,按投放次序与 lever_arms_m 并行(超表长用最后一项)。
     # 吸收解析链吸收不掉的系统误差(安装角/内参/杆臂测量/深度残差):标定流程=实测落点
-    # 偏差取均值反填(落点偏北 5cm 且机头朝北 -> 前向 trim -0.05)。生效值 lever+trim。
+    # 偏差取均值反填(落点比筒心偏机体前方 5cm -> 前向 trim -0.05)。生效值 lever+trim。
     aim_trims_m: Tuple[Tuple[float, float], ...] = ((0.0, 0.0),)
     max_coast_ticks: int = 4              # 末段连续失配超过此帧数就悬停,不靠陈旧偏移乱冲
     # 投放窗收口锁:末端贴近时筒必然滑出窄 FOV(杆臂瞄点在画面下缘,真机同几何)。丢检测
@@ -97,6 +98,7 @@ def load_config(profile: str) -> ApproachConfig:
     path = Path(__file__).parent / f'{NAME}.{profile}.yaml'
     with open(path) as fh:
         data = yaml.safe_load(fh) or {}
+    data.update(physical_fields())
     return ApproachConfig(**data)
 
 
@@ -142,7 +144,7 @@ class SteppedDescentIbvs:
 
     def loop(self, ctx, now: Optional[float] = None) -> ApproachOutput:
         now = now if now is not None else time.monotonic()
-        h = -ctx.local_position_z if ctx.local_position_z is not None else self.cfg.cruise_alt_m
+        h = -ctx.local_position_z if ctx.local_position_z is not None else self.cfg.approach_alt_m
         conf_gate = self.cfg.min_conf if self.state.phase == 'coarse' else self.cfg.min_conf_terminal
         dets = [d for d in ctx.detections
                 if getattr(d, 'target_type', 'cylinder') == 'cylinder' and d.confidence >= conf_gate]
@@ -161,7 +163,7 @@ class SteppedDescentIbvs:
         if best is not None:
             st.locked = Candidate(best.position.x, best.position.y, best.apparent_size)
             target = st.locked
-        aim = (target.x, target.y, -cfg.cruise_alt_m)
+        aim = (target.x, target.y, -cfg.approach_alt_m)
         arrived = (ctx.local_position_xy is not None and
                    math.hypot(ctx.local_position_xy[0] - target.x,
                               ctx.local_position_xy[1] - target.y) <= cfg.coarse_radius_m)
@@ -170,7 +172,8 @@ class SteppedDescentIbvs:
             off = self._bearing_to_off(bearing, ctx, h)
             e = (off[0] - st.lever[0], off[1] - st.lever[1])
             settled = ctx.horizontal_speed is not None and ctx.horizontal_speed <= cfg.handoff_speed_mps
-            if math.hypot(*e) <= cfg.handoff_off_m and settled:
+            at_alt = abs(h - cfg.approach_alt_m) <= cfg.handoff_alt_tol_m
+            if math.hypot(*e) <= cfg.handoff_off_m and settled and at_alt:
                 st.phase = 'terminal'
                 st.miss, st.prev_off_meas, st.off_window = 0, off, [off]
                 st.integ, st.prev_off, st.stable_since = (0.0, 0.0), None, None

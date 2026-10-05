@@ -595,6 +595,8 @@ WORLD_TEMPLATE = """<?xml version="1.0" ?>
     <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"></plugin>
     <plugin filename="gz-sim-imu-system" name="gz::sim::systems::Imu"></plugin>
     <plugin filename="gz-sim-navsat-system" name="gz::sim::systems::NavSat"></plugin>
+    <!-- sim_disturbance_node 经它施加风阻力/偏航扭矩（gazebo_bringup imperfections） -->
+    <plugin filename="gz-sim-apply-link-wrench-system" name="gz::sim::systems::ApplyLinkWrench"></plugin>
 
     <scene>
       <ambient>1.0 1.0 1.0</ambient>

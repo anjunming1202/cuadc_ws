@@ -7,12 +7,26 @@ import math
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
+import cuadc_physical
+
 
 @dataclass
 class ApproachOutput:
-    position_target: Optional[Tuple[float, float, float]] = None  # (x,y,z) 局部 NED,粗段
+    position_target: Optional[Tuple[float, float, float]] = None  # (x,y,z) 起飞坐标系(前/右/下),粗段
     velocity_target: Optional[Tuple[float, float, float]] = None  # (前,右,下) 机体系速度,末端
     drop_ready: bool = False
+    give_up: Optional[Tuple[str, str]] = None  # (失效代码, 原因)：本目标对不上，任务 FSM 拉黑它换下一个
+    event: Optional[Tuple[str, str]] = None    # (代码, 原因)：值得记一条 FAULT 的处理（改锁、放宽投放门）
+
+
+def physical_fields():
+    """approach 配置里属于固定物理量的字段（机体几何、筒高），统一取自 cuadc_physical（单一真源），
+    不在 yaml 里重复。"""
+    af = cuadc_physical.load_airframe()
+    return {'fc_rest_clearance_m': af.fc_rest_clearance_m,
+            'camera_below_fc_m': af.camera_below_fc_m,
+            'lever_arms_m': af.lever_arms_from_camera(),
+            'cylinder_height_m': cuadc_physical.load_targets().drop_cylinder_height_m}
 
 
 def clip(v, lim):

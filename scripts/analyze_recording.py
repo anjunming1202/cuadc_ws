@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import argparse
+import bisect
 import datetime
 import math
 import statistics
@@ -42,10 +43,11 @@ TOPIC_STATE = '/cuadc_decision/mission_state'
 TOPIC_DET = '/perception/detections'
 TOPIC_PERF = '/cuadc_perception_cv/perf'
 TOPIC_ROSOUT = '/rosout'
+TOPIC_FCTIME = '/cuadc_interface/telemetry/fc_time'
 OUT_DIR = Path(__file__).resolve().parents[1] / 'local' / 'analyze'  # 产物固定落这里（local/ 不入库）
 TOPICS = [TOPIC_POS, TOPIC_VEL, TOPIC_ATT, TOPIC_BATT, TOPIC_MODE, TOPIC_ARMED, TOPIC_DROP,
           TOPIC_CMD_POS, TOPIC_CMD_VEL, TOPIC_CMD_SPEED, TOPIC_STATE, TOPIC_DET, TOPIC_PERF,
-          TOPIC_ROSOUT]
+          TOPIC_ROSOUT, TOPIC_FCTIME]
 
 LOG_WARN = 30  # rcl_interfaces/Log level
 LOG_NAMES = {10: 'DEBUG', 20: 'INFO', 30: 'WARN', 40: 'ERROR', 50: 'FATAL'}
@@ -63,6 +65,7 @@ class Recording:
     dets: list = field(default_factory=list)        # (t, x, y, conf, size, 状态)
     logs: list = field(default_factory=list)        # (t, level, 节点名, 文本)
     drops: list = field(default_factory=list)       # 投放执行时刻
+    stamps: dict = field(default_factory=lambda: defaultdict(list))  # 延迟分析：键 -> [(log_ns, header_stamp_ns[, fc_ns])]
 
     def arr(self, key):
         return np.array(self.series[key], dtype=float).reshape(-1, len(self.series[key][0]) if self.series[key] else 1)
@@ -132,6 +135,10 @@ def _rpy_deg(q):
     return math.degrees(roll), math.degrees(pitch), math.degrees(yaw)
 
 
+def _stamp_ns(st):
+    return st.sec * 1_000_000_000 + st.nanosec
+
+
 def load(name, files) -> Recording:
     start, end = _bag_time_range(files)
     rec = Recording(name, start, (end - start) / 1e9)
@@ -139,6 +146,11 @@ def load(name, files) -> Recording:
     for topic, log_ns, m in _iter_messages(files):
         t = (log_ns - start) / 1e9
         s = rec.series
+        if m is not None and topic in (TOPIC_ATT, TOPIC_POS, TOPIC_DET, TOPIC_FCTIME):
+            entry = (log_ns, _stamp_ns(m.header.stamp))
+            if topic == TOPIC_FCTIME:
+                entry += (_stamp_ns(m.time_ref),)
+            rec.stamps[topic].append(entry)
         if topic == TOPIC_POS:
             p = m.pose.position
             s['pos'].append((t, p.x, p.y, p.z))
@@ -219,7 +231,57 @@ def summarize(rec: Recording) -> str:
     if perf:
         ms = sorted(p[1] for p in perf)
         emit(f'-- perception total_ms  med {ms[len(ms) // 2]:.1f}  p95 {ms[int(len(ms) * 0.95)]:.1f}  max {ms[-1]:.1f}')
+    lines.extend(latency_report(rec))
     return '\n'.join(lines) + '\n'
+
+
+def _pct(v, q):
+    v = sorted(v)
+    return v[min(len(v) - 1, int(q * len(v)))]
+
+
+def latency_report(rec: Recording):
+    """时间戳/延迟诊断（背景见 docs/spec/recording-analysis.md）：遥测到达是否成阵、飞控→Pi 链路延迟
+    抖动、检测帧能否在遥测间插值位姿、感知处理耗时。所有时间都是 Pi 同一时钟。"""
+    out = ['-- latency / timestamp alignment']
+    for topic, name in ((TOPIC_ATT, 'attitude'), (TOPIC_POS, 'local_position')):
+        st = [e[1] for e in rec.stamps[topic]]
+        if len(st) < 10:
+            continue
+        dt = [(b - a) / 1e6 for a, b in zip(st, st[1:])]
+        hz = len(st) / ((st[-1] - st[0]) / 1e9)
+        bursty = sum(1 for d in dt if d < 0.3 * 1000.0 / hz) / len(dt)  # 远小于名义周期到达 = 成阵（链路堵）
+        out.append(f'   {name:15s} {hz:5.1f} Hz  arrival dt p50 {_pct(dt, 0.5):.0f} / p95 {_pct(dt, 0.95):.0f} / '
+                   f'max {max(dt):.0f} ms  in-burst {100 * bursty:.0f}%')
+    fc = rec.stamps[TOPIC_FCTIME]
+    if len(fc) >= 10:
+        off = [(e[1] - e[2]) / 1e6 for e in fc]
+        best = min(off)
+        lag = [o - best for o in off]
+        out.append(f'   FC->Pi lag over best sample  p50 {_pct(lag, 0.5):.0f} / p90 {_pct(lag, 0.9):.0f} / max '
+                   f'{max(lag):.0f} ms  (n={len(fc)})')
+    else:
+        out.append('   FC->Pi lag: no fc_time in this bag')
+    att, det = rec.stamps[TOPIC_ATT], rec.stamps[TOPIC_DET]
+    if att and det:
+        att_st = [e[1] for e in att]
+        att_log = [e[0] for e in att]
+        ages, interp, proc = [], 0, []
+        for log_ns, img_ns in det:
+            proc.append((log_ns - img_ns) / 1e6)
+            i = bisect.bisect_right(att_st, img_ns)
+            if i:
+                ages.append((img_ns - att_st[i - 1]) / 1e6)
+            if i < len(att_st) and att_log[i] <= log_ns:
+                interp += 1  # 发布前已收到拍照时刻之后的姿态 -> 可插值；否则只能取最新一条（钳位）
+        out.append(f'   detection frames {len(det)}: pose interpolatable {100 * interp / len(det):.0f}%, '
+                   f'else clamped to latest attitude')
+        if ages:
+            out.append(f'   latest attitude age at image stamp  p50 {_pct(ages, 0.5):.0f} / p95 {_pct(ages, 0.95):.0f} / '
+                       f'max {max(ages):.0f} ms')
+        out.append(f'   image stamp -> detection recorded  p50 {_pct(proc, 0.5):.0f} / p95 {_pct(proc, 0.95):.0f} ms '
+                   f'(stamp is frame ARRIVAL; camera exposure->arrival ~31 ms not included)')
+    return out
 
 
 # ---------------------------------------------------------------- 绘图

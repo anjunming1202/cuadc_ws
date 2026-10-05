@@ -1,7 +1,6 @@
 #!/bin/bash
-# 投放区单点测试仿真世界：飞机出生在投放区旁边，不用飞完整段转场。仅
-# 仿真可用（world 文件是 Gazebo 专属的），实机单点测试到时候另外写。
-# 配合 run_mission_sim_drop_zone_bench.sh 在另一个终端用。
+# 投放区单点测试仿真世界：飞机出生在投放区旁边，不用飞完整段转场。
+# 配合 run_mission_sim_drop_zone_bench.sh 在另一个终端用（真机对应 run_drop_zone_real.sh）。
 #
 # Usage: ./scripts/run_gazebo_drop_zone_bench.sh [extra ros2 launch args]
 #   ./scripts/run_gazebo_drop_zone_bench.sh                 # normal run

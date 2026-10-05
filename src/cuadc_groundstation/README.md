@@ -13,9 +13,7 @@ server.py             收 5600 干净图传 + 5606 CV 预览(本机 ffmpeg 转 M
                         在 http://127.0.0.1:8765/ 提供双画面网页 + HUD；
                         并代理机载图传/CV 开关(UDP → Pi 5612 / 5611)
 index.html            网页：顶上静态赛道 + 橙机位 + 近 30s 高度折线 + 双视频 + HUD
-                        （赛道/高度/GUIDED 锁原点写在本页，不依赖飞控）
-field_pose.py         地面估算：每次进入 GUIDED 锁原点(=H)，退出钉回 H；近 30s 高度缓冲
-field_map.js          赛道绘制辅助（页面主逻辑在 index.html）
+field_pose.py         机位：FC NED → 起飞坐标系（与任务同一定义，解锁时锁原点）；近 30s 高度缓冲
 replay_telemetry.py   机载 mcap/zip → jsonl，并可 UDP 回放到 viewer
 replays/              回放数据（如 20261004_152633_suite.jsonl）
 send_fake_telemetry.py 无飞控时本机灌假遥测测 HUD / 赛道图（6s 后才变 GUIDED）
@@ -34,11 +32,11 @@ start.bat              Windows 启动:从本目录跑 python server.py
    打开页面**顶部就是赛道图**（写在 HTML 里，不需要飞控、也不用等 JS）。
    `start.bat` 只是 `cd` 到本目录再 `python server.py`，两者等价。改完代码后要
    **重启 server 并在浏览器 Ctrl+F5 强刷**，只重启 Python 不刷新页面会仍看旧 HTML。
-   **GUIDED 锁原点**：不在 GUIDED 时飞机钉在 H。**每次进入 GUIDED 的那一帧**
-   把当时的位置/航向当作原点（该点 = H，机头 = 赛道 +x），之后只画相对这一帧的位移。
-   退出 GUIDED（RTL 等）立刻钉回 H；再进 GUIDED 重新锁，不接着上一段轨迹。
+   **机位 = 起飞坐标系**（x 前、y 右，与任务同一定义，见
+   [coordinate-frames.md](../../docs/spec/coordinate-frames.md)）：解锁那一刻锁原点（= H）和机头，
+   上锁后保持，下次解锁重锁；从未解锁时钉在 H。数传没有 `armed` 字段（老版本/假遥测）时按进入 GUIDED 近似。
    优先 `ned_n`/`ned_e`，没有则用经纬度。机载只回传原始字段。
-   再下方是**近 30 秒高度折线**（真实 `alt_m`，GUIDED 前后都记）。暂不画圆桶。
+   再下方是**近 30 秒高度折线**（真实 `alt_m`）。暂不画圆桶。
 
 ### 图传 / OpenCV 开关（顶栏按钮）
 
@@ -65,7 +63,7 @@ python replay_telemetry.py convert recordings.zip -o replays/20261004_152633_sui
 python replay_telemetry.py replay replays/20261004_152633_suite.jsonl
 ```
 
-`--speed 4` 可四倍速。GUIDED 前钉在 H；该袋约 336 s，157 s 进 GUIDED，318 s RTL（退出 GUIDED 后应钉回 H），高度约 0–5 m。
+`--speed 4` 可四倍速。解锁前钉在 H；该袋约 336 s，156 s 解锁，318 s RTL，高度约 0–5 m。
 
 ## 录制(每次运行都可开,和任务解耦)
 

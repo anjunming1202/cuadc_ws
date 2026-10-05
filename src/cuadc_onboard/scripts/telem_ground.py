@@ -20,7 +20,7 @@ from typing import Any
 from pymavlink import mavutil
 
 DEFAULT_DEVICE = "/dev/ttyAMA0"
-DEFAULT_BAUD = 57600
+DEFAULT_BAUD = 921600
 DEFAULT_DEST_HOST = "192.168.50.2,10.10.10.2"  # Wi-Fi + Ethernet
 DEFAULT_DEST_PORTS = "5701,5601"  # preferred + legacy (viewer demuxes 5601)
 DEFAULT_HZ = 10.0
@@ -52,6 +52,9 @@ class MavlinkTelemetrySource:
         self._baud = baud
         self._master: Any = None
         self._last_stream_req = 0.0
+        # 经 mav_fanout（udp/tcp 端点）时飞控数据流速率归扇出（唯一属主），这里只消费；
+        # 只有自己直连串口时才请求数据流。
+        self._owns_link = not device.startswith(("udp", "tcp"))
         self._lock = threading.Lock()
         self._state: dict[str, Any] = self._empty_state()
         self._seen: set[str] = set()
@@ -65,6 +68,7 @@ class MavlinkTelemetrySource:
             "pitch_deg": None,
             "yaw_deg": None,
             "mode": None,
+            "armed": None,  # 地面起飞坐标系在解锁上升沿锁原点
             "batt_v": None,
             "batt_pct": None,
             "ekf_ready": None,  # bool；未收到 EKF_STATUS_REPORT 前为 None
@@ -114,7 +118,8 @@ class MavlinkTelemetrySource:
             f"{self._master.target_component} mode={self.snapshot().get('mode')}",
             flush=True,
         )
-        self._request_streams()
+        if self._owns_link:
+            self._request_streams()
 
     def _apply_heartbeat(self, msg: Any, force_targets: bool = False) -> None:
         if msg is None:
@@ -125,14 +130,15 @@ class MavlinkTelemetrySource:
         if force_targets and src_sys:
             self._master.target_system = src_sys
             self._master.target_component = src_comp or 1
-        if msg.type == mavutil.mavlink.MAV_TYPE_GCS:
-            return
+        if msg.type == mavutil.mavlink.MAV_TYPE_GCS or msg.autopilot == mavutil.mavlink.MAV_AUTOPILOT_INVALID:
+            return  # 只认飞控自己的心跳
         try:
             mode = mavutil.mode_string_v10(msg)
         except Exception:
             mode = str(getattr(msg, "custom_mode", "?"))
         with self._lock:
             self._state["mode"] = mode
+            self._state["armed"] = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
 
     def _request_streams(self) -> None:
         assert self._master is not None
@@ -177,7 +183,7 @@ class MavlinkTelemetrySource:
             return
         now = time.monotonic()
         interval = 2.0 if not self.has_motion_fields() else 5.0
-        if now - self._last_stream_req > interval:
+        if self._owns_link and now - self._last_stream_req > interval:
             self._request_streams()
         deadline = time.monotonic() + budget_s
         while time.monotonic() < deadline:
@@ -313,6 +319,7 @@ def run_forever(args: argparse.Namespace) -> None:
                 "pitch_deg": state.get("pitch_deg"),
                 "yaw_deg": state.get("yaw_deg"),
                 "mode": state.get("mode"),
+                "armed": state.get("armed"),
                 "batt_v": state.get("batt_v"),
                 "batt_pct": state.get("batt_pct"),
                 "ekf_ready": state.get("ekf_ready"),
