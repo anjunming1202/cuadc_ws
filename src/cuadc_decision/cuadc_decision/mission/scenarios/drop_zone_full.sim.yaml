@@ -1,0 +1,3 @@
+# drop_zone_full 的 sim 专属偏离：用 run_gazebo_drop_zone_bench.sh 的近投放区出生世界（投放区按规则书，
+# 出生点 = cuadc_sim field/config.py 的 DROP_ZONE_BENCH_SPAWN，在投放区近边前 1m）。
+takeoff_point: [29.0, 0.0]

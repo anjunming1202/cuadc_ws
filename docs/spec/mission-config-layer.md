@@ -102,6 +102,7 @@ src/cuadc_decision/cuadc_decision/
     scenarios/
       full_mission.yaml        # 全任务（恒等/最小声明）
       drop_zone_bench.yaml     # initial_state + phases=[drop] + SEARCH 简化覆盖
+      drop_zone_full.yaml      # initial_state + phases=[drop]（SEARCH/选目标同正式任务）
       recon_zone_bench.yaml    # initial_state + phases=[recon]
 ```
 
@@ -162,6 +163,9 @@ decision_node.__init__:
   测试也用它），起飞→前飞≈1m→搜索→接近→投放，`phases=[drop]` 投完即 RTL；sim 出生点写在
   `drop_zone_bench.sim.yaml`（`takeoff_point: [29, 0]`）。配合 `run_gazebo_drop_zone_bench.sh`（`field/config.py` 的
   `DROP_ZONE_BENCH_SPAWN` 世界）。
+- 投放区全流程：`drop_zone_full`，同 `drop_zone_bench` 但不覆盖 SEARCH——整区扫描、最小筒优先、
+  投满 2 次（或放弃）即 RTL。real 投放区按规则书 5m×8m、近边在机头前 2m（`drop_zone_full.real.yaml`）；
+  sim 复用 `drop_zone_bench` 的出生世界。
 - `initial_state` 只用来**跳过不需要的任务阶段**，不能跳过放行和等飞手解锁（ADR-0011）。
 - 只对某个环境成立的场景偏离写在可选的 `scenarios/<场景>.<profile>.yaml`（最后叠加），不能写进
   sim/real 共用的场景文件——例如 sim 单练出生点写进共用文件，真机单点测试的航点就会全偏。
@@ -185,6 +189,7 @@ decision_node.__init__:
 |---|---|---|---|
 | `full_mission` | INIT | [drop, recon] | 正式全任务（sim/真机同场景，脚本选 connection/profile） |
 | `drop_zone_bench` | INIT | [drop] | 反复调投放接近+投放；SEARCH 简化；sim 出生点见 `.sim.yaml` |
+| `drop_zone_full` | INIT | [drop] | 投放区全流程（整区搜索→选目标→投 2 次→RTL）；real 区位置见 `.real.yaml` |
 | `recon_zone_bench` | (侦察前一个 state) | [recon] | 反复调侦察覆盖 |
 
 启动仍**一脚本一场景**：`run_mission_sim.sh` / `run_mission_sim_drop_zone_bench.sh` 各自把
