@@ -1,0 +1,29 @@
+# GUIDED 视觉返航：回原点 / 扫描 / 降落。检测阈值在 landing_pad.yaml。
+# 高度与投放区搜索同档，方便一套起飞系高度手感。
+scan_alt_m: 5.0
+cover_m: 5.0                 # 地面要扫到的方框边长（起飞系，中心=原点）
+overlap: 0.25                # 相邻航点视场重叠比例；飞行间距 = 视场×(1-overlap)
+home_tol_m: 0.5              # 回原点：进这么近后悬停收帧（不再位移扫描）
+arrive_tol_m: 0.6            # 位移扫描航点到位（当前注释掉未用）
+alt_tol_m: 0.6
+dwell_s: 2.0                 # 原点悬停收帧；10 fps → ~20 帧，1s 偏少、2s 够用
+leg_timeout_s: 25.0
+home_timeout_s: 90.0         # 从投放/侦察区飞回原点，比单段扫描宽
+outlier_m: 1.5               # 离中位数这么远的垫心当野值丢掉
+# 规划视场用的 CV 分辨率/内参（与 camera.real.yaml、感知 cv_width 一致）
+cv_width: 960
+cv_height: 540
+fx: 869.37
+fy: 871.03
+fc_rest_clearance_m: 0.31    # 与 airframe 相同：FC AGL ≈ alt + 这项 − 相机下偏
+camera_down_m: 0.20
+# 降落：飞控对准垫心。连续 0.5 s 在 0.20 m 内就从 5 m 往下降；10 s 仍未锁也边降边校，3 m 切 LAND。
+# 没扫到垫才飞控 RTL，对准不好不切 RTL。
+pad_radius_m: 0.4
+lock_xy_m: 0.20
+lock_hold_s: 0.5             # 连续维持 lock_xy 这么久才开始降
+descent_mps: 0.35            # 指令高度稳步往下（5→3 m）
+h_lead_m: 0.40
+hand_off_alt_m: 3.0          # 降到这么高切飞控 LAND（不查水平）
+land_timeout_s: 45.0
+goto_timeout_s: 10.0         # 5 m 上对不准则开始边降边校
