@@ -1,0 +1,5 @@
+# 投放区全流程：起飞→飞抵投放区→整区搜索→按正式策略选目标（最小筒优先）→接近投放，投满 2 次
+# （或搜索/阶段超时放弃）即 RTL（phases 无 recon）。与 drop_zone_bench 同级的单练场景，但 SEARCH/
+# 选目标/第二投换目标都走正式任务逻辑（不覆盖 search 门）。照样走放行 + 飞手解锁两道门。
+initial_state: INIT
+phases: [drop]

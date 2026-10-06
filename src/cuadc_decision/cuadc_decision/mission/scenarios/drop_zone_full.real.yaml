@@ -1,0 +1,2 @@
+# drop_zone_full 的 real 专属偏离：按规则书 5m×8m 投放区，近边在起飞时机头正前方 2m。
+drop_zone_center: [4.5, 0.0]         # 投放区 x∈[2,7]、y∈[-4,4]；扫描航点 = 此中心 + mission.real.yaml 的 drop_scan_offsets

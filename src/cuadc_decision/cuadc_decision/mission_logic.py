@@ -71,7 +71,7 @@ class FsmTuning:
     position_tolerance_m: float = 0.5
     altitude_tolerance_m: float = 0.5
     recon_coverage_match_m: float = 0.6       # 侦察覆盖去重（surveys/detect_count）：新检测离已覆盖点多近算同一个筒
-    drop_phase_timeout_s: float = 90.0
+    drop_phase_timeout_s: float = 120.0
     recon_phase_timeout_s: float = 90.0
     battery_critical_fraction: float = 0.20   # sensor_msgs/BatteryState.percentage 是 0~1
     gps_fix_ok_threshold: int = 3             # MAVLink GPS_FIX_TYPE：3 = 3D fix

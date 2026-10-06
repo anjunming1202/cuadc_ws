@@ -1,6 +1,7 @@
 """失效处理路径的单测（纯 Python，不起 ROS）：每条 docs/spec/failure-handling.md 里新增的
 超时/放弃/拉黑/下一目标转移都走一遍。时间用假时钟推进。"""
 
+from dataclasses import replace
 from types import SimpleNamespace as NS
 
 import pytest
@@ -36,7 +37,8 @@ def configure(scenario='full_mission', **tuning):
     t = ml.load_tuning('sim')
     for k, v in tuning.items():
         setattr(t, k, v)
-    ml.configure_mission(world, t, search_strategy.load_config('sim'))
+    search = replace(search_strategy.load_config('sim'), **world.search_overrides)  # 同 decision_node
+    ml.configure_mission(world, t, search)
     ml.configure_approach('sim')
     return world
 
@@ -93,7 +95,8 @@ def _at_last_scan_waypoint(ctx):
 
 
 @pytest.mark.parametrize('scenario,give_up_to', [('full_mission', S.NAVIGATE_TO_RECON_ZONE),
-                                                  ('drop_zone_bench', S.RTL_OR_LAND)])
+                                                  ('drop_zone_bench', S.RTL_OR_LAND),
+                                                  ('drop_zone_full', S.RTL_OR_LAND)])
 def test_search_empty_rescans_then_gives_up(clock, scenario, give_up_to):
     configure(scenario)
     ctx = flying_ctx(clock, S.SEARCH_DROP_TARGETS)
@@ -180,6 +183,39 @@ def test_transit_flies_the_zone_centerline_then_searches(clock):
     assert ml._DROP_SCAN_WAYPOINTS[0][1] != r.position_target[1]  # 扫描起点在中线一侧，进区后再横移
     ctx.local_position_xy = r.position_target[:2]
     assert ml.tick(ctx).next_state == S.SEARCH_DROP_TARGETS
+
+
+# ---- 投放区全流程场景（drop_zone_full）----
+
+def test_drop_zone_full_real_scans_zone_from_2m_ahead():
+    w = mc.load('real', 'drop_zone_full')
+    assert w.phases == ['drop'] and w.drop_count_target == 2 and not w.search_overrides
+    wps = ml._scan_waypoints(w.drop_zone_center, w.drop_scan_offsets, w.takeoff_point)
+    assert all(2.0 < x < 7.0 and -4.0 < y < 4.0 for x, y in wps)  # 5m×8m 区，近边在机头前 2m
+
+
+@pytest.mark.parametrize('scenario,picks_first_seen', [('drop_zone_bench', True), ('drop_zone_full', False)])
+def test_drop_zone_full_compares_all_cylinders_before_choosing(clock, scenario, picks_first_seen):
+    configure(scenario)
+    ctx = flying_ctx(clock, S.SEARCH_DROP_TARGETS)
+    ctx.drop_task.clusters = [cluster(3.5, 1.5, 0.10)]
+    clock.t += 5.0
+    assert (ml.tick(ctx).next_state == S.APPROACH_DROP_TARGET) == picks_first_seen
+    if not picks_first_seen:  # 全流程：凑齐 3 个（或扫完）才选，最小筒优先
+        ctx.drop_task.clusters += [cluster(2.0, -1.5, 0.075), cluster(5.0, 0.0, 0.125)]
+        assert ml.tick(ctx).next_state == S.APPROACH_DROP_TARGET
+        assert (ctx.drop_task.selected_target.x, ctx.drop_task.selected_target.y) == (2.0, -1.5)
+
+
+def test_drop_zone_full_second_target_then_rtl(clock):
+    configure('drop_zone_full')
+    ctx = _drop_ctx(clock, [cluster(31.0, 1.5, 0.08), cluster(32.5, -1.5, 0.12), cluster(34.0, 0.0, 0.10)])
+    r = ml.tick(ctx)
+    assert r.next_state == S.APPROACH_DROP_TARGET and ctx.drop_task.drop_count == 1
+    assert (ctx.drop_task.selected_target.x, ctx.drop_task.selected_target.y) == (34.0, 0.0)
+    ctx.current_state, ctx.last_service_result = S.DROP_PAYLOAD, ml.ServiceResult('release_payload', True)
+    r = ml.tick(ctx)
+    assert r.next_state == S.RTL_OR_LAND and ctx.drop_task.drop_count == 2
 
 
 # ---- APPROACH 放弃 -> 拉黑 -> 下一个 ----

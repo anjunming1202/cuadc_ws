@@ -43,7 +43,8 @@ ros2 launch cuadc_decision decision_bringup.launch.py
 - `scenario`（默认 `full_mission`）：跑哪种场景，选 `mission/scenarios/<scenario>.yaml`
   ——场景自带 `initial_state`（从哪个 state 起跑）和 `phases`（跑哪些阶段），单阶段隔离
   测试靠它 + `initial_state` 组合实现，不在状态机里加 test-only 分支。首批：`full_mission`、
-  `drop_zone_bench`（投放区单练，投完即 RTL + 放宽 SEARCH 选目标门）、`recon_zone_bench`（侦察区单练，起飞后直接去侦察）。
+  `drop_zone_bench`（投放区单练，投完即 RTL + 放宽 SEARCH 选目标门）、`drop_zone_full`（投放区
+  全流程，SEARCH/选目标同正式任务，投满即 RTL）、`recon_zone_bench`（侦察区单练，起飞后直接去侦察）。
   完整设计见 [`docs/spec/mission-config-layer.md`](../../docs/spec/mission-config-layer.md)。
 
 ```bash
