@@ -24,7 +24,7 @@
 | `PILOT_TAKEOVER` | Pi 接管后被上锁（非 RTL 中），或模式变成 GUIDED/RTL 以外 | `PILOT_TAKEOVER`（终态，Pi 停发一切指令） |
 | `BATTERY_CRITICAL` | 电量 < `battery_critical_fraction`（0.20） | `RTL_OR_LAND` |
 | `FC_FAILSAFE` | 接口层报 failsafe | `RTL_OR_LAND` |
-| `DROP_PHASE_TIMEOUT` | 投放阶段（从到达投放区算，两投合计）> `drop_phase_timeout_s`（90s） | 有侦察阶段去侦察，否则 RTL |
+| `DROP_PHASE_TIMEOUT` | 投放阶段（从到达投放区算，两投合计）> `drop_phase_timeout_s`（120s） | 有侦察阶段去侦察，否则 RTL |
 | `RECON_PHASE_TIMEOUT` | 侦察扫描 > `recon_phase_timeout_s`（90s） | `RTL_OR_LAND` |
 
 电量守卫要求真机飞控电池监测已配置，否则读数为空、该守卫不生效。
@@ -83,8 +83,8 @@
 
 ## 已知限制（暂不处理）
 
-- 投放阶段 90s 是两投合计、从到达投放区开始算。带风 / 延迟的仿真里第一投对准就可能用掉 ~50s，
-  第二投会被这个总时限截断。
+- 投放阶段 120s 是两投合计、从到达投放区开始算。每投都要等投放门放宽时一投就要 ~30s，再有一次投放门
+  超时，第二投仍可能被这个总时限截断。
 - 侦察凑不齐 `recon_cylinder_count` 时只能等 90s 超时。现在每次都是这样：`color_pad` 检测器只认
   "蓝垫上的白筒"（蓝垫 = 投放区 B 区），侦察筒没有蓝垫、检测不到，覆盖数恒为 0。侦察识别靠图传人工（ADR-0003）。
 - Pi 进程崩溃 / 链路断开后飞控停在最后一个 GUIDED 目标悬停，只能飞手接管。

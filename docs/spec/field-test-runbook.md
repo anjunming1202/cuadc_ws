@@ -168,7 +168,7 @@ ros2 topic pub -t 5 -r 2 /cuadc_decision/sim/task_start_trigger std_msgs/msg/Emp
 ros2 topic pub -t 5 -r 2 /cuadc_decision/sim/task_start_trigger std_msgs/msg/Empty "{}"   # 另一终端放行
 ```
 场景 `drop_zone_full`：起飞 → 整个投放区按正式任务的扫描航点搜索（5m）→ 最小筒优先 → 接近投放 → 第二投
-直接飞剩下最小的已知筒 → 投满 2 次即 RTL（搜索两轮没目标 / 投放阶段 90s 超时也 RTL）。投放区按规则书
+直接飞剩下最小的已知筒 → 投满 2 次即 RTL（搜索两轮没目标 / 投放阶段 120s 超时也 RTL）。投放区按规则书
 5m×8m，**近边在起飞时机头正前方 2m**：筒摆在 x∈[2,7]、y∈[-4,4]（x 向前、y 向右，米），位置在
 `drop_zone_full.real.yaml`。approach/variant/`first_drop_port` 等参数同上面的单点。仿真：
 `run_gazebo_drop_zone_bench.sh` + `run_mission_sim_drop_zone_full.sh`。
