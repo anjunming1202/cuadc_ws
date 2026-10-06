@@ -185,6 +185,7 @@ def _precise_at_drop_alt(port=0):
     a.enter(ctx)
     st = a.state
     st.phase, st.mode, st.terminal_since, st.h_cmd, st.est = 'terminal', 'track', 1000.0, a.cfg.drop_alt_m, TARGET
+    st.ref_size = 0.075
     return a, ctx
 
 
@@ -249,3 +250,37 @@ def test_high_precise_overlay():
     assert (c.drop_alt_m, c.drop_tol_m, c.image_gate, c.release_delay_s) == (1.4, 0.03, True, 1.1)
     base = approaches.create_active('sim', name='position_lock_descent')
     assert base.cfg.image_gate is False and base.cfg.release_delay_s == 0.0
+
+
+# ---- 末端目标一致性（筒被吹走后的假目标）----
+
+def _run_still(a, ctx, ticks, res=(0.0, 0.0), conf=0.9, size=0.1, t=1000.0):
+    outs = []
+    for _ in range(ticks):
+        d = _seen_with_port_offset(a, ctx, res)
+        d.confidence, d.apparent_size = conf, size
+        ctx.detections = [d]
+        outs.append(a.loop(ctx, now=t))
+        t += DT
+    return outs
+
+
+def test_low_confidence_false_target_is_not_tracked_and_never_dropped():
+    a, ctx = _precise_at_drop_alt()
+    outs = _run_still(a, ctx, 25, conf=0.32, size=0.1)        # 实测假目标置信度 0.28–0.40
+    assert not any(o.drop_ready for o in outs)
+    assert a.state.mode in ('coast', 'climb') and a.state.miss > a.cfg.max_coast_ticks
+
+
+def test_oversized_detection_is_not_associated():
+    a, ctx = _precise_at_drop_alt()
+    outs = _run_still(a, ctx, 25, conf=0.9, size=0.075 * 2.6)  # 实测水泥误检半径 0.19–0.29（锁定 0.075–0.10）
+    assert not any(o.drop_ready for o in outs) and a.state.miss >= 25
+
+
+def test_mid_confidence_frames_track_but_do_not_count_for_the_gate():
+    a, ctx = _precise_at_drop_alt()
+    outs = _run_still(a, ctx, 25, conf=0.5)                    # ≥ 0.45 能跟踪，< 0.6 不进投放门
+    assert a.state.mode == 'track' and not any(o.drop_ready for o in outs)
+    outs = _run_still(a, ctx, 15, conf=0.9, t=1003.0)
+    assert any(o.drop_ready for o in outs)

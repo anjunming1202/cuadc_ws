@@ -39,6 +39,12 @@ class ApproachConfig(cone.ApproachConfig):
     gate_speed_mps: float = 0.0                       # 投放门水平速度上限；0 = 用 speed_tol_mps
     release_delay_s: float = 0.0                      # 舵机启动到瓶子离开的时间（实测约 1.1 s）
     pred_window_s: float = 0.5                        # 偏差变化率取最近这么久的帧做直线拟合
+    gate_min_conf: float = 0.0                        # 只有置信度不低于此的帧计入图像投放门
+    # 末端目标一致性：检测半径 / 交接时锁定的半径须在 [min, max] 内才关联（0 = 不查）。真筒降到低空半径估大
+    # 1.15–1.7 倍；筒被吹走后检测器会把垫边水泥/砖块缺口当成筒（2026-10-06），尺寸和置信度都对不上
+    size_ratio_min: float = 0.0
+    size_ratio_max: float = 0.0
+    allow_endgame: bool = True                        # 投放高度丢检测时按最后估计盲投；关掉则丢失就爬升重捕获
 
 
 def _read(name):
@@ -67,6 +73,7 @@ class LockState(cone.ApproachState):
     res_hist: list = field(default_factory=list)  # (t, 前, 右) 图像算出的筒心相对投放口
     gate_res: Optional[Tuple[float, float]] = None   # 最近的图像偏差（3 帧均值，诊断日志用）
     gate_pred: Optional[Tuple[float, float]] = None  # 预测的瓶子离开时偏差
+    ref_size: Optional[float] = None              # 交接时锁定目标的半径（末端一致性检查的基准）
 
 
 class PositionLockDescent(cone.ConeDescentIbvs):
@@ -93,7 +100,7 @@ class PositionLockDescent(cone.ConeDescentIbvs):
         st.prev_off_meas, st.off_window = None, []
         st.hover_since, st.drop_alt_since, st.relaxed = None, None, False
         st.samples, st.h_cmd, st.stable_since = [], None, None
-        st.res_hist, st.gate_res, st.gate_pred = [], None, None
+        st.res_hist, st.gate_res, st.gate_pred, st.ref_size = [], None, None, None
         if st.est is not None:
             st.locked = Candidate(st.est[0], st.est[1], st.locked.size if st.locked else 0.0)
         st.est, st.prev_t = None, None
@@ -112,9 +119,12 @@ class PositionLockDescent(cone.ConeDescentIbvs):
         st.prev_t = now
         if st.h_cmd is None:  # 刚交接（或从粗段回来）：估计从粗段最后的锁定位置起步
             st.h_cmd, st.samples, st.est = h, [], (st.locked.x, st.locked.y)
+            st.ref_size = st.locked.size if st.locked.size > 0 else None
         if ctx.local_position_xy is None:
             return ApproachOutput()
 
+        if cfg.size_ratio_max > 0 and st.ref_size:
+            dets = [d for d in dets if cfg.size_ratio_min * st.ref_size <= d.apparent_size <= cfg.size_ratio_max * st.ref_size]
         best = _nearest_within(dets, st.est[0], st.est[1], cfg.refine_gate_m)
         if best is not None:
             st.mode, st.miss = 'track', 0
@@ -122,7 +132,8 @@ class PositionLockDescent(cone.ConeDescentIbvs):
             st.samples.append((now, best.position.x, best.position.y))
             st.last_bearing = (best.bearing_x, best.bearing_y)
             off = self._bearing_to_off(st.last_bearing, ctx, h)  # 图像投放门 + DROP_AIM 快照
-            st.res_hist.append((now, off[0] - st.lever[0], off[1] - st.lever[1]))
+            if best.confidence >= cfg.gate_min_conf:
+                st.res_hist.append((now, off[0] - st.lever[0], off[1] - st.lever[1]))
             st.off_window = (st.off_window + [off])[-cone._OFF_WINDOW:]
             st.prev_off_meas = (sum(o[0] for o in st.off_window) / len(st.off_window),
                                 sum(o[1] for o in st.off_window) / len(st.off_window))
@@ -139,7 +150,7 @@ class PositionLockDescent(cone.ConeDescentIbvs):
         at_drop_alt = h <= cfg.drop_alt_m + cfg.drop_alt_band_m
         tol = cfg.relaxed_drop_tol_m if st.relaxed else cfg.drop_tol_m
         if best is None and st.miss > cfg.max_coast_ticks:
-            if not (at_drop_alt and port_err < tol):  # 已收敛在投放高度丢失 = endgame，照查投放门
+            if not (cfg.allow_endgame and at_drop_alt and port_err < tol):  # 已收敛在投放高度丢失 = endgame，照查投放门
                 st.mode, st.stable_since = 'climb', None
                 if h >= cfg.reacquire_ceiling_m:
                     return self._to_coarse(ctx, dets, h, now)
