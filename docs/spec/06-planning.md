@@ -54,7 +54,7 @@ DROP_PAYLOAD           — 触发投放，等确认反馈
   ↓ 已投放次数 < 2 → 回 SEARCH_DROP_TARGETS 选下一个目标；== 2 → 继续
 NAVIGATE_TO_RECON_ZONE — goto_location 飞到侦察区
   ↓
-SURVEY_RECON_ZONE      — 飞扫描路径覆盖侦察区，把检测到的每个筒带入摄像头视野给图传看清，按位置去重记录"已覆盖"列表，直到 5 个都覆盖或超时
+SURVEY_RECON_ZONE      — 飞扫描路径覆盖侦察区，让每个筒都进摄像头视野给图传看清，覆盖完或超时即结束；怎么覆盖是可替换单元（默认不靠检测、按筒壁遮挡定间距的蛇形扫描），见 cuadc_decision/README.md
   ↓
 RTL_OR_LAND            — 切 RTL/LAND，等落在 H 点内、螺旋桨停止、disarm
 

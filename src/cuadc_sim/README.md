@@ -49,7 +49,7 @@
 [`docs/spec/field-layout.md`](../../docs/spec/field-layout.md) 里的
 设计对齐），`gen_world.py`/`gen_textures.py`/`gen_tube_mesh.py` 都从它
 生成，不手抄数字；投放/侦察圆筒是程序生成的空心筒网格（不是实心圆
-盘）；危险化学品标识是从原始 PDF 里逐像素提取的贴图；地面标线是真实
+盘；投放筒有底，侦察筒无底、标识卡片放在地面上从筒口可见）；危险化学品标识是从原始 PDF 里逐像素提取的贴图；地面标线是真实
 薄方块几何体；`check_dimensions.py` 能直接校验生成出来的世界跟规则
 文档是否一致，不用靠肉眼在 GUI 里比对。已支持双场地并行布置（规则第
 13 节），场地 A/B 用独立命名的对象，共享一块加宽的地面。`camera_view.py`
@@ -62,6 +62,7 @@
 |---|---|
 | 完整场地仿真世界 | `./scripts/run_gazebo_demo.sh` |
 | 投放区单练世界（出生在投放区前） | `./scripts/run_gazebo_drop_zone_bench.sh` |
+| 侦察区单练世界（出生在侦察区前） | `./scripts/run_gazebo_recon_zone_bench.sh` |
 | 在世界里跑任务 / 飞行测试 | 另一个终端：`run_mission_sim*.sh`、`run_flight_check_sim.sh`、`run_flight_suite_sim.sh`、`run_arm_check_sim.sh`（各脚本头部有说明） |
 
 首次在某个 `sitl_run_dir` 里跑，后面加 `extra_sitl_args:=-w` 清空 EEPROM。

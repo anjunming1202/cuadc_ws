@@ -31,6 +31,10 @@ def generate_launch_description():
         'approach_variant', default_value='',
         description='叠加 <approach>.<variant>.yaml（如 lowgain；逗号分隔可多个），空 = 不叠加')
 
+    survey_arg = DeclareLaunchArgument(
+        'survey', default_value='',
+        description='侦察覆盖模块名（coverage_scan / detect_count），空 = surveys.ACTIVE')
+
     first_drop_port_arg = DeclareLaunchArgument(
         'first_drop_port', default_value='0', description='第一投用的投放口：0 左 / 1 右，之后轮换')
 
@@ -45,9 +49,10 @@ def generate_launch_description():
             'scenario': LaunchConfiguration('scenario'),
             'approach': LaunchConfiguration('approach'),
             'approach_variant': LaunchConfiguration('approach_variant'),
+            'survey': LaunchConfiguration('survey'),
             'first_drop_port': LaunchConfiguration('first_drop_port'),
         }],
     )
 
     return LaunchDescription([tick_rate_arg, profile_arg, scenario_arg, approach_arg, approach_variant_arg,
-                              first_drop_port_arg, decision_node])
+                              survey_arg, first_drop_port_arg, decision_node])

@@ -15,7 +15,7 @@ docs/spec/mission-config-layer.md。与算法内部参数（检测器 HSV、appr
 坐标约定：区中心/扫描 offsets 用**场地坐标**（x=飞行前进方向、y=侧向，同 field-layout.md），
 好跟场地图肉眼核对。场地坐标轴 = 起飞坐标系轴：+x = 起飞时机头方向（起降点指向投放/侦察区），
 +y = 其**右侧**（规则书 field-layout.md 的 y 取左侧，填配置时左侧取负）。`takeoff_point` 是起飞（解锁）
-点的场地坐标；换算只减它（mission_logic._field_to_takeoff），见 docs/spec/coordinate-frames.md。
+点的场地坐标；换算只减它（field_to_takeoff），见 docs/spec/coordinate-frames.md。
 """
 
 from dataclasses import dataclass, field
@@ -39,6 +39,7 @@ class MissionWorld:
         (1.0, -2.0), (1.0, 2.0),
     ])
     recon_zone_center: Tuple[float, float] = (57.5, 0.0)
+    recon_zone_size: Tuple[float, float] = (5.0, 8.0)  # 侦察区 纵(x) × 横(y)
     recon_scan_offsets: List[Tuple[float, float]] = field(default_factory=lambda: [
         (-1.5, -2.0), (-1.5, 2.0),
         (0.0, 2.0), (0.0, -2.0),
@@ -50,6 +51,12 @@ class MissionWorld:
     initial_state: str = 'INIT'               # FSM 起跑状态（隔离测试由场景改，见 spec §5）
     phases: List[str] = field(default_factory=lambda: ['drop', 'recon'])  # 跑哪些阶段（取代 stop_after_drop）
     search_overrides: Dict = field(default_factory=dict)  # 场景对 SEARCH 算法(search_strategy)参数的覆盖
+
+
+def field_to_takeoff(field_x, field_y, takeoff_point):
+    """任务配置的场地坐标 -> 起飞坐标系 (前, 右)：只减起飞点。场地坐标轴与起飞坐标系一致（+x = 起飞时
+    机头方向，+y = 其右侧），所以不旋转——东南西北不参与（见 docs/spec/coordinate-frames.md）。"""
+    return (field_x - takeoff_point[0], field_y - takeoff_point[1])
 
 
 def _read_yaml(path: Path) -> dict:

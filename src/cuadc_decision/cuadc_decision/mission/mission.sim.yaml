@@ -14,6 +14,7 @@ drop_scan_offsets:                   # 相对中心的 (dx 向前, dy 向右)
   - [1.2, 2.0]
 
 recon_zone_center: [57.5, 0.0]       # 侦察区 x in [55,60] 中点
+recon_zone_size: [5.0, 8.0]          # 规则书：侦察区 纵(x) 5m × 横(y) 8m
 recon_scan_offsets:
   - [-1.2, 2.0]
   - [-1.2, -2.0]

@@ -14,6 +14,7 @@ setup(
     package_data={
         'cuadc_decision': ['*.yaml'],   # search_strategy.*, mission_logic.* (FSM 本体调参)
         'cuadc_decision.approaches': ['*.yaml'],
+        'cuadc_decision.surveys': ['*.yaml'],
         'cuadc_decision.mission': ['*.yaml', 'scenarios/*.yaml'],  # 世界/任务/场景层(A)
     },
     data_files=[

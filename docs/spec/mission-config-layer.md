@@ -102,7 +102,7 @@ src/cuadc_decision/cuadc_decision/
     scenarios/
       full_mission.yaml        # 全任务（恒等/最小声明）
       drop_zone_bench.yaml     # initial_state + phases=[drop] + SEARCH 简化覆盖
-      recon_zone_bench.yaml    # initial_state + phases=[recon]
+      recon_zone_bench.yaml    # initial_state=INIT + phases=[recon]
 ```
 
 各层由**各自算法/模块自持自读**，`load_config(profile)` / `load_tuning(profile)` 与
@@ -165,7 +165,9 @@ decision_node.__init__:
 - `initial_state` 只用来**跳过不需要的任务阶段**，不能跳过放行和等飞手解锁（ADR-0011）。
 - 只对某个环境成立的场景偏离写在可选的 `scenarios/<场景>.<profile>.yaml`（最后叠加），不能写进
   sim/real 共用的场景文件——例如 sim 单练出生点写进共用文件，真机单点测试的航点就会全偏。
-- 侦察区单练：`recon_zone_bench`，`initial_state` 取侦察前一个 state，`phases=[recon]`。
+- 侦察区单练：`recon_zone_bench`，同样 `initial_state=INIT`，`phases=[recon]`——起飞后直接去侦察（起飞后去哪一区
+  由 `phases` 决定）；sim 出生点写在 `recon_zone_bench.sim.yaml`（`field/config.py` 的 `RECON_ZONE_BENCH_SPAWN`
+  世界，`run_gazebo_recon_zone_bench.sh`），真机区中心写在 `recon_zone_bench.real.yaml`。
 
 ### 5.2 SEARCH 简化靠配置
 「看到候选就去投」= 放宽选目标的门。现在门硬编码在 `_tick_search_drop_targets`：
@@ -185,7 +187,7 @@ decision_node.__init__:
 |---|---|---|---|
 | `full_mission` | INIT | [drop, recon] | 正式全任务（sim/真机同场景，脚本选 connection/profile） |
 | `drop_zone_bench` | INIT | [drop] | 反复调投放接近+投放；SEARCH 简化；sim 出生点见 `.sim.yaml` |
-| `recon_zone_bench` | (侦察前一个 state) | [recon] | 反复调侦察覆盖 |
+| `recon_zone_bench` | INIT | [recon] | 反复调侦察覆盖；sim 出生点 / 真机区中心见各自 `.sim/.real.yaml` |
 
 启动仍**一脚本一场景**：`run_mission_sim.sh` / `run_mission_sim_drop_zone_bench.sh` 各自把
 `scenario:=…` 写死透传；`profile`/`connection` 仍由脚本区分 sim/真机，与场景**正交**。

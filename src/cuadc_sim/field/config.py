@@ -75,6 +75,10 @@ DROP_ZONE_B_RING_OUTER_DIAMETER = 1.0
 # visually as a rim, not a solid block.
 TUBE_WALL_THICKNESS = 0.01
 
+# 投放筒有底（载荷落进筒里）；侦察筒无底，标识卡片直接放在地面上、从筒口看得到。
+DROP_TUBE_BOTTOM = True
+RECON_TUBE_BOTTOM = False
+
 # ---- 投放区与侦察区之间的过渡区 Transition zone (no markings/objects) ----
 TRANSITION_X_MIN = DROP_ZONE_X_MAX     # 35.0
 TRANSITION_X_MAX = 55.0
@@ -115,6 +119,9 @@ DROP_CYLINDER_POSITIONS = {
 # 坐标，不是随机的，见上面的说明；如果以后真的改成随机摆放，只要摆放
 # 范围仍然限制在 DROP_ZONE_X_MIN 以内，这个出生点依然安全）。
 DROP_ZONE_BENCH_SPAWN = (DROP_ZONE_X_MIN - 1.0, 0.0)
+
+# 侦察区单点测试用出生点（cuadc_field_recon_zone_bench.sdf），同上：侦察区近边界线后方 1m。
+RECON_ZONE_BENCH_SPAWN = (RECON_ZONE_X_MIN - 1.0, 0.0)
 
 RECON_CYLINDER_POSITIONS = {
     "a": (55.8, -2.5),

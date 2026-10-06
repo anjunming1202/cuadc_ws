@@ -17,6 +17,7 @@ import os
 
 import config
 import hazmat_placards
+from gen_tube_mesh import mesh_name
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WORLDS = os.path.join(HERE, '..', 'worlds')
@@ -364,14 +365,13 @@ def textured_material(albedo_uri):
         </material>"""
 
 
-def tube_model(name, x, y, diameter, height, rgb=(0.95, 0.95, 0.95)):
+def tube_model(name, x, y, diameter, height, bottom, rgb=(0.95, 0.95, 0.95)):
     """A hollow tube (open top): visual is the procedurally generated mesh
     (see gen_tube_mesh.py), collision is a plain solid outer cylinder --
     a concave open-topped collision mesh isn't worth the complexity for
     what's an obstacle + software zone/visual check, not physics-accurate
     "payload bounces around inside the tube" simulation."""
     radius = diameter / 2
-    mesh_name = f'tube_d{int(round(diameter * 1000))}_h{int(round(height * 1000))}.obj'
     return f"""
     <model name="{name}">
       <static>true</static>
@@ -382,7 +382,7 @@ def tube_model(name, x, y, diameter, height, rgb=(0.95, 0.95, 0.95)):
           <geometry><cylinder><radius>{radius}</radius><length>{height}</length></cylinder></geometry>
         </collision>
         <visual name="visual">
-          <geometry><mesh><uri>{TUBE_MESH}/{mesh_name}</uri></mesh></geometry>
+          <geometry><mesh><uri>{TUBE_MESH}/{mesh_name(diameter, height, bottom)}</uri></mesh></geometry>
           {plain_material(rgb)}
         </visual>
       </link>
@@ -539,7 +539,8 @@ def build_drop_zone(field_id, y_offset):
         x, y = config.DROP_CYLINDER_POSITIONS[label]
         y += y_offset
         parts.append(ring_decal(f"{p}drop_ring_{label}", x, y))
-        parts.append(tube_model(f"{p}drop_tube_{label}", x, y, diameter, height))
+        parts.append(tube_model(f"{p}drop_tube_{label}", x, y, diameter, height,
+                                 config.DROP_TUBE_BOTTOM))
     return '\n'.join(parts)
 
 
@@ -554,7 +555,7 @@ def build_recon_zone(field_id, y_offset):
             assert placard_key in hazmat_placards.PLACARDS, f"unknown placard key {placard_key}"
             parts.append(placard_decal(f"{p}recon_placard_{key}", x, y, placard_key))
         parts.append(tube_model(name, x, y, config.RECON_CYLINDER_DIAMETER,
-                                 config.RECON_CYLINDER_HEIGHT))
+                                 config.RECON_CYLINDER_HEIGHT, config.RECON_TUBE_BOTTOM))
     return '\n'.join(parts)
 
 
@@ -570,7 +571,8 @@ WORLD_TEMPLATE = """<?xml version="1.0" ?>
     this session's WSLg rendering-performance investigation (see
     src/cuadc_sim/README.md). Drop/recon cylinders are hollow tubes
     (procedurally generated meshes, field/gen_tube_mesh.py), not solid
-    discs: payloads go into them and placards sit inside them.
+    discs: payloads go into drop tubes (closed bottom); recon tubes are
+    bottomless and their placards lie on the ground inside.
 
     Two parallel fields (doc section 13, config.FIELD_IDS/FIELD_Y_OFFSETS):
     field B is field A's layout translated in Y only. Only ONE vehicle
@@ -691,6 +693,7 @@ def main():
     # 飞机出生点不同，方便反复调 CV/控制参数不用每次从起降区飞过去。
     # 跟正常 world 一样是生成时提交的产物，不是运行时选项。
     _write_world('cuadc_field_drop_zone_bench.sdf', config.DROP_ZONE_BENCH_SPAWN)
+    _write_world('cuadc_field_recon_zone_bench.sdf', config.RECON_ZONE_BENCH_SPAWN)
 
 
 if __name__ == '__main__':

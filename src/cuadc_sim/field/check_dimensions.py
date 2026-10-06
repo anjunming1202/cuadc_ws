@@ -26,6 +26,7 @@ from PIL import Image
 
 import config
 import gen_textures
+from gen_tube_mesh import mesh_name
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WORLD_PATH = os.path.join(HERE, '..', 'worlds', 'cuadc_field.sdf')
@@ -138,17 +139,16 @@ for field_id in config.FIELD_IDS:
     p = f'field{field_id}_'
     print(f'-- field {field_id} (y offset {y_off}) --')
 
-    # Drop tubes: position + mesh filename encodes the right diameter/height.
+    # Drop tubes: position + mesh filename encodes the right diameter/height/bottom.
     for label, diameter, height in config.DROP_CYLINDERS:
         name = f'{p}drop_tube_{label}'
         x, y = model_pose_xy(name)
         expected_x, expected_y = config.DROP_CYLINDER_POSITIONS[label]
         expected_y += y_off
         mesh_uri = models_by_name[name].find("link/visual/geometry/mesh/uri").text
-        expected_mesh = f'tube_d{int(round(diameter*1000))}_h{int(round(height*1000))}.obj'
+        expected_mesh = mesh_name(diameter, height, config.DROP_TUBE_BOTTOM)
         check(f'{name} position matches config', approx(x, expected_x) and approx(y, expected_y))
-        check(f'{name} mesh filename encodes d={diameter}m h={height}m',
-              mesh_uri.endswith(expected_mesh))
+        check(f'{name} mesh is {expected_mesh}', mesh_uri.endswith('/' + expected_mesh))
         ring_name = f'{p}drop_ring_{label}'
         rx, ry = model_pose_xy(ring_name)
         check(f'{ring_name} centered on its tube', approx(rx, expected_x) and approx(ry, expected_y))
@@ -163,6 +163,10 @@ for field_id in config.FIELD_IDS:
         name = f'{p}recon_tube_{key}'
         x, y = model_pose_xy(name)
         check(f'{name} position matches config', approx(x, expected_x) and approx(y, expected_y))
+        mesh_uri = models_by_name[name].find("link/visual/geometry/mesh/uri").text
+        expected_mesh = mesh_name(config.RECON_CYLINDER_DIAMETER, config.RECON_CYLINDER_HEIGHT,
+                                  config.RECON_TUBE_BOTTOM)
+        check(f'{name} mesh is {expected_mesh}', mesh_uri.endswith('/' + expected_mesh))
         placard_key = config.RECON_CYLINDER_PLACARDS.get(key)
         placard_name = f'{p}recon_placard_{key}'
         if placard_key:
