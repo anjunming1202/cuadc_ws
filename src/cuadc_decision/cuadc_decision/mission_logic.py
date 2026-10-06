@@ -456,16 +456,21 @@ def _tick_takeoff(ctx):
     return TickResult()
 
 
+def _zone_entry(waypoints, center):
+    """转场终点：区中线上、与第一个扫描航点同一 x——沿中线直飞进区，到了再横移去扫描起点。"""
+    return (waypoints[0][0], _field_to_takeoff(center[0], center[1], _WORLD.takeoff_point)[1])
+
+
 def _tick_navigate_to_drop_zone(ctx):
-    first_waypoint = _DROP_SCAN_WAYPOINTS[0]
-    arrived = _arrived(ctx.local_position_xy, first_waypoint, _TUNING.position_tolerance_m)
-    if arrived or _nav_timed_out(ctx, first_waypoint):
+    entry = _zone_entry(_DROP_SCAN_WAYPOINTS, _WORLD.drop_zone_center)
+    arrived = _arrived(ctx.local_position_xy, entry, _TUNING.position_tolerance_m)
+    if arrived or _nav_timed_out(ctx, entry):
         ctx.drop_task.phase_entered_monotonic = time.monotonic()
         fault = None if arrived else Fault(
-            'NAV_TIMEOUT', f'not within {_TUNING.position_tolerance_m}m of {first_waypoint} after '
+            'NAV_TIMEOUT', f'not within {_TUNING.position_tolerance_m}m of {entry} after '
                            f'{ctx.nav_timeout_s:.0f}s -> start SEARCH anyway')
         return TickResult(next_state=State.SEARCH_DROP_TARGETS, fault=fault)
-    return TickResult(position_target=(first_waypoint[0], first_waypoint[1], -_WORLD.cruise_alt_m),
+    return TickResult(position_target=(entry[0], entry[1], -_WORLD.cruise_alt_m),
                       speed_target_mps=_TUNING.transit_speed_mps)
 
 
@@ -564,15 +569,15 @@ def _tick_drop_payload(ctx):
 
 
 def _tick_navigate_to_recon_zone(ctx):
-    first_waypoint = _RECON_SCAN_WAYPOINTS[0]
-    arrived = _arrived(ctx.local_position_xy, first_waypoint, _TUNING.position_tolerance_m)
-    if arrived or _nav_timed_out(ctx, first_waypoint):
+    entry = _zone_entry(_RECON_SCAN_WAYPOINTS, _WORLD.recon_zone_center)
+    arrived = _arrived(ctx.local_position_xy, entry, _TUNING.position_tolerance_m)
+    if arrived or _nav_timed_out(ctx, entry):
         ctx.recon_task.phase_entered_monotonic = time.monotonic()
         fault = None if arrived else Fault(
-            'NAV_TIMEOUT', f'not within {_TUNING.position_tolerance_m}m of {first_waypoint} after '
+            'NAV_TIMEOUT', f'not within {_TUNING.position_tolerance_m}m of {entry} after '
                            f'{ctx.nav_timeout_s:.0f}s -> start SURVEY anyway')
         return TickResult(next_state=State.SURVEY_RECON_ZONE, fault=fault)
-    return TickResult(position_target=(first_waypoint[0], first_waypoint[1], -_WORLD.cruise_alt_m),
+    return TickResult(position_target=(entry[0], entry[1], -_WORLD.cruise_alt_m),
                       speed_target_mps=_TUNING.transit_speed_mps)
 
 
