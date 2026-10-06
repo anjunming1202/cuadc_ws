@@ -10,12 +10,12 @@ import yaml
 class DropPort:
     name: str
     position_m: Tuple[float, float]  # 相对飞控（前/右）
+    release_us: int                  # 驱动本口舵机的 PWM
 
 
 @dataclass(frozen=True)
 class DropServo:
     output: int
-    forward_us: int
     neutral_us: int
     run_s: float
 
@@ -31,7 +31,7 @@ class Airframe:
     fc_rest_clearance_m: float
     camera_position_m: Tuple[float, float, float]  # 相对飞控（前/右/下）
     camera_mount_rad: Tuple[float, float, float]   # roll/pitch/yaw
-    drop_ports: Tuple[DropPort, ...]                # 按投放次序
+    drop_ports: Tuple[DropPort, ...]                # 序号 = 投放口号（0 左 / 1 右）
     drop_servo: DropServo
 
     @property
@@ -39,7 +39,7 @@ class Airframe:
         return self.camera_position_m[2]
 
     def lever_arms_from_camera(self) -> Tuple[Tuple[float, float], ...]:
-        """各投放口相对相机光心的水平偏置（前/右），按投放次序——末端瞄准用的杠杆臂。"""
+        """各投放口相对相机光心的水平偏置（前/右），按口号——末端瞄准用的杠杆臂。"""
         cf, cr = self.camera_position_m[0], self.camera_position_m[1]
         return tuple((p.position_m[0] - cf, p.position_m[1] - cr) for p in self.drop_ports)
 
@@ -55,7 +55,7 @@ def load_airframe() -> Airframe:
         fc_rest_clearance_m=float(d['fc_rest_clearance_m']),
         camera_position_m=tuple(float(v) for v in d['camera']['position_m']),
         camera_mount_rad=tuple(float(v) for v in d['camera']['mount_rad']),
-        drop_ports=tuple(DropPort(p['name'], tuple(float(v) for v in p['position_m']))
+        drop_ports=tuple(DropPort(p['name'], tuple(float(v) for v in p['position_m']), int(p['release_us']))
                          for p in d['drop_ports']),
         drop_servo=DropServo(**d['drop_servo']),
     )

@@ -69,7 +69,7 @@ class DecisionNode(Node):
         # approach = 接近模块名（空 = approaches.ACTIVE）；approach_variant = 叠加 <approach>.<variant>.yaml
         self.declare_parameter('approach', '')
         self.declare_parameter('approach_variant', '')
-        self.declare_parameter('first_drop_port', 0)  # 第一投用的投放口：0 左 / 1 右（单点测右口）
+        self.declare_parameter('first_drop_port', 0)  # 第一投用的投放口：0 左 / 1 右，之后轮换
         profile = self.get_parameter('profile').value
         scenario = self.get_parameter('scenario').value
 

@@ -57,7 +57,7 @@ class ApproachConfig:
     v_max_mps: float = 1.0
     brake_decel_mps2: float = 0.0         # 抛物线刹车 √(2·a·herr);0=关
     i_zone_m: float = 0.4
-    lever_arms_m: Tuple[Tuple[float, float], ...] = ((0.0, 0.0),)  # 投放口相对相机(前,右)，按投放次序；同上注入
+    lever_arms_m: Tuple[Tuple[float, float], ...] = ((0.0, 0.0),)  # 投放口相对相机(前,右)，按口号；同上注入
     aim_trims_m: Tuple[Tuple[float, float], ...] = ((0.0, 0.0),)   # 经验修正,同 stepped
     max_coast_ticks: int = 4
     endgame_alt_band_m: float = 0.0       # 收口锁带宽(同 stepped);0=关
@@ -134,7 +134,7 @@ class ConeDescentIbvs:
         self.state = ApproachState()
 
     def enter(self, ctx):
-        i = ctx.drop_task.drop_count + ctx.drop_port_start
+        i = ctx.drop_port
         arms, trims = self.cfg.lever_arms_m, self.cfg.aim_trims_m
         arm = arms[min(i, len(arms) - 1)]
         trim = trims[min(i, len(trims) - 1)]

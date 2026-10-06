@@ -159,6 +159,18 @@ def test_release_failures_retry_then_count_as_attempted(clock):
     assert ctx.drop_task.drop_count == 1 and r.next_state == S.SEARCH_DROP_TARGETS
 
 
+def test_release_requests_port_rotating_from_first_drop_port(clock):
+    configure()
+    ctx = _drop_ctx(clock, [cluster(31.0, 1.5, 0.08)])
+    ctx.last_service_result, ctx.drop_port_start = None, 1
+    first = ml.tick(ctx).service_call
+    ctx.last_service_result = ml.ServiceResult('release_payload', False)
+    retry = ml.tick(ctx).service_call
+    assert first.kwargs == {'port': 1} and retry.kwargs == {'port': 1}  # 重试仍是同一口
+    ctx.drop_task.drop_count, ctx.last_service_result, ctx.command_dispatched = 1, None, False
+    assert ml.tick(ctx).service_call.kwargs == {'port': 0}              # 第二投换另一口
+
+
 # ---- APPROACH 放弃 -> 拉黑 -> 下一个 ----
 
 def _approach_ctx(clock, target, clusters, xy=None, dets=()):

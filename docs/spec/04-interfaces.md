@@ -63,7 +63,7 @@ Set Home Position、Air Speed（多旋翼不适用）。
 | Set Yaw | topic | `~/cmd/yaw` | `std_msgs/Float64`（目标偏航角，弧度，**起飞坐标系航向**：0 = 起飞时机头方向，右转为正） | 摄像头对位/环视用；用 topic 是因为跟 `Set Position Target`/`Set Velocity` 这两个精细控制类原语用法一致（连续流式发布、不用等回应），三者保持统一，方便视觉模块同一套调用风格。**只有飞机静止（没有并发的位置类指令）时才是独立可控的**，见下方"自动朝向行为"。接口层内部会把弧度转度并归一化到 `[0,360)` 再发送——ArduCopter 收到负数会直接拒绝该指令（2026-07-16 SITL 实测确认） |
 | Set Speed | topic | `~/cmd/speed` | `std_msgs/Float64`（m/s） | GUIDED 位置类移动（两个 `Set Position Target`）的水平限速，发 `MAV_CMD_DO_CHANGE_SPEED`（地速）。飞控每次重新进入位置控制都会退回 `WP_SPD`，所以要在位置类阶段持续重发（决策 1Hz），且 `WP_SPD` 应设成最常用的那档作兜底 |
 | Set Climb / Descent Speed | topic | `~/cmd/climb_speed`、`~/cmd/descent_speed` | `std_msgs/Float64`（m/s，正数） | 同上，复写位置类移动的爬升 / 下降限速（`DO_CHANGE_SPEED` 类型 2 / 3），重进位置控制退回 `WP_SPD_UP` / `WP_SPD_DN`。**飞控一次只认一个竖直复写**：设爬升会把下降打回默认，反之亦然——只发当前升降方向那个 |
-| 投放执行 | service | `~/release_payload` | 自定义 `ReleasePayload.srv`（空请求 → bool success, string message） | 底层是 `MAV_CMD_DO_SET_SERVO` 定时序列（forward 跑 `drop_run_s`→neutral 停，每步等 COMMAND_ACK）直接驱动投放舵机输出口（飞控该口 `SERVO*_FUNCTION=0`，台架验证链路）。投放物理动作完成才返回，调用方（决策 `DROP_PAYLOAD` 态）随之悬停等它跑完——原 relay 布尔量方案（2026-07-15）与 RC override 方案（2026-10-03 台架推翻）见 [ADR-0007](adr/0007-drop-servo-vs-relay.md) |
+| 投放执行 | service | `~/release_payload` | 自定义 `ReleasePayload.srv`（uint8 port：0 左 / 1 右 → bool success, string message） | 底层是 `MAV_CMD_DO_SET_SERVO` 定时序列（该口 PWM 跑 `drop_run_s`→neutral 停，每步等 COMMAND_ACK）直接驱动投放舵机输出口；各口 PWM 在 `cuadc_physical/airframe.yaml`（飞控该口 `SERVO*_FUNCTION=0`，台架验证链路）。投放物理动作完成才返回，调用方（决策 `DROP_PAYLOAD` 态）随之悬停等它跑完——原 relay 布尔量方案（2026-07-15）与 RC override 方案（2026-10-03 台架推翻）见 [ADR-0007](adr/0007-drop-servo-vs-relay.md) |
 
 ## 契约总览：遥测（ArduPilot → 接口层 → 规划/决策）
 
@@ -81,7 +81,7 @@ Set Home Position、Air Speed（多旋翼不适用）。
 | GPS Status | `~/telemetry/gps_status` | 自定义（fix_type, satellites_visible, hdop） | |
 | EKF Status | `~/telemetry/ekf_status` | 自定义 | |
 | Failsafe State | `~/status/failsafe` | 自定义（区分具体哪种 failsafe，不只是 bool） | 任务逻辑安全响应依赖这个 |
-| 投放执行状态反馈 | `~/status/drop` | 自定义 `DropStatus`（bool actuated） | 确认投放序列真的执行了（ACK/完成≠载荷一定脱离，无称重/角度闭环，见 [ADR-0007](adr/0007-drop-servo-vs-relay.md)） |
+| 投放执行状态反馈 | `~/status/drop` | 自定义 `DropStatus`（bool actuated, uint8 port） | 确认投放序列真的执行了（ACK/完成≠载荷一定脱离，无称重/角度闭环，见 [ADR-0007](adr/0007-drop-servo-vs-relay.md)） |
 | Command ACK | `~/status/command_ack` | 自定义（string command, bool result） | |
 
 ## 坐标换算：飞控坐标只在接口层内部

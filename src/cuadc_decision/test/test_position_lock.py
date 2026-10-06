@@ -244,6 +244,15 @@ def test_first_drop_port_selects_right_lever_and_trim():
     assert right.state.lever[1] > left.state.lever[1]
 
 
+def test_second_drop_after_right_first_aims_left_port():
+    a = approaches.create_active('sim', name='position_lock_descent')
+    ctx = ml.MissionContext(current_state=ml.State.APPROACH_DROP_TARGET, drop_port_start=1)
+    ctx.drop_task.drop_count = 1
+    ctx.drop_task.selected_target = Candidate(*TARGET, 0.075)
+    a.enter(ctx)
+    assert ctx.drop_port == 0 and a.state.lever == tuple(a.cfg.lever_arms_m[0])
+
+
 def test_high_precise_overlay():
     a = approaches.create_active('sim', name='position_lock_descent', variant='high,precise')
     c = a.cfg

@@ -11,8 +11,8 @@
 #   # 1) 解锁（拆桨后！）：
 #   ros2 service call /cuadc_interface/arm cuadc_interface_msgs/srv/Arm "{arm: true}"
 #   # 2) 触发一次投放（跑 forward→drop_run_s→neutral→释放，物理动作完成才返回）：
-#   ros2 service call /cuadc_interface/release_payload cuadc_interface_msgs/srv/ReleasePayload "{}"
-#   # 投放通道/PWM/时长由接口层参数配置（drop_rc_channel/drop_forward_us/drop_run_s…），
+#   ros2 service call /cuadc_interface/release_payload cuadc_interface_msgs/srv/ReleasePayload "{port: 0}"  # 0 左 / 1 右
+#   # 输出口/各口 PWM 在 cuadc_physical/airframe.yaml；时长等可用 launch 参数临时覆盖（drop_run_s…），
 #   # 要临时改：给 run_mission_real/本脚本追加 drop_run_s:=... 等 launch 参数。
 #
 # Usage: ./scripts/run_drop_actuator_real.sh [extra ros2 launch args, e.g. drop_run_s:=1.5]

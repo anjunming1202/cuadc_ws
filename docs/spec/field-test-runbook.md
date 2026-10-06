@@ -63,7 +63,7 @@ ground-monitor 的 `cuadc-onboard-cv-preview` 占着 shm——测前用 `profile
 地面投放归遥控器/人工）。地面 bench 想用服务驱动舵机 → **必须先拆桨再解锁**：
 ```
 ros2 service call /cuadc_interface/arm cuadc_interface_msgs/srv/Arm "{arm: true}"
-ros2 service call /cuadc_interface/release_payload cuadc_interface_msgs/srv/ReleasePayload "{}"
+ros2 service call /cuadc_interface/release_payload cuadc_interface_msgs/srv/ReleasePayload "{port: 0}"   # 0 左 / 1 右
 ```
 或让机械子队直接用遥控器打投放通道验证——**绝不带桨在地面解锁**。
 
@@ -155,6 +155,7 @@ ros2 topic pub -t 5 -r 2 /cuadc_decision/sim/task_start_trigger std_msgs/msg/Emp
 ```
 投放区中心在起飞时机头前方 2m（`drop_zone_bench.real.yaml`），投 1 次、看到第一个可信筒就去投。
 换末端算法（默认 `cone_descent_ibvs`）：追加 `approach:=position_lock_descent`（[ADR-0012](adr/0012-terminal-position-lock.md)）或 `approach_variant:=lowgain`；变体可逗号叠加（如 `approach_variant:=high,fastgate`，见各 `approaches/<approach>.<variant>.yaml`）；启动日志 `approach=... variant=...` 可核对。
+先投右口：追加 `first_drop_port:=1`（第二投自动换左口；瞄准和放料用同一个口号），日志 `first_drop_port=1` 可核对。
 现场看失效处理：日志里的 `[FAULT]` 行，或另开终端
 `ros2 topic echo /cuadc_decision/fault_events`（代码表见 [failure-handling.md](failure-handling.md)）。
 ⚠ **首飞前核对 `mission.real.yaml`**：投放区中心/扫描航点是**场地坐标**（+x = 起飞时机头方向，+y = 右），
