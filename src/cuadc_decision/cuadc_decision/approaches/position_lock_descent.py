@@ -37,7 +37,7 @@ class ApproachConfig(cone.ApproachConfig):
     # release_delay_s 后瓶子离开时的偏差；当前值和预测值都在容差内才放料
     image_gate: bool = False
     gate_speed_mps: float = 0.0                       # 投放门水平速度上限；0 = 用 speed_tol_mps
-    release_delay_s: float = 0.0                      # 舵机启动到瓶子离开的时间（实测约 1.1 s）
+    release_delay_s: float = 0.0                      # 过门到瓶子离开的时间（取决于装瓶时钩子离临界点多远）
     pred_window_s: float = 0.5                        # 偏差变化率取最近这么久的帧做直线拟合
     gate_min_conf: float = 0.0                        # 只有置信度不低于此的帧计入图像投放门
     # 末端目标一致性：检测半径 / 交接时锁定的半径须在 [min, max] 内才关联（0 = 不查）。真筒降到低空半径估大

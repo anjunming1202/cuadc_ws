@@ -7,8 +7,9 @@
 都在感知节点侧。
 
 筒定位两路:①"洞法"——蓝 mask 里筒是被蓝垫包住的洞(RETR_CCOMP 子轮廓),几何
-最稳;②白 mask 法——洞不闭合(垫被画面切开)时兜底。多目标:每个够大的蓝垫各
-出一个观测。
+最稳;②白 mask 法——洞不闭合(筒被画面边缘切开)时兜底。垫上的任何非蓝物(压垫的砖、
+反光、褶皱)也是洞,所以候选须像筒顶:不偏红、洞不细长、白斑在垫子凸包内。多目标:
+每个够大的蓝垫各出一个观测。
 
 sim/real 只差 HSV 阈值(算法不变):参数由 `<此目录>/color_pad.{sim,real}.yaml`
 提供,`load_config(profile)` 读取,场景启动脚本选 profile。契约见
@@ -17,7 +18,7 @@ docs/spec/05-perception-decision-interface.md。
 
 import math
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -45,6 +46,11 @@ class ColorPadConfig:
     hole_area_hi: float = 0.5          # 筒洞占垫面积上限
     min_tube_ratio: float = 0.10       # 筒半径/垫半径下限:更小的白斑当反光/噪点
     max_tube_offset: float = 0.90      # 筒心到垫心/垫半径上限:贴边白斑不是筒
+    max_red_hole: float = 0.20         # 洞内偏红像素占比上限:砖(含晒白的)偏红,白筒在暖光下偏黄不偏红
+    max_red_white: float = 0.10        # 白斑兜底的同一上限:白斑取的是砖最亮处,偏红像素少,门限更严
+    min_hole_fill: float = 0.45        # 洞面积/最小外接圆面积下限:反光条、褶皱细长
+    min_white_fill: float = 0.35       # 白斑兜底的同一下限(碰画面边缘的不查):筒在兜底里可能只露一圈环/月牙
+    min_hull_in: float = 0.80          # 白斑落在垫子凸包内的占比下限:垫外水泥地不是筒
 
 
 def load_config(profile: str) -> ColorPadConfig:
@@ -68,6 +74,36 @@ def _centroid(c):
 
 def _area_radius(area):
     return math.sqrt(max(area, 0.0) / math.pi)  # 面积等效半径,对新月形不敏感
+
+
+def _fill(contour, area):
+    _, rc = cv2.minEnclosingCircle(contour)
+    return min(1.0, area / (math.pi * rc * rc)) if rc > 0 else 0.0
+
+
+def _region(contour, shape):
+    """轮廓内部像素:(外接框切片, 框内掩码)。"""
+    x, y, w, h = cv2.boundingRect(contour)
+    x2, y2 = min(x + w, shape[1]), min(y + h, shape[0])
+    mask = np.zeros((y2 - y, x2 - x), np.uint8)
+    cv2.drawContours(mask, [contour], -1, 255, -1, offset=(-x, -y))
+    return (slice(y, y2), slice(x, x2)), mask > 0
+
+
+def _red_share(hsv, contour):
+    """轮廓内偏红像素占比(色调 ≤16 或 ≥160、S>18、V>60)。"""
+    sl, px = _region(contour, hsv.shape)
+    if not px.any():
+        return 0.0
+    roi = hsv[sl]
+    h, s, v = roi[..., 0][px], roi[..., 1][px], roi[..., 2][px]
+    return float((((h <= 16) | (h >= 160)) & (s > 18) & (v > 60)).mean())
+
+
+def _hull_share(hull_mask, contour):
+    """contour 内部像素落在垫子凸包(hull_mask)内的占比。"""
+    sl, px = _region(contour, hull_mask.shape)
+    return float((hull_mask[sl][px] > 0).mean()) if px.any() else 0.0
 
 
 def detect_cylinders_pixels(image_bgr, cfg: Optional[ColorPadConfig] = None,
@@ -112,7 +148,7 @@ def detect_cylinders_pixels(image_bgr, cfg: Optional[ColorPadConfig] = None,
             mr = _area_radius(marea)
             _, renc = cv2.minEnclosingCircle(cnts[mi])
             circ = min(1.0, marea / (math.pi * renc * renc)) if renc > 0 else 0.0
-            obs = _tube_on_mat(mi, cnts, hier, white, mu, mv, mr, marea, circ, scale, cfg)
+            obs = _tube_on_mat(mi, cnts, hier, white, hsv, mu, mv, mr, marea, circ, scale, cfg)
             if obs is not None:
                 observations.append(obs)
     t4 = time.monotonic()
@@ -129,38 +165,55 @@ def detect_cylinders_pixels(image_bgr, cfg: Optional[ColorPadConfig] = None,
     return observations
 
 
-def _tube_on_mat(mi, cnts, hier, white, mu, mv, mr, marea, circ, scale, cfg) -> Optional[ContourObservation]:
-    """在一个蓝垫(外轮廓 mi)上定位白筒。洞法优先、白 mask 法兜底,过尺寸/居中门。
+def _tube_on_mat(mi, cnts, hier, white, hsv, mu, mv, mr, marea, circ, scale, cfg) -> Optional[ContourObservation]:
+    """在一个蓝垫(外轮廓 mi)上定位白筒。洞法优先、白 mask 法兜底,候选须过尺寸/居中门且像筒顶。
     返回换算回全分辨率的 ContourObservation(circularity 字段承载置信度),无筒返回 None。"""
+    def placed(u, v, r):  # 尺寸/居中门:speck/贴边白斑不算筒
+        return (r / max(mr, 1e-6) >= cfg.min_tube_ratio
+                and math.hypot(u - mu, v - mv) / max(mr, 1e-6) <= cfg.max_tube_offset)
+
     tube = None  # (u, v, radius_px, contour_proc)
     best_a = 0.0
-    for i in range(len(cnts)):  # ①洞法:mat 的子轮廓里最大、在垫内、面积合理者
+    for i in range(len(cnts)):  # ①洞法:mat 的子轮廓里合格者取最大
         if hier[i][3] != mi:
             continue
         a = cv2.contourArea(cnts[i])
         hc = _centroid(cnts[i])
-        if a <= 0 or hc is None or not (cfg.hole_area_lo * marea <= a <= cfg.hole_area_hi * marea):
+        if a <= best_a or hc is None or not (cfg.hole_area_lo * marea <= a <= cfg.hole_area_hi * marea):
             continue
-        if math.hypot(hc[0] - mu, hc[1] - mv) > mr or a <= best_a:
+        r = _area_radius(a)
+        if (not placed(hc[0], hc[1], r) or _fill(cnts[i], a) < cfg.min_hole_fill
+                or _red_share(hsv, cnts[i]) >= cfg.max_red_hole):
             continue
         best_a = a
-        tube = (hc[0], hc[1], _area_radius(a), cnts[i])
-    if tube is None:  # ②白 mask 法兜底(洞不闭合时):垫内最大白斑
+        tube = (hc[0], hc[1], r, cnts[i])
+    if tube is None:  # ②白 mask 法兜底(洞不闭合时):垫内合格白斑取最大
         inside = np.zeros_like(white)
         cv2.circle(inside, (int(mu), int(mv)), int(mr), 255, -1)
         wc, _ = cv2.findContours(cv2.bitwise_and(white, inside), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if wc:
-            wb = max(wc, key=cv2.contourArea)
+        ph, pw = white.shape[:2]
+        hull = None
+        for wb in sorted(wc, key=cv2.contourArea, reverse=True):
             wa = cv2.contourArea(wb)
             wcen = _centroid(wb)
-            if wa > 0 and wcen is not None:
-                tube = (wcen[0], wcen[1], max(_area_radius(wa), 2.0), wb)
+            if wa <= 0 or wcen is None:
+                continue
+            r = max(_area_radius(wa), 2.0)
+            x, y, w, h = cv2.boundingRect(wb)
+            cut = x <= 0 or y <= 0 or x + w >= pw or y + h >= ph  # 被画面边缘切开:形状不全,不查填充率
+            if (not placed(wcen[0], wcen[1], r) or not (cut or _fill(wb, wa) >= cfg.min_white_fill)
+                    or _red_share(hsv, wb) >= cfg.max_red_white):
+                continue
+            if hull is None:
+                hull = np.zeros_like(white)
+                cv2.drawContours(hull, [cv2.convexHull(cnts[mi])], -1, 255, -1)
+            if _hull_share(hull, wb) >= cfg.min_hull_in:
+                tube = (wcen[0], wcen[1], r, wb)
+                break
     if tube is None:
         return None
 
     wu, wv, wr, wcontour = tube
-    if wr / max(mr, 1e-6) < cfg.min_tube_ratio or math.hypot(wu - mu, wv - mv) / max(mr, 1e-6) > cfg.max_tube_offset:
-        return None  # speck/贴边白斑不算筒
     conc = 1.0 - min(1.0, math.hypot(wu - mu, wv - mv) / max(mr, 1e-6))  # 同心度
     conf = 0.5 * circ + 0.5 * conc
     contour_full = (wcontour.astype(np.float32) * scale).astype(np.int32) if scale != 1.0 else wcontour

@@ -171,6 +171,17 @@ def test_release_requests_port_rotating_from_first_drop_port(clock):
     assert ml.tick(ctx).service_call.kwargs == {'port': 0}              # 第二投换另一口
 
 
+def test_transit_flies_the_zone_centerline_then_searches(clock):
+    world = configure()
+    ctx = flying_ctx(clock, S.NAVIGATE_TO_DROP_ZONE, xy=(0.0, 0.0), h=3.0)
+    r = ml.tick(ctx)
+    assert r.position_target[1] == pytest.approx(world.drop_zone_center[1] - world.takeoff_point[1])  # 中线上
+    assert r.position_target[0] == pytest.approx(ml._DROP_SCAN_WAYPOINTS[0][0])
+    assert ml._DROP_SCAN_WAYPOINTS[0][1] != r.position_target[1]  # 扫描起点在中线一侧，进区后再横移
+    ctx.local_position_xy = r.position_target[:2]
+    assert ml.tick(ctx).next_state == S.SEARCH_DROP_TARGETS
+
+
 # ---- APPROACH 放弃 -> 拉黑 -> 下一个 ----
 
 def _approach_ctx(clock, target, clusters, xy=None, dets=()):

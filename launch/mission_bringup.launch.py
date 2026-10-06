@@ -100,7 +100,7 @@ def generate_launch_description():
         }.items(),
     )
 
-    # 仿真专用：把决策的投放事件(DROP_PAYLOAD)翻译成 Gazebo 物理水瓶脱钩(见
+    # 仿真专用：把接口层的投放执行(status/drop,带口号)翻译成该口 Gazebo 物理水瓶脱钩(见
     # cuadc_sim/drop_bottle_bridge)。真机投放由 interface 的 release_payload 驱动真舵机,
     # 不需要它,故 profile=='sim' 才起。世界 bringup(gazebo_bringup)保持不含任务逻辑,这个
     # 桥属于任务侧、放这里(见 sim/task 解耦约定)。

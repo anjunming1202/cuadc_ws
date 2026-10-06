@@ -118,15 +118,18 @@ def test_coverage_scan_ignores_detections_and_needs_scan_altitude():
     assert r.next_state is None and r.position_target[:2] == pytest.approx(wp0)
 
 
-def test_navigate_heads_to_survey_entry_and_hands_over():
+def test_navigate_flies_centerline_to_survey_entry_x_and_hands_over():
     world, _, survey = setup('sim', 'recon_zone_bench')
     entry = survey.entry_point()
+    centerline_y = world.recon_zone_center[1] - world.takeoff_point[1]
     r = ml.tick(ctx_at((0.0, 0.0), world.cruise_alt_m, state=S.NAVIGATE_TO_RECON_ZONE))
-    assert r.position_target == pytest.approx((entry[0], entry[1], -world.cruise_alt_m))
+    assert r.position_target == pytest.approx((entry[0], centerline_y, -world.cruise_alt_m))  # 沿中线进区
     survey._index = 3
-    r = ml.tick(ctx_at(entry, world.cruise_alt_m, state=S.NAVIGATE_TO_RECON_ZONE))
+    r = ml.tick(ctx_at((entry[0], centerline_y), world.cruise_alt_m, state=S.NAVIGATE_TO_RECON_ZONE))
     assert r.next_state == S.SURVEY_RECON_ZONE
     assert survey.progress() == f'waypoint 0/{len(survey._waypoints)}'   # enter() 清了进度
+    r = ml.tick(ctx_at((entry[0], centerline_y), world.cruise_alt_m))  # 进区后横移到扫描起点
+    assert r.position_target[:2] == pytest.approx(entry)
 
 
 def test_recon_timeout_reports_survey_progress(monkeypatch):
