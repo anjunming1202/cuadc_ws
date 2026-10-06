@@ -14,6 +14,7 @@ import math
 import statistics
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Tuple
 
 import yaml
 
@@ -30,6 +31,7 @@ class SearchConfig:
     min_detection_confidence: float = 0.5    # 只收置信度够的检测（桩恒发 1.0，真实 CV 会过滤）
     min_candidates_before_select: int = 3    # 候选够这么多才允许选（正式=筒数 3；bench 场景覆盖成 1=看到就投）
     max_tilt_deg: float = 10.0               # 机身倾斜超过此值的帧不收：急加减速时姿态与图像对不齐，反投影偏
+    size_class_bounds_m: Tuple[float, float] = (0.0875, 0.1125)  # 候选不是正好三个时按测得半径分小/中/大筒的界
 
 
 def load_config(profile: str) -> SearchConfig:

@@ -218,6 +218,32 @@ def test_drop_zone_full_second_target_then_rtl(clock):
     assert r.next_state == S.RTL_OR_LAND and ctx.drop_task.drop_count == 2
 
 
+
+def test_size_class_by_rank_with_three_candidates_else_by_bounds():
+    radii, bounds = (0.075, 0.10, 0.125), (0.098, 0.126)
+    cands = [Candidate(34.0, -1.3, 0.108), Candidate(34.9, 0.9, 0.146), Candidate(34.0, 3.1, 0.097)]
+    assert drop_strategy.size_class_radius(cands[0], cands, radii, bounds) == 0.10   # 排名：中
+    assert drop_strategy.size_class_radius(cands[2], cands, radii, bounds) == 0.075  # 排名：最小
+    two = cands[:2]
+    assert drop_strategy.size_class_radius(two[0], two, radii, bounds) == 0.10       # 界值：0.108 在中档
+    assert drop_strategy.size_class_radius(Candidate(0, 0, 0.09), two, radii, bounds) == 0.075
+
+
+def test_approach_start_sets_target_radius_and_phase_end_best_effort(clock):
+    configure()
+    ctx = flying_ctx(clock, S.SEARCH_DROP_TARGETS, xy=(31.0, 1.5), h=5.0)
+    ctx.drop_task.clusters = [cluster(31.0, 1.5, 0.075), cluster(32.5, -1.5, 0.10), cluster(34.0, 0.0, 0.125)]
+    ml._start_approach(ctx, Candidate(32.5, -1.5, 0.10))
+    assert ctx.drop_task.target_radius_m == 0.10
+    ctx.current_state = S.APPROACH_DROP_TARGET
+    ctx.drop_task.phase_entered_monotonic = clock.t - (ml._TUNING.drop_phase_timeout_s - 30.0)
+    ml.tick(ctx)
+    assert ctx.drop_task.best_effort_now is False
+    ctx.drop_task.phase_entered_monotonic = clock.t - (ml._TUNING.drop_phase_timeout_s - 10.0)
+    ml.tick(ctx)
+    assert ctx.drop_task.best_effort_now is True
+
+
 # ---- APPROACH 放弃 -> 拉黑 -> 下一个 ----
 
 def _approach_ctx(clock, target, clusters, xy=None, dets=()):

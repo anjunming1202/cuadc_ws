@@ -28,6 +28,16 @@ def _exclude_used(candidates: List[Candidate], used_positions: List[Tuple[float,
                        for px, py in used_positions)]
 
 
+def size_class_radius(target: Candidate, candidates: List[Candidate], radii, bounds) -> float:
+    """目标是哪个投放筒（返回真实半径）。候选正好 len(radii) 个时按测得半径排名对号——不怕测值整体偏大偏小；
+    否则按测得半径对 bounds 分档。radii 从小到大。"""
+    if len(candidates) == len(radii):
+        order = sorted(candidates, key=lambda c: c.size)
+        i = min(range(len(order)), key=lambda k: math.hypot(order[k].x - target.x, order[k].y - target.y))
+        return radii[i]
+    return radii[min(sum(target.size > b for b in bounds), len(radii) - 1)]
+
+
 def smallest_first(candidates, used_positions, drop_index) -> Optional[Candidate]:
     """默认策略：排除已投过的位置，选视在尺寸最小的（命中分最高）。"""
     remaining = _exclude_used(candidates, used_positions)

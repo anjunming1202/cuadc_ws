@@ -237,6 +237,60 @@ def test_precise_gate_needs_frame_history_and_rejects_offset():
     assert abs(a.state.gate_res[1] - 0.04) < 0.002
 
 
+def _hold(a, ctx, res, seconds, conf=None, t=1000.0):
+    """以固定的筒心相对投放口偏差 res 悬停：返回 ('drop' | 'give_up' | None, 到投放高度后秒数, 事件代码列表)。"""
+    events = []
+    for i in range(int(round(seconds / DT))):
+        d = _seen_with_port_offset(a, ctx, res)
+        if conf is not None:
+            d.confidence = conf
+        ctx.detections = [d]
+        out = a.loop(ctx, now=t + i * DT)
+        if out.event:
+            events.append(out.event[0])
+        if out.give_up:
+            return 'give_up', i * DT, events + [out.give_up[0]]
+        if out.drop_ready:
+            return 'drop', i * DT, events
+    return None, seconds, events
+
+
+def test_gate_relaxes_by_time_for_smallest_cylinder():
+    a, ctx = _precise_at_drop_alt()
+    a.state.target_r = 0.075                          # 最小筒：3 cm -> 8 s 后 4 cm
+    kind, t, events = _hold(a, ctx, (0.0, 0.035), 12.0)
+    assert kind == 'drop' and 8.0 <= t <= 9.5 and 'DROP_GATE_RELAXED' in events
+
+
+def test_larger_cylinder_gets_wider_gate():
+    a, ctx = _precise_at_drop_alt()
+    a.state.target_r = 0.125                          # 大筒：起步就是 5 cm
+    kind, t, _ = _hold(a, ctx, (0.0, 0.035), 3.0)
+    assert kind == 'drop' and t < 1.5
+
+
+def test_best_effort_drop_after_25s_instead_of_giving_up():
+    a, ctx = _precise_at_drop_alt()
+    a.state.target_r = 0.075
+    kind, t, events = _hold(a, ctx, (0.0, 0.10), 30.0)  # 10 cm：最宽的时间档（5 cm）也过不了
+    assert kind == 'drop' and 25.0 <= t <= 26.5 and 'DROP_BEST_EFFORT' in events
+
+
+def test_best_effort_still_gives_up_on_untrusted_target():
+    a, ctx = _precise_at_drop_alt()
+    a.state.target_r = 0.075
+    kind, t, events = _hold(a, ctx, (0.0, 0.0), 40.0, conf=0.5)  # 跟踪得上但置信度不够：图像门从不评估
+    assert kind == 'give_up' and events[-1] == 'DROP_GATE_TIMEOUT' and 34.0 <= t <= 36.0
+
+
+def test_drop_phase_ending_switches_to_best_effort_at_once():
+    a, ctx = _precise_at_drop_alt()
+    a.state.target_r = 0.075
+    ctx.drop_task.best_effort_now = True
+    kind, t, events = _hold(a, ctx, (0.0, 0.10), 3.0)
+    assert kind == 'drop' and t < 1.5 and 'DROP_BEST_EFFORT' in events
+
+
 def test_first_drop_port_selects_right_lever_and_trim():
     left, _ = _precise_at_drop_alt(port=0)
     right, _ = _precise_at_drop_alt(port=1)

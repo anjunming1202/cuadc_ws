@@ -24,6 +24,7 @@ class DropServo:
 class Targets:
     drop_cylinder_height_m: float
     recon_cylinder_height_m: float
+    drop_cylinder_radii_m: Tuple[float, ...]     # 从小到大
 
 
 @dataclass(frozen=True)
@@ -62,4 +63,5 @@ def load_airframe() -> Airframe:
 
 
 def load_targets() -> Targets:
-    return Targets(**_read('targets.yaml'))
+    d = _read('targets.yaml')
+    return Targets(**{**d, 'drop_cylinder_radii_m': tuple(float(r) for r in d['drop_cylinder_radii_m'])})

@@ -72,6 +72,7 @@ class FsmTuning:
     altitude_tolerance_m: float = 0.5
     recon_coverage_match_m: float = 0.6       # 侦察覆盖去重（surveys/detect_count）：新检测离已覆盖点多近算同一个筒
     drop_phase_timeout_s: float = 120.0
+    drop_best_effort_s: float = 20.0          # 投放阶段只剩这么久且没投满：当前目标改尽力投（approach 收 best_effort_now）
     recon_phase_timeout_s: float = 90.0
     battery_critical_fraction: float = 0.20   # sensor_msgs/BatteryState.percentage 是 0~1
     gps_fix_ok_threshold: int = 3             # MAVLink GPS_FIX_TYPE：3 = 3D fix
@@ -108,6 +109,7 @@ _RECON_STATES = frozenset({State.SURVEY_RECON_ZONE})
 # 不读文件）；decision_node 起来后按 profile/scenario 调 configure_*() 换成对应档。----
 _WORLD = mission_config.MissionWorld()          # A：世界/任务/场景
 _DROP_PORTS = len(cuadc_physical.load_airframe().drop_ports)
+_CYLINDER_RADII = cuadc_physical.load_targets().drop_cylinder_radii_m
 _TUNING = FsmTuning()                            # B′：FSM 本体调参
 _SEARCH = search_strategy.SearchConfig()         # B：SEARCH 算法参数
 _DROP_SCAN_WAYPOINTS = _scan_waypoints(_WORLD.drop_zone_center, _WORLD.drop_scan_offsets,
@@ -184,6 +186,8 @@ class DropTaskState:
     rejected_positions: List[Tuple[float, float]] = field(default_factory=list)  # 放弃过的目标，不再选/不再改锁
     rescans: int = 0                          # 本轮找目标已重扫次数，选中目标即清零
     release_failures: int = 0                 # 本次投放 release_payload 失败次数
+    target_radius_m: Optional[float] = None   # 选定目标是哪个投放筒（真实半径），进接近时定一次
+    best_effort_now: bool = False             # 投放阶段快到时：当前目标不再等严格投放门
 
 
 @dataclass
@@ -296,6 +300,8 @@ def _after_takeoff():
 def _start_approach(ctx, target):
     ctx.drop_task.selected_target = target
     ctx.drop_task.rescans = 0
+    ctx.drop_task.target_radius_m = drop_strategy.size_class_radius(
+        target, search_strategy.candidates(ctx, _SEARCH), _CYLINDER_RADII, _SEARCH.size_class_bounds_m)
     _ACTIVE_APPROACH.enter(ctx)  # 以选定目标为锁定种子，清接近内部状态
     return TickResult(next_state=State.APPROACH_DROP_TARGET)
 
@@ -511,6 +517,10 @@ def _tick_approach_drop_target(ctx):
     # approaches/ / cuadc_decision/README.md。这里只把它的输出翻成 TickResult：
     # 对齐并稳住（drop_ready）就转 DROP，否则发它要的运动指令（粗段位置、末端速度）。
     # 放弃（give_up）= 该目标确认不了/对不上：拉黑，换已知的下一个候选或回 SEARCH。
+    dt = ctx.drop_task
+    left = _TUNING.drop_phase_timeout_s - (time.monotonic() - dt.phase_entered_monotonic) \
+        if dt.phase_entered_monotonic is not None else float('inf')
+    dt.best_effort_now = left < _TUNING.drop_best_effort_s and dt.drop_count < _WORLD.drop_count_target
     out = _ACTIVE_APPROACH.loop(ctx)
     event = Fault(*out.event) if out.event is not None else None
     if out.give_up is not None:

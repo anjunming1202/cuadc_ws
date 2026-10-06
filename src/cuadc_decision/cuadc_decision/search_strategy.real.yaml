@@ -6,3 +6,4 @@ settle_seconds: 1.5
 min_detection_confidence: 0.5
 min_candidates_before_select: 3     # = 投放区筒数（规则固定 3 个）；bench 场景覆盖成 1
 max_tilt_deg: 10.0                  # 倾斜超过此角的帧不进聚类：放过匀速巡航(~7°)、挡急加减速
+size_class_bounds_m: [0.098, 0.126]  # 5m 搜索测得半径分小/中/大筒（真机测值比真值大约 12%：0.084/0.111/0.141）

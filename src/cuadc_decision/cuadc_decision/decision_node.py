@@ -349,6 +349,9 @@ class DecisionNode(Node):
             gr, gp = getattr(ast, 'gate_res', None), getattr(ast, 'gate_pred', None)
             gatestr = (f' gate=({gr[0]:.3f},{gr[1]:.3f}) pred=({gp[0]:.3f},{gp[1]:.3f})'
                        if gr is not None and gp is not None else '')
+            if getattr(ast, 'gate_tol', None) is not None:
+                gatestr += (f' tol={ast.gate_tol:.3f} r={ast.target_r}'
+                            + (' BEST_EFFORT' if getattr(ast, 'best_effort', False) else ''))
             dist = None
             if ast.locked is not None and self._ctx.local_position_xy is not None:
                 dist = math.hypot(self._ctx.local_position_xy[0] - ast.locked.x,

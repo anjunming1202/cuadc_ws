@@ -3,7 +3,13 @@
 # 最小筒 Ø0.15：瓶心需在 7.5 − 3.3 ≈ 4 cm 内，门取 3 cm。
 image_gate: true
 drop_tol_m: 0.03
-relaxed_drop_tol_m: 0.06   # stable_timeout_s（15 s）仍没过门才放宽
+# 门 = 3 cm ×（筒半径/最小筒半径）× 时间倍数：小筒 3→4→5 cm、中筒 4→5.3→6.7 cm、大筒 5→6.7→8.3 cm
+size_tolerance: true
+gate_schedule: [[0, 1.0], [8, 1.33], [15, 1.67]]
+# 25 s 仍没过门：尽力投（15 cm，仍要求跟踪中、置信度够、尺寸一致）；再 10 s 不行才放弃
+best_effort_after_s: 25.0
+best_effort_tol_m: 0.15
+best_effort_window_s: 10.0
 stable_hold_s: 0.3
 gate_speed_mps: 0.08
 release_delay_s: 0.5        # 过门到瓶子离开：装瓶时钩子挂在临界点附近（软件链路约 0.1 s + 舵机约 0.4 s）

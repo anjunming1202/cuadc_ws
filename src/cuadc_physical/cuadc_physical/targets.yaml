@@ -2,4 +2,5 @@
 # 仿真场地建图（cuadc_sim/field/config.py）按设计单独维护同一组数值。
 
 drop_cylinder_height_m: 0.30       # 投放区圆筒高（反投影平面 = 筒顶）
+drop_cylinder_radii_m: [0.075, 0.10, 0.125]  # 投放区三个筒的半径（Ø0.15/0.20/0.25），从小到大
 recon_cylinder_height_m: 0.15      # 侦察区圆筒高（感知目前一律按投放筒高反投影，侦察筒定位会有偏差）

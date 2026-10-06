@@ -58,6 +58,8 @@
 | 已收敛、投放高度附近丢失 | endgame：有界盲收口投放 |
 | 粗段到点、门内无检测但 `relock_radius_m`（1.5m）内持续 `relock_ticks` 次看到别的筒 | 改锁过去，记 `RELOCK_WIDE` |
 | 进入 `drop_alt + drop_alt_band_m`（0.1m）后 `stable_timeout_s`（15s）仍没过投放门（4cm）——之后不论高度持续计时（贴着投放高度上下浮动、丢失爬升时也算） | 门放宽到 `relaxed_drop_tol_m`（8cm），记 `DROP_GATE_RELAXED`（偏一点投出去比投不出去好：筒外 0.5m 内仍算 B 区） |
+| `position_lock_descent` 配了 `gate_schedule` / `size_tolerance`（precise 变体） | 投放门 = `drop_tol_m` ×（目标筒半径/最小筒半径）× 时间表倍数，按到投放高度后的时间逐档放宽，每档记 `DROP_GATE_RELAXED`；目标是哪个筒在进接近时定：投放区正好 3 个候选按尺寸排名，否则按 `size_class_bounds_m` 分档 |
+| `best_effort_after_s`（25s）仍没过门，或任务 FSM 判投放阶段只剩 `drop_best_effort_s`（20s）且没投满 | 尽力投：门改 `best_effort_tol_m`（15cm），仍要求跟踪中、置信度够、尺寸一致，记 `DROP_BEST_EFFORT` |
 
 放弃本目标（→ 任务 FSM 拉黑）：
 
@@ -65,7 +67,7 @@
 |---|---|
 | `TARGET_UNCONFIRMED` | 粗段水平到点后 `coarse_confirm_timeout_s`（8s）仍没交接末端（改锁后重新计时） |
 | `TARGET_LOST_REPEATEDLY` | 末端退回粗段超过 `max_reacquire`（3）次 |
-| `DROP_GATE_TIMEOUT` | 放宽后再 `relaxed_timeout_s`（10s）仍没过门 |
+| `DROP_GATE_TIMEOUT` | 放宽后再 `relaxed_timeout_s`（10s）仍没过门；有尽力投时为尽力投后再 `best_effort_window_s`（10s）仍没投（图像门一直不评估 = 目标不可信） |
 | `TERMINAL_TIMEOUT` | 本目标末端总时长（首次交接起算，回退粗段不清零）超过 `terminal_timeout_s`（60s） |
 
 `position_lock_descent`（[ADR-0012](adr/0012-terminal-position-lock.md)）继承上面全部路径和代码，只有三处不同：短丢容忍 `max_coast_ticks` 15（1.5s，保持估计和高度）；climb 时水平仍锁在目标估计点上（不是原地）；endgame 判据是投放口到目标估计 < 当前容差，冻结估计照查投放门。
