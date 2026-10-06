@@ -9,6 +9,7 @@
 
   <depend>rclpy</depend>
   <depend>cuadc_physical</depend>
+  <depend>cuadc_interface_msgs</depend>
   <depend>launch</depend>
   <depend>launch_ros</depend>
 

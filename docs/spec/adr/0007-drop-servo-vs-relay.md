@@ -72,6 +72,7 @@ SERVO9 上接的不是一个双向舵机，而是左右两个**单向**舵机：
   每个 `drop_ports` 项的 `release_us`），口号越界拒绝；`DropStatus` 带回口号。决策仍不认识 PWM。
 - 本投用哪个口只在决策 `MissionContext.drop_port` 算一次（从 `first_drop_port` 起轮换），瞄准杠杆臂和放料
   共用；放料失败重试仍是同一口。
+- 仿真按 `status/drop` 的口号脱钩对应水瓶（原按进 DROP_PAYLOAD 的次序）。
 
 ## 被否决：RC 直通 + 任务期 RC override（2026-10-03 台架推翻）
 

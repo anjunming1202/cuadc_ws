@@ -1,49 +1,46 @@
-"""sim-only 桥：决策进 DROP_PAYLOAD 时给 Gazebo 物理水瓶发 DetachableJoint 脱钩
-（真机同事件由 interface release_payload 驱动真舵机）。按投放次序 left->right，与
-lever_arm 左/右对应。只随 mission_bringup(profile=sim) 起——触发源是任务事件，放
-世界 bringup 会把世界耦合到决策（sim/task 解耦约定）。"""
+"""sim-only 桥：接口层报一次投放已执行（status/drop，带口号）时，给 Gazebo 里该口的物理水瓶发
+DetachableJoint 脱钩（真机同一事件是 release_payload 驱动该口舵机）。只随 mission_bringup(profile=sim)
+起——触发源是任务事件，放世界 bringup 会把世界耦合到决策（sim/task 解耦约定）。"""
 import os
 import subprocess
 
 import cuadc_physical
 import rclpy
+from cuadc_interface_msgs.msg import DropStatus
 from rclpy.node import Node
-from std_msgs.msg import String
-
-_DROP_STATE = 'DROP_PAYLOAD'
 
 
 class DropBottleBridge(Node):
     def __init__(self):
         super().__init__('drop_bottle_bridge')
         self.declare_parameter('model', 'cuadc_iris')
-        self.declare_parameter('state_topic', '/cuadc_decision/mission_state')
-        # 脱钩次序 = 投放次序; 与 approach lever_arm 左/右对应(见 ADR-0010 簇②)
-        # 脱钩次序 = 机体配置里投放口的投放次序（与决策杠杆臂表同序），模型里的瓶名与口名一致。
-        self.declare_parameter('bottles', [p.name for p in cuadc_physical.load_airframe().drop_ports])
+        self.declare_parameter('status_topic', '/cuadc_interface/status/drop')
+        # 按口号排的瓶名（模型里的瓶名与机体配置的口名一致）。
+        ports = cuadc_physical.load_airframe().drop_ports
+        self.declare_parameter('bottles', [p.name for p in ports])
         self._model = self.get_parameter('model').value
         self._bottles = list(self.get_parameter('bottles').value)
-        self._idx = 0
-        self._prev = None
-        topic = self.get_parameter('state_topic').value
-        self.create_subscription(String, topic, self._on_state, 10)
+        self._dropped = set()
+        topic = self.get_parameter('status_topic').value
+        self.create_subscription(DropStatus, topic, self._on_drop, 10)
         self.get_logger().info(
-            f'drop_bottle_bridge up: watching {topic}, detach order={self._bottles} on {self._model}')
+            f'drop_bottle_bridge up: watching {topic}, '
+            f'bottles by port={self._bottles} on {self._model}')
 
-    def _on_state(self, msg: String):
-        s = msg.data
-        if s == _DROP_STATE and self._prev != _DROP_STATE:  # 只在进入 DROP 的那一下触发
-            if self._idx < len(self._bottles):
-                bottle = self._bottles[self._idx]
-                self._idx += 1
-                self._detach(bottle)
-            else:
-                self.get_logger().warn('entered DROP_PAYLOAD but all bottles already dropped')
-        self._prev = s
+    def _on_drop(self, msg: DropStatus):
+        if not msg.actuated:
+            return
+        if msg.port >= len(self._bottles):
+            self.get_logger().warn(f'drop on unknown port {msg.port}')
+        elif msg.port in self._dropped:
+            self.get_logger().warn(f'port {msg.port} ({self._bottles[msg.port]}) already dropped')
+        else:
+            self._dropped.add(msg.port)
+            self._detach(self._bottles[msg.port])
 
     def _detach(self, bottle: str):
         topic = f'/model/{self._model}/drop/{bottle}/detach'
-        self.get_logger().info(f'DROP_PAYLOAD -> detach bottle "{bottle}" via {topic}')
+        self.get_logger().info(f'drop actuated -> detach bottle "{bottle}" via {topic}')
         env = dict(os.environ, GZ_VERSION='harmonic')
         # gz.msgs.Empty 到 DetachableJoint 的 detach_topic = 脱钩; 用 CLI 避免额外 gz-transport
         # python 依赖(与 gazebo_bringup 里 fix_camera_pose 同套路)。
