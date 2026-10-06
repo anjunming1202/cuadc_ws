@@ -33,6 +33,7 @@ from cuadc_perception_msgs.msg import DetectionArray
 
 from cuadc_decision import mission_logic
 from cuadc_decision import search_strategy
+from cuadc_decision import surveys
 from cuadc_decision.mission import config as mission_config
 
 _INTERFACE_NS = '/cuadc_interface'
@@ -69,6 +70,7 @@ class DecisionNode(Node):
         # approach = 接近模块名（空 = approaches.ACTIVE）；approach_variant = 叠加 <approach>.<variant>.yaml
         self.declare_parameter('approach', '')
         self.declare_parameter('approach_variant', '')
+        self.declare_parameter('survey', '')  # 侦察覆盖模块名（空 = surveys.ACTIVE）
         self.declare_parameter('first_drop_port', 0)  # 第一投用的投放口：0 左 / 1 右，之后轮换
         profile = self.get_parameter('profile').value
         scenario = self.get_parameter('scenario').value
@@ -83,7 +85,9 @@ class DecisionNode(Node):
         self.get_logger().info(f'approach={mission_logic._ACTIVE_APPROACH.name} '
                                f'variant={self.get_parameter("approach_variant").value or "-"} profile={profile} '
                                f'first_drop_port={self.get_parameter("first_drop_port").value}')
-        mission_logic.configure_mission(world, tuning, search)
+        survey = surveys.create_active(world, tuning, profile, self.get_parameter('survey').value or None)
+        self.get_logger().info(f'survey={survey.name}: {survey.describe()}')
+        mission_logic.configure_mission(world, tuning, search, survey)
         self._ctx = mission_logic.MissionContext(current_state=world.initial_state,
                                                  drop_port_start=int(self.get_parameter('first_drop_port').value))
         self._pending_service_name = None

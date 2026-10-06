@@ -20,6 +20,8 @@
 - `approaches/`——投放接近的可替换「阶段策略」，一个 approach 一个模块 + 各自
   的 sim/real config yaml 跟着放（组织同 `cuadc_perception/detectors/`），详见
   下面「投放接近」。
+- `surveys/`——侦察区覆盖的可替换单元（`SURVEY_RECON_ZONE` 内部怎么飞、何时算覆盖完），
+  组织同 `approaches/`，详见下面「侦察覆盖」。
 - `mission/`——世界/任务/场景参数的单一真源配置层（非算法参数：区中心、扫描航点、
   一般巡航高度、要投几次、跑哪些阶段、`initial_state`…），sim/real 分文件 + 场景覆盖，
   详见 [`docs/spec/mission-config-layer.md`](../../docs/spec/mission-config-layer.md)。
@@ -42,12 +44,14 @@ ros2 launch cuadc_decision decision_bringup.launch.py
   ——场景自带 `initial_state`（从哪个 state 起跑）和 `phases`（跑哪些阶段），单阶段隔离
   测试靠它 + `initial_state` 组合实现，不在状态机里加 test-only 分支。首批：`full_mission`、
   `drop_zone_bench`（投放区单练，投完即 RTL + 放宽 SEARCH 选目标门）、`drop_zone_full`（投放区
-  全流程，SEARCH/选目标同正式任务，投满即 RTL）、`recon_zone_bench`。
+  全流程，SEARCH/选目标同正式任务，投满即 RTL）、`recon_zone_bench`（侦察区单练，起飞后直接去侦察）。
   完整设计见 [`docs/spec/mission-config-layer.md`](../../docs/spec/mission-config-layer.md)。
 
 ```bash
 ros2 launch cuadc_decision decision_bringup.launch.py scenario:=drop_zone_bench
 ```
+
+- `survey`（默认空 = `surveys.ACTIVE`）：侦察覆盖模块名，见下「侦察覆盖」。
 
 ## 日志
 
@@ -61,6 +65,20 @@ ros2 launch cuadc_decision decision_bringup.launch.py scenario:=drop_zone_bench
 
 另开一个终端 `ros2 topic echo /cuadc_decision/mission_state` 能拿到干净的、
 只有当前状态的实时视图，不用在主日志里找。
+
+## 侦察覆盖（SURVEY）：可替换单元
+
+`NAVIGATE_TO_RECON_ZONE → SURVEY_RECON_ZONE → RTL` 是固定框架；侦察区内**怎么飞、什么时候算
+覆盖完**由 `surveys/` 里的单元决定（`entry_point/enter/loop`，`loop` 吐位置指令 + 限速 +「覆盖完」），
+换单元不动状态机。改 `surveys.ACTIVE` 或启动参数 `survey:=` 切换。
+
+- **`coverage_scan`（默认）**：不靠检测，在区上空按蛇形扫描线慢速飞一遍，扫描线间距按筒壁遮挡
+  算（偏离筒正上方 ≤ `view_offset_ratio` × 相机离地高 才看得到整块标识），保证每个筒位都从近正上方
+  经过，给图传看清；飞完即 RTL。高度/速度在 `coverage_scan.{sim,real}.yaml`，区大小 `recon_zone_size`
+  在 mission 层。启动日志 `survey=…` 一行打出扫描线条数、间距、航程。
+- **`detect_count`**：原逻辑原样保留——按 `recon_scan_offsets` 飞扫描点，看到的筒按位置去重，凑够
+  `recon_cylinder_count` 个才结束；依赖感知检出侦察筒（目前检不到，见
+  [`failure-handling.md`](../../docs/spec/failure-handling.md)）。
 
 ## 投放接近（APPROACH）：可替换的「阶段策略」单元
 
@@ -105,13 +123,15 @@ ros2 launch cuadc_decision decision_bringup.launch.py scenario:=drop_zone_bench
 - **A 世界/任务/场景**（非算法参数）→ `mission/`（`mission.{sim,real}.yaml` + `scenarios/`）。
 - **B 各可替换算法**（跟算法源码放、按算法名命名）→ `approaches/<approach>.{sim,real}.yaml`
   （增益/门限/降高/投放容差/杆臂…，及**投放区作业高度**——与投放算法绑定）、
-  `search_strategy.{sim,real}.yaml`（SEARCH 聚类/选目标门）；检测器同理在
+  `search_strategy.{sim,real}.yaml`（SEARCH 聚类/选目标门）、`surveys/<survey>.{sim,real}.yaml`
+  （侦察覆盖高度/速度）；检测器同理在
   `cuadc_perception/detectors/`。
 - **B′ 顶层 FSM 本体通用参数**（到点容差/阶段超时/安全守卫）→ `fsm_tuning.{sim,real}.yaml`。
 
 **sim/real 与 scenario 选择**沿用 `connection` 那套：不靠一个参数默认值二选一，而是
 **场景启动脚本**把 `profile`/`scenario` 写死（`run_mission_sim.sh`=sim+full_mission /
-`run_mission_sim_drop_zone_bench.sh`=sim+drop_zone_bench / `run_mission_real.sh`=real）。
+`run_mission_sim_drop_zone_bench.sh`=sim+drop_zone_bench / `run_mission_sim_recon_zone_bench.sh`=sim+recon_zone_bench /
+`run_mission_real.sh`=real）。
 两者经 `mission_bringup` 传到 `decision_node.__init__`，那里各层 `load` 后调
 `mission_logic.configure_approach(profile)` + `configure_mission(world, tuning, search)`
 一次性注入（`world` 已含场景覆盖）。同一个 `profile` 也选感知检测器的档。

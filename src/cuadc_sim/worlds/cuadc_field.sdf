@@ -10,7 +10,8 @@
     this session's WSLg rendering-performance investigation (see
     src/cuadc_sim/README.md). Drop/recon cylinders are hollow tubes
     (procedurally generated meshes, field/gen_tube_mesh.py), not solid
-    discs: payloads go into them and placards sit inside them.
+    discs: payloads go into drop tubes (closed bottom); recon tubes are
+    bottomless and their placards lie on the ground inside.
 
     Two parallel fields (doc section 13, config.FIELD_IDS/FIELD_Y_OFFSETS):
     field B is field A's layout translated in Y only. Only ONE vehicle
@@ -669,7 +670,7 @@
           <geometry><cylinder><radius>0.1</radius><length>0.15</length></cylinder></geometry>
         </collision>
         <visual name="visual">
-          <geometry><mesh><uri>../models/cuadc_tube/meshes/tube_d200_h150.obj</uri></mesh></geometry>
+          <geometry><mesh><uri>../models/cuadc_tube/meshes/tube_d200_h150_open.obj</uri></mesh></geometry>
           <material>
           <ambient>0.95 0.95 0.95 1</ambient>
           <diffuse>0.95 0.95 0.95 1</diffuse>
@@ -688,7 +689,7 @@
           <geometry><cylinder><radius>0.1</radius><length>0.15</length></cylinder></geometry>
         </collision>
         <visual name="visual">
-          <geometry><mesh><uri>../models/cuadc_tube/meshes/tube_d200_h150.obj</uri></mesh></geometry>
+          <geometry><mesh><uri>../models/cuadc_tube/meshes/tube_d200_h150_open.obj</uri></mesh></geometry>
           <material>
           <ambient>0.95 0.95 0.95 1</ambient>
           <diffuse>0.95 0.95 0.95 1</diffuse>
@@ -730,7 +731,7 @@
           <geometry><cylinder><radius>0.1</radius><length>0.15</length></cylinder></geometry>
         </collision>
         <visual name="visual">
-          <geometry><mesh><uri>../models/cuadc_tube/meshes/tube_d200_h150.obj</uri></mesh></geometry>
+          <geometry><mesh><uri>../models/cuadc_tube/meshes/tube_d200_h150_open.obj</uri></mesh></geometry>
           <material>
           <ambient>0.95 0.95 0.95 1</ambient>
           <diffuse>0.95 0.95 0.95 1</diffuse>
@@ -749,7 +750,7 @@
           <geometry><cylinder><radius>0.1</radius><length>0.15</length></cylinder></geometry>
         </collision>
         <visual name="visual">
-          <geometry><mesh><uri>../models/cuadc_tube/meshes/tube_d200_h150.obj</uri></mesh></geometry>
+          <geometry><mesh><uri>../models/cuadc_tube/meshes/tube_d200_h150_open.obj</uri></mesh></geometry>
           <material>
           <ambient>0.95 0.95 0.95 1</ambient>
           <diffuse>0.95 0.95 0.95 1</diffuse>
@@ -791,7 +792,7 @@
           <geometry><cylinder><radius>0.1</radius><length>0.15</length></cylinder></geometry>
         </collision>
         <visual name="visual">
-          <geometry><mesh><uri>../models/cuadc_tube/meshes/tube_d200_h150.obj</uri></mesh></geometry>
+          <geometry><mesh><uri>../models/cuadc_tube/meshes/tube_d200_h150_open.obj</uri></mesh></geometry>
           <material>
           <ambient>0.95 0.95 0.95 1</ambient>
           <diffuse>0.95 0.95 0.95 1</diffuse>
@@ -1098,7 +1099,7 @@
           <geometry><cylinder><radius>0.1</radius><length>0.15</length></cylinder></geometry>
         </collision>
         <visual name="visual">
-          <geometry><mesh><uri>../models/cuadc_tube/meshes/tube_d200_h150.obj</uri></mesh></geometry>
+          <geometry><mesh><uri>../models/cuadc_tube/meshes/tube_d200_h150_open.obj</uri></mesh></geometry>
           <material>
           <ambient>0.95 0.95 0.95 1</ambient>
           <diffuse>0.95 0.95 0.95 1</diffuse>
@@ -1117,7 +1118,7 @@
           <geometry><cylinder><radius>0.1</radius><length>0.15</length></cylinder></geometry>
         </collision>
         <visual name="visual">
-          <geometry><mesh><uri>../models/cuadc_tube/meshes/tube_d200_h150.obj</uri></mesh></geometry>
+          <geometry><mesh><uri>../models/cuadc_tube/meshes/tube_d200_h150_open.obj</uri></mesh></geometry>
           <material>
           <ambient>0.95 0.95 0.95 1</ambient>
           <diffuse>0.95 0.95 0.95 1</diffuse>
@@ -1159,7 +1160,7 @@
           <geometry><cylinder><radius>0.1</radius><length>0.15</length></cylinder></geometry>
         </collision>
         <visual name="visual">
-          <geometry><mesh><uri>../models/cuadc_tube/meshes/tube_d200_h150.obj</uri></mesh></geometry>
+          <geometry><mesh><uri>../models/cuadc_tube/meshes/tube_d200_h150_open.obj</uri></mesh></geometry>
           <material>
           <ambient>0.95 0.95 0.95 1</ambient>
           <diffuse>0.95 0.95 0.95 1</diffuse>
@@ -1178,7 +1179,7 @@
           <geometry><cylinder><radius>0.1</radius><length>0.15</length></cylinder></geometry>
         </collision>
         <visual name="visual">
-          <geometry><mesh><uri>../models/cuadc_tube/meshes/tube_d200_h150.obj</uri></mesh></geometry>
+          <geometry><mesh><uri>../models/cuadc_tube/meshes/tube_d200_h150_open.obj</uri></mesh></geometry>
           <material>
           <ambient>0.95 0.95 0.95 1</ambient>
           <diffuse>0.95 0.95 0.95 1</diffuse>
@@ -1220,7 +1221,7 @@
           <geometry><cylinder><radius>0.1</radius><length>0.15</length></cylinder></geometry>
         </collision>
         <visual name="visual">
-          <geometry><mesh><uri>../models/cuadc_tube/meshes/tube_d200_h150.obj</uri></mesh></geometry>
+          <geometry><mesh><uri>../models/cuadc_tube/meshes/tube_d200_h150_open.obj</uri></mesh></geometry>
           <material>
           <ambient>0.95 0.95 0.95 1</ambient>
           <diffuse>0.95 0.95 0.95 1</diffuse>

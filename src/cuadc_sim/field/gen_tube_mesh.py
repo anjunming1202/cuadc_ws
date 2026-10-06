@@ -5,8 +5,10 @@ The rules call these "圆筒" (tubes/drums), not solid cylinders -- payloads
 go INTO them (drop zone) and placards sit INSIDE them (recon zone), which
 only makes visual sense if they're actually open at the top. SDF has no
 built-in "tube" primitive, so this generates a plain OBJ (outer wall +
-inner wall + full closed bottom disk, top left open) procedurally -- no
-3D modeling tool needed, just the geometry.
+inner wall, top left open) procedurally -- no 3D modeling tool needed,
+just the geometry. Drop tubes get a closed bottom disk; recon tubes are
+bottomless, so the placard lying on the ground shows through the opening
+(config.DROP_TUBE_BOTTOM / RECON_TUBE_BOTTOM).
 
 Collision geometry stays a solid outer cylinder (in gen_world.py, not
 here): a concave open-tube collision mesh is unnecessary complexity for
@@ -22,13 +24,20 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 MESHES_DIR = os.path.join(HERE, '..', 'models', 'cuadc_tube', 'meshes')
 
 
-def tube_obj(outer_radius, inner_radius, height, segments=28):
+def mesh_name(diameter, height, bottom):
+    """Mesh filename encoding the tube's size and whether it has a bottom."""
+    suffix = '' if bottom else '_open'
+    return f'tube_d{int(round(diameter * 1000))}_h{int(round(height * 1000))}{suffix}.obj'
+
+
+def tube_obj(outer_radius, inner_radius, height, bottom=True, segments=28):
     n = segments
-    # The floor has thickness (bottom_h), so the interior floor sits ABOVE the
+    # The floor has thickness (floor_h), so the interior floor sits ABOVE the
     # ground plane instead of coincident with it -- a z=0 floor z-fights the
     # ground and the ground wins, so from above the tube looks bottomless.
     # Reusing the wall thickness as the bottom thickness keeps a drum-like look.
-    bottom_h = outer_radius - inner_radius
+    # A bottomless tube's inner wall runs down to the ground instead.
+    floor_h = outer_radius - inner_radius if bottom else 0.0
     verts = []
     for i in range(n):
         theta = 2 * math.pi * i / n
@@ -41,36 +50,40 @@ def tube_obj(outer_radius, inner_radius, height, segments=28):
     for i in range(n):
         theta = 2 * math.pi * i / n
         cx, cy = math.cos(theta), math.sin(theta)
-        verts.append((inner_radius * cx, inner_radius * cy, bottom_h))  # 2*n + i: inner floor rim
+        verts.append((inner_radius * cx, inner_radius * cy, floor_h))   # 2*n + i: inner bottom rim
     for i in range(n):
         theta = 2 * math.pi * i / n
         cx, cy = math.cos(theta), math.sin(theta)
         verts.append((inner_radius * cx, inner_radius * cy, height))    # 3*n + i: inner top
     verts.append((0.0, 0.0, 0.0))                                       # 4*n:   underside center (z=0)
-    verts.append((0.0, 0.0, bottom_h))                                  # 4*n+1: floor center (z=bottom_h)
+    verts.append((0.0, 0.0, floor_h))                                   # 4*n+1: floor center
 
     def OB(i): return i % n + 1
     def OT(i): return n + i % n + 1
-    def IF(i): return 2 * n + i % n + 1   # inner floor rim, at z = bottom_h
+    def IF(i): return 2 * n + i % n + 1   # inner bottom rim, at z = floor_h
     def IT(i): return 3 * n + i % n + 1
     UC = 4 * n + 1  # underside center (z=0)
-    FC = 4 * n + 2  # interior floor center (z=bottom_h)
+    FC = 4 * n + 2  # interior floor center (z=floor_h)
 
     faces = []
     for i in range(n):
         j = i + 1
         # Outer wall, normal points outward (+radial): CCW looking from outside.
         faces.append((OB(i), OB(j), OT(j), OT(i)))
-        # Inner wall (floor rim up to open top), normal points inward (-radial).
+        # Inner wall (bottom rim up to open top), normal points inward (-radial).
         faces.append((IF(j), IF(i), IT(i), IT(j)))
         # Top rim annulus (wall thickness), normal points up (+Z) so the rim
         # reads as a solid edge rather than a hollow slot from above.
         faces.append((OT(i), OT(j), IT(j), IT(i)))
-        # Interior floor disk at z=bottom_h, fan from floor center, up (+Z):
-        # this is what the drone sees looking down into the tube.
-        faces.append((FC, IF(i), IF(j)))
-        # Exterior underside disk at z=0, fan from underside center, down (-Z).
-        faces.append((UC, OB(j), OB(i)))
+        if bottom:
+            # Interior floor disk at z=floor_h, fan from floor center, up (+Z):
+            # this is what the drone sees looking down into the tube.
+            faces.append((FC, IF(i), IF(j)))
+            # Exterior underside disk at z=0, fan from underside center, down (-Z).
+            faces.append((UC, OB(j), OB(i)))
+        else:
+            # Bottom rim annulus on the ground, down (-Z); the cavity stays open to the ground.
+            faces.append((IF(i), IF(j), OB(j), OB(i)))
         # Top of the cavity stays open -- that's the point.
 
     # Flat per-face normals: without them Gazebo/Ogre can't light the mesh
@@ -83,7 +96,8 @@ def tube_obj(outer_radius, inner_radius, height, segments=28):
         L = math.sqrt(nx * nx + ny * ny + nz * nz) or 1.0
         return nx / L, ny / L, nz / L
 
-    lines = ['# procedurally generated closed-bottom tube, see field/gen_tube_mesh.py']
+    kind = 'closed-bottom' if bottom else 'bottomless'
+    lines = [f'# procedurally generated {kind} tube, see field/gen_tube_mesh.py']
     for v in verts:
         lines.append(f'v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}')
     for f in faces:
@@ -97,18 +111,18 @@ def tube_obj(outer_radius, inner_radius, height, segments=28):
 def main():
     import config
     os.makedirs(MESHES_DIR, exist_ok=True)
-    sizes = set()
+    tubes = set()
     for _label, diameter, height in config.DROP_CYLINDERS:
-        sizes.add((diameter, height))
-    sizes.add((config.RECON_CYLINDER_DIAMETER, config.RECON_CYLINDER_HEIGHT))
+        tubes.add((diameter, height, config.DROP_TUBE_BOTTOM))
+    tubes.add((config.RECON_CYLINDER_DIAMETER, config.RECON_CYLINDER_HEIGHT,
+               config.RECON_TUBE_BOTTOM))
 
-    for diameter, height in sizes:
+    for diameter, height, bottom in tubes:
         outer_r = diameter / 2
         inner_r = outer_r - config.TUBE_WALL_THICKNESS
-        name = f'tube_d{int(round(diameter * 1000))}_h{int(round(height * 1000))}.obj'
-        path = os.path.join(MESHES_DIR, name)
+        path = os.path.join(MESHES_DIR, mesh_name(diameter, height, bottom))
         with open(path, 'w') as f:
-            f.write(tube_obj(outer_r, inner_r, height))
+            f.write(tube_obj(outer_r, inner_r, height, bottom))
         print(f'wrote {path}')
 
 

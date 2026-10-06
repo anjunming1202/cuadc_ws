@@ -1,0 +1,3 @@
+# recon_zone_bench 的 sim 专属偏离：配合 run_gazebo_recon_zone_bench.sh 的近侦察区出生世界，
+# 起飞点 = 该世界出生点（= cuadc_sim field/config.py 的 RECON_ZONE_BENCH_SPAWN）。
+takeoff_point: [54.0, 0.0]

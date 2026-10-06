@@ -53,6 +53,8 @@ def generate_launch_description():
     approach_arg = DeclareLaunchArgument('approach', default_value='', description='接近模块名，空 = 默认')
     approach_variant_arg = DeclareLaunchArgument('approach_variant', default_value='',
                                                  description='叠加 <approach>.<variant>.yaml，逗号分隔可多个，空 = 不叠加')
+    # 侦察覆盖选择（只到决策层）：survey:=detect_count 切回原检测计数逻辑。
+    survey_arg = DeclareLaunchArgument('survey', default_value='', description='侦察覆盖模块名，空 = 默认')
     first_drop_port_arg = DeclareLaunchArgument('first_drop_port', default_value='0',
                                                 description='第一投用的投放口：0 左 / 1 右')
     # 感知取帧源，跟 connection 一样各启动脚本写死：sim=ros（订 Gazebo 的
@@ -93,6 +95,7 @@ def generate_launch_description():
             'scenario': LaunchConfiguration('scenario'),
             'approach': LaunchConfiguration('approach'),
             'approach_variant': LaunchConfiguration('approach_variant'),
+            'survey': LaunchConfiguration('survey'),
             'first_drop_port': LaunchConfiguration('first_drop_port'),
         }.items(),
     )
@@ -109,6 +112,6 @@ def generate_launch_description():
     )
 
     return LaunchDescription([connection_arg, profile_arg, scenario_arg, approach_arg, approach_variant_arg,
-                              first_drop_port_arg, frame_source_arg,
+                              survey_arg, first_drop_port_arg, frame_source_arg,
                               interface_launch, cv_perception_launch, decision_launch,
                               sim_drop_bridge])

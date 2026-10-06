@@ -19,7 +19,7 @@ docs/spec/05-perception-decision-interface.md。
 本 FSM 本体的通用调参（到点容差/阶段超时/安全守卫）在挨着本文件的
 `fsm_tuning.{sim,real}.yaml`（`FsmTuning`/`load_tuning`）；SEARCH 的聚类/选目标算法
 及其参数在 `search_strategy.py`（+ 同名 yaml）；投放目标选哪个在 `drop_strategy.py`；
-接近算法在 `approaches/`。本文件不再持有这些为模块级常量。
+接近算法在 `approaches/`；侦察区怎么覆盖在 `surveys/`。本文件不再持有这些为模块级常量。
 """
 
 import math
@@ -34,6 +34,7 @@ import yaml
 from cuadc_decision import approaches
 from cuadc_decision import drop_strategy
 from cuadc_decision import search_strategy
+from cuadc_decision import surveys
 from cuadc_decision.drop_strategy import Candidate
 from cuadc_decision.mission import config as mission_config
 
@@ -69,7 +70,7 @@ class FsmTuning:
     import 期不读文件），正常由 decision_node `load_tuning(profile)` 读入后注入。"""
     position_tolerance_m: float = 0.5
     altitude_tolerance_m: float = 0.5
-    recon_coverage_match_m: float = 0.6       # 侦察覆盖去重：新检测离已覆盖点多近算同一个筒
+    recon_coverage_match_m: float = 0.6       # 侦察覆盖去重（surveys/detect_count）：新检测离已覆盖点多近算同一个筒
     drop_phase_timeout_s: float = 120.0
     recon_phase_timeout_s: float = 90.0
     battery_critical_fraction: float = 0.20   # sensor_msgs/BatteryState.percentage 是 0~1
@@ -95,15 +96,9 @@ def load_tuning(profile: str) -> FsmTuning:
     return FsmTuning(**data)
 
 
-def _field_to_takeoff(field_x, field_y, takeoff_point):
-    """任务配置的场地坐标 -> 起飞坐标系 (前, 右)：只减起飞点。场地坐标轴与起飞坐标系一致（+x = 起飞时
-    机头方向，+y = 其右侧），所以不旋转——东南西北不参与（见 docs/spec/coordinate-frames.md）。"""
-    return (field_x - takeoff_point[0], field_y - takeoff_point[1])
-
-
 def _scan_waypoints(center, offsets, takeoff_point):
     """场景配置里的区中心 + 相对 offsets（场地坐标）算成起飞坐标系扫描航点列表。"""
-    return [_field_to_takeoff(center[0] + dx, center[1] + dy, takeoff_point) for dx, dy in offsets]
+    return [mission_config.field_to_takeoff(center[0] + dx, center[1] + dy, takeoff_point) for dx, dy in offsets]
 
 
 _DROP_STATES = frozenset({State.SEARCH_DROP_TARGETS, State.APPROACH_DROP_TARGET, State.DROP_PAYLOAD})
@@ -117,8 +112,7 @@ _TUNING = FsmTuning()                            # B′：FSM 本体调参
 _SEARCH = search_strategy.SearchConfig()         # B：SEARCH 算法参数
 _DROP_SCAN_WAYPOINTS = _scan_waypoints(_WORLD.drop_zone_center, _WORLD.drop_scan_offsets,
                                        _WORLD.takeoff_point)
-_RECON_SCAN_WAYPOINTS = _scan_waypoints(_WORLD.recon_zone_center, _WORLD.recon_scan_offsets,
-                                        _WORLD.takeoff_point)
+_ACTIVE_SURVEY = surveys.create_active(_WORLD, _TUNING)  # 侦察区覆盖（见 surveys/），configure_mission 换档
 
 # 可替换的接近阶段策略实例（粗 PBVS -> 末端 IBVS 等，见 approaches/）。持有跨 tick 的接近
 # 内部状态（锁定目标）;进入 APPROACH 时 _tick_search 调 .enter() 重置。换算法改
@@ -133,15 +127,15 @@ def configure_approach(profile, name=None, variant=None):
     _ACTIVE_APPROACH = approaches.create_active(profile=profile, name=name, variant=variant)
 
 
-def configure_mission(world, tuning, search):
-    """注入世界/任务配置(A)、FSM 本体调参(B′)、SEARCH 算法配置(B)，并按 world 里的区中心/
-    offsets 重算起飞坐标系扫描航点。decision_node 在 __init__ 里调一次。"""
-    global _WORLD, _TUNING, _SEARCH, _DROP_SCAN_WAYPOINTS, _RECON_SCAN_WAYPOINTS
+def configure_mission(world, tuning, search, survey=None):
+    """注入世界/任务配置(A)、FSM 本体调参(B′)、SEARCH 算法配置(B)、侦察覆盖实例（缺省 = surveys.ACTIVE
+    按 dataclass 默认，跟这次的 world 建），并按 world 里的区中心/offsets 重算起飞坐标系扫描航点。
+    decision_node 在 __init__ 里调一次。"""
+    global _WORLD, _TUNING, _SEARCH, _DROP_SCAN_WAYPOINTS, _ACTIVE_SURVEY
     _WORLD, _TUNING, _SEARCH = world, tuning, search
     _DROP_SCAN_WAYPOINTS = _scan_waypoints(
         world.drop_zone_center, world.drop_scan_offsets, world.takeoff_point)
-    _RECON_SCAN_WAYPOINTS = _scan_waypoints(
-        world.recon_zone_center, world.recon_scan_offsets, world.takeoff_point)
+    _ACTIVE_SURVEY = survey or surveys.create_active(world, tuning)
 
 
 # ---- decision_node.py 与这里交换数据用的普通数据类型（不含任何 ROS 类型）----
@@ -194,9 +188,7 @@ class DropTaskState:
 
 @dataclass
 class ReconTaskState:
-    covered: List[Tuple[float, float]] = field(default_factory=list)
-    waypoint_index: int = 0
-    phase_entered_monotonic: Optional[float] = None
+    phase_entered_monotonic: Optional[float] = None  # 覆盖进度归 surveys/ 实例自己持有
 
 
 @dataclass
@@ -296,6 +288,11 @@ def _leave_drop_phase():
     return State.NAVIGATE_TO_RECON_ZONE if 'recon' in _WORLD.phases else State.RTL_OR_LAND
 
 
+def _after_takeoff():
+    """起飞后去第一个要跑的阶段：phases 不含 drop（侦察单练）就直接去侦察。"""
+    return State.NAVIGATE_TO_DROP_ZONE if 'drop' in _WORLD.phases else _leave_drop_phase()
+
+
 def _start_approach(ctx, target):
     ctx.drop_task.selected_target = target
     ctx.drop_task.rescans = 0
@@ -315,10 +312,6 @@ def _next_target_or_search(ctx, fault=None):
         result = TickResult(next_state=State.SEARCH_DROP_TARGETS)
     result.fault = fault
     return result
-
-
-def _is_near_any(x, y, points, threshold):
-    return any(math.hypot(x - px, y - py) < threshold for px, py in points)
 
 
 def _dispatch_and_await(ctx, service_name, kwargs, on_success):
@@ -448,7 +441,7 @@ def _tick_takeoff(ctx):
     # step == 'wait_altitude'：takeoff service 只确认指令被接受，不代表
     # 已经爬升到位，得自己比对遥测（04-interfaces.md 的边界约定）。
     if ctx.local_position_z is not None and -ctx.local_position_z >= _WORLD.cruise_alt_m - _TUNING.altitude_tolerance_m:
-        return TickResult(next_state=State.NAVIGATE_TO_DROP_ZONE)
+        return TickResult(next_state=_after_takeoff())
     if ctx.takeoff_wait_since is not None and time.monotonic() - ctx.takeoff_wait_since > _TUNING.takeoff_timeout_s:
         h = -ctx.local_position_z if ctx.local_position_z is not None else float('nan')
         return TickResult(next_state=State.RTL_OR_LAND, fault=Fault(
@@ -456,13 +449,13 @@ def _tick_takeoff(ctx):
     return TickResult()
 
 
-def _zone_entry(waypoints, center):
+def _zone_entry(first_waypoint, center):
     """转场终点：区中线上、与第一个扫描航点同一 x——沿中线直飞进区，到了再横移去扫描起点。"""
-    return (waypoints[0][0], _field_to_takeoff(center[0], center[1], _WORLD.takeoff_point)[1])
+    return (first_waypoint[0], mission_config.field_to_takeoff(center[0], center[1], _WORLD.takeoff_point)[1])
 
 
 def _tick_navigate_to_drop_zone(ctx):
-    entry = _zone_entry(_DROP_SCAN_WAYPOINTS, _WORLD.drop_zone_center)
+    entry = _zone_entry(_DROP_SCAN_WAYPOINTS[0], _WORLD.drop_zone_center)
     arrived = _arrived(ctx.local_position_xy, entry, _TUNING.position_tolerance_m)
     if arrived or _nav_timed_out(ctx, entry):
         ctx.drop_task.phase_entered_monotonic = time.monotonic()
@@ -569,10 +562,11 @@ def _tick_drop_payload(ctx):
 
 
 def _tick_navigate_to_recon_zone(ctx):
-    entry = _zone_entry(_RECON_SCAN_WAYPOINTS, _WORLD.recon_zone_center)
+    entry = _zone_entry(_ACTIVE_SURVEY.entry_point(), _WORLD.recon_zone_center)
     arrived = _arrived(ctx.local_position_xy, entry, _TUNING.position_tolerance_m)
     if arrived or _nav_timed_out(ctx, entry):
         ctx.recon_task.phase_entered_monotonic = time.monotonic()
+        _ACTIVE_SURVEY.enter(ctx)
         fault = None if arrived else Fault(
             'NAV_TIMEOUT', f'not within {_TUNING.position_tolerance_m}m of {entry} after '
                            f'{ctx.nav_timeout_s:.0f}s -> start SURVEY anyway')
@@ -582,23 +576,15 @@ def _tick_navigate_to_recon_zone(ctx):
 
 
 def _tick_survey_recon_zone(ctx):
-    for d in ctx.detections:
-        if d.target_type != 'cylinder':
-            continue
-        if not _is_near_any(d.position.x, d.position.y, ctx.recon_task.covered, _TUNING.recon_coverage_match_m):
-            ctx.recon_task.covered.append((d.position.x, d.position.y))
-
-    if len(ctx.recon_task.covered) >= _WORLD.recon_cylinder_count:
+    # 侦察区内怎么飞、何时算覆盖完是可替换的 survey 单元（见 surveys/）；这里只把它的输出翻成
+    # TickResult：覆盖完结束侦察阶段，否则发它要的位置指令（它给了限速就用它的）。
+    out = _ACTIVE_SURVEY.loop(ctx)
+    if out.done:
         return TickResult(next_state=State.RTL_OR_LAND)
-
-    index = min(ctx.recon_task.waypoint_index, len(_RECON_SCAN_WAYPOINTS) - 1)
-    waypoint = _RECON_SCAN_WAYPOINTS[index]
-    if _at_scan_waypoint(ctx, waypoint):
-        if index < len(_RECON_SCAN_WAYPOINTS) - 1:
-            ctx.recon_task.waypoint_index = index + 1
-            waypoint = _RECON_SCAN_WAYPOINTS[ctx.recon_task.waypoint_index]
-    return TickResult(position_target=(waypoint[0], waypoint[1], -_WORLD.search_alt_m),
-                      **_zone_speeds(ctx, -_WORLD.search_alt_m))
+    speeds = _zone_speeds(ctx, out.position_target[2])
+    if out.speed_mps is not None:
+        speeds['speed_target_mps'] = out.speed_mps
+    return TickResult(position_target=out.position_target, **speeds)
 
 
 def _tick_rtl_or_land(ctx):
@@ -670,7 +656,7 @@ def _check_guards(ctx):
         if time.monotonic() - ctx.recon_task.phase_entered_monotonic > _TUNING.recon_phase_timeout_s:
             return State.RTL_OR_LAND, Fault(
                 'RECON_PHASE_TIMEOUT', f'{_TUNING.recon_phase_timeout_s:.0f}s in survey, '
-                                       f'covered {len(ctx.recon_task.covered)}/{_WORLD.recon_cylinder_count}')
+                                       f'{_ACTIVE_SURVEY.progress()}')
 
     return None, None
 
