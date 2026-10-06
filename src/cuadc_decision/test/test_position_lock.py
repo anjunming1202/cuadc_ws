@@ -257,7 +257,7 @@ def test_second_drop_after_right_first_aims_left_port():
 def test_high_precise_overlay():
     a = approaches.create_active('sim', name='position_lock_descent', variant='high,precise')
     c = a.cfg
-    assert (c.drop_alt_m, c.drop_tol_m, c.image_gate, c.release_delay_s) == (1.4, 0.03, True, 0.3)
+    assert (c.drop_alt_m, c.drop_tol_m, c.image_gate, c.release_delay_s) == (1.4, 0.03, True, 0.5)
     base = approaches.create_active('sim', name='position_lock_descent')
     assert base.cfg.image_gate is False and base.cfg.release_delay_s == 0.0
 

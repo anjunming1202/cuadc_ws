@@ -6,7 +6,7 @@ drop_tol_m: 0.03
 relaxed_drop_tol_m: 0.06   # stable_timeout_s（15 s）仍没过门才放宽
 stable_hold_s: 0.3
 gate_speed_mps: 0.08
-release_delay_s: 0.3        # 过门到瓶子离开：装瓶时钩子挂在临界点附近（软件链路约 0.1 s + 舵机约 0.2 s）
+release_delay_s: 0.5        # 过门到瓶子离开：装瓶时钩子挂在临界点附近（软件链路约 0.1 s + 舵机约 0.4 s）
 pred_window_s: 0.5
 # 末端目标一致性（筒被吹走后检测器会把垫边水泥/砖块缺口当成筒：置信度 0.28–0.40；投放高度 1.4 m 时真筒低空置信度 p5 0.71）
 min_conf_terminal: 0.45
