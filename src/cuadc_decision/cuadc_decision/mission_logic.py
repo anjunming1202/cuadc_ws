@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+import cuadc_physical
 import yaml
 
 from cuadc_decision import approaches
@@ -111,6 +112,7 @@ _RECON_STATES = frozenset({State.SURVEY_RECON_ZONE})
 # ---- 注入式活动配置（见文件头）。import 期用各自 dataclass 默认建一套（纯单测/import
 # 不读文件）；decision_node 起来后按 profile/scenario 调 configure_*() 换成对应档。----
 _WORLD = mission_config.MissionWorld()          # A：世界/任务/场景
+_DROP_PORTS = len(cuadc_physical.load_airframe().drop_ports)
 _TUNING = FsmTuning()                            # B′：FSM 本体调参
 _SEARCH = search_strategy.SearchConfig()         # B：SEARCH 算法参数
 _DROP_SCAN_WAYPOINTS = _scan_waypoints(_WORLD.drop_zone_center, _WORLD.drop_scan_offsets,
@@ -124,11 +126,11 @@ _RECON_SCAN_WAYPOINTS = _scan_waypoints(_WORLD.recon_zone_center, _WORLD.recon_s
 _ACTIVE_APPROACH = approaches.create_active()
 
 
-def configure_approach(profile):
-    """按 sim/real profile 从 yaml 载入当前 approach 的配置,重建活动实例。
-    decision_node 在 __init__ 里调一次（profile 参数由场景启动脚本给）。"""
+def configure_approach(profile, name=None, variant=None):
+    """按 sim/real profile 从 yaml 载入 approach（name 缺省 = approaches.ACTIVE，variant 叠加
+    <name>.<variant>.yaml）,重建活动实例。decision_node 在 __init__ 里调一次。"""
     global _ACTIVE_APPROACH
-    _ACTIVE_APPROACH = approaches.create_active(profile=profile)
+    _ACTIVE_APPROACH = approaches.create_active(profile=profile, name=name, variant=variant)
 
 
 def configure_mission(world, tuning, search):
@@ -211,6 +213,8 @@ class MissionContext:
     pilot_arm_ready: bool = False             # 进 WAIT_PILOT_ARM 后已看到过未解锁（下一次解锁才算数）
     already_armed_noted: bool = False
     pi_in_control: bool = False               # 起飞指令被接受起 = Pi 接管；之后飞手改模式/上锁即夺控
+    drop_port_start: int = 0                  # 第一投用的投放口（0 左 / 1 右），之后轮换
+    rtl_commanded: bool = False               # RTL_OR_LAND 已切过 RTL（或飞控已在 RTL）：不再重发
 
     connected: bool = False
     armed: bool = False
@@ -239,6 +243,11 @@ class MissionContext:
 
     drop_task: DropTaskState = field(default_factory=DropTaskState)
     recon_task: ReconTaskState = field(default_factory=ReconTaskState)
+
+    @property
+    def drop_port(self) -> int:
+        """本投用的投放口号：从 drop_port_start 起轮换。瞄准（杠杆臂）和放料共用这一个值。"""
+        return (self.drop_task.drop_count + self.drop_port_start) % _DROP_PORTS
 
 
 # ---- 通用小工具 ----
@@ -515,6 +524,8 @@ def _tick_approach_drop_target(ctx):
     if out.drop_ready:
         return TickResult(next_state=State.DROP_PAYLOAD, fault=event)
     speeds = _zone_speeds(ctx, out.position_target[2]) if out.position_target is not None else {}
+    if out.speed_mps is not None and out.position_target is not None:
+        speeds['speed_target_mps'] = out.speed_mps
     return TickResult(position_target=out.position_target, velocity_target=out.velocity_target,
                       fault=event, **speeds)
 
@@ -534,6 +545,7 @@ def _tick_drop_payload(ctx):
         return _next_target_or_search(ctx, fault)
 
     res = ctx.last_service_result
+    release = {'port': ctx.drop_port}
     if res is not None and res.name == 'release_payload' and not res.success:
         ctx.drop_task.release_failures += 1
         if ctx.drop_task.release_failures > _TUNING.release_max_retries:
@@ -541,14 +553,14 @@ def _tick_drop_payload(ctx):
             ctx.command_dispatched = False
             return finish(Fault('RELEASE_GAVE_UP', f'release_payload failed '
                                 f'{ctx.drop_task.release_failures}x -> counted as attempted, moving on'))
-        result = _dispatch_and_await(ctx, 'release_payload', {}, finish)
+        result = _dispatch_and_await(ctx, 'release_payload', release, finish)
         result.fault = Fault('RELEASE_FAILED', f'release_payload failed '
                                                f'({ctx.drop_task.release_failures}/{_TUNING.release_max_retries + 1}), retrying')
         return result
 
     # 投放执行是接口层的 release_payload（DO_SET_SERVO 定时序列，投放物理完成才返回；见
     # docs/spec/adr/0007）。DROP_PAYLOAD 态不发运动指令=飞机悬停，等投放跑完才转下一阶段。
-    return _dispatch_and_await(ctx, 'release_payload', {}, finish)
+    return _dispatch_and_await(ctx, 'release_payload', release, finish)
 
 
 def _tick_navigate_to_recon_zone(ctx):
@@ -585,9 +597,14 @@ def _tick_survey_recon_zone(ctx):
 
 
 def _tick_rtl_or_land(ctx):
+    # 只切一次：decision_node 每拍把 last_service_result 刷成本拍结果（多数拍为 None），不记住
+    # 就会隔拍重发 set_mode RTL，把飞手拨的模式抢回来（2026-10-05 任务没退出、地面解锁不了）。
+    if ctx.rtl_commanded or ctx.mode == 'RTL':
+        ctx.rtl_commanded = True
+        return TickResult()
+
     def on_success():
-        # 切到 RTL 之后不需要再做什么——是否真的落地、disarm 由遥测
-        # 观察即可，任务到此结束，停在这个状态直到进程退出。
+        ctx.rtl_commanded = True
         return TickResult()
     return _dispatch_and_await(ctx, 'set_mode', {'mode': 'RTL'}, on_success)
 

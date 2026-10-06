@@ -9,14 +9,15 @@ camera:
   position_m: [0.11, 0.0, 0.20]    # 相机光心（前/右/下）
   mount_rad: [0.0, 1.5708, 0.0]    # roll/pitch/yaw：pitch=+π/2 正下视，yaw=0 图像上方朝机头
 
-drop_ports:                        # 按投放次序排列（= 舵机放料 / 仿真脱钩次序）
+drop_ports:                        # 序号 = 投放口号（0 左 / 1 右）；release_payload 按口号放料
   - name: left
     position_m: [0.0, -0.04]       # 前/右
+    release_us: 1100               # 驱动本口舵机的 PWM
   - name: right
     position_m: [0.0, 0.04]
+    release_us: 1900
 
-drop_servo:                        # 连续旋转舵机，一次 release_payload = forward 持续 run_s 再回 neutral 停
+drop_servo:                        # 两个单向舵机共用一个输出口，按 PWM 选口；一次 release_payload = 本口 PWM 持续 run_s 再回 neutral 停
   output: 9                        # 飞控舵机输出口 SERVO<n>（9 = AUX1），飞控侧 SERVO9_FUNCTION=0
-  forward_us: 1100                 # 放料方向 PWM
-  neutral_us: 1500                 # 停止 PWM
+  neutral_us: 1500                 # 停止 PWM（两个舵机都停）
   run_s: 2.0                       # 放料持续时长；台架记录 1.9–3.33s，按实测改（现场可用 drop_run_s:=… 临时覆盖）

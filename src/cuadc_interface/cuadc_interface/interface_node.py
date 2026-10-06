@@ -105,14 +105,14 @@ class InterfaceNode(Node):
         # 投放执行器参数（属接口层，见 docs/spec/adr/0007）。投放经 DO_SET_SERVO 直接驱动
         # 舵机输出口（飞控该口须 SERVO*_FUNCTION=0）。默认 = 硬件子队台架验证值；
         # drop_run_s 必须按验证的投放动作时长设置（真机）。
-        servo = cuadc_physical.load_airframe().drop_servo  # 默认值的单一真源：cuadc_physical/airframe.yaml
+        airframe = cuadc_physical.load_airframe()  # 默认值的单一真源：cuadc_physical/airframe.yaml
+        servo = airframe.drop_servo
         self.declare_parameter('drop_servo', servo.output)          # 投放舵机输出口 SERVO<n>（9=AUX1）
-        self.declare_parameter('drop_forward_us', servo.forward_us)  # 投放（放料）方向 PWM
-        self.declare_parameter('drop_neutral_us', servo.neutral_us)  # 连续舵机停止/中立 PWM
-        self.declare_parameter('drop_run_s', servo.run_s)            # 投放方向持续时长
+        self.declare_parameter('drop_neutral_us', servo.neutral_us)  # 舵机停止/中立 PWM
+        self.declare_parameter('drop_run_s', servo.run_s)            # 每次放料舵机转动时长
         self.declare_parameter('allow_disarmed_drop', False)  # 仅台架：未解锁也允许软件投放，默认关
         self._drop_servo = int(self.get_parameter('drop_servo').value)
-        self._drop_forward_us = int(self.get_parameter('drop_forward_us').value)
+        self._drop_port_us = [p.release_us for p in airframe.drop_ports]  # 按口号：驱动该口舵机的 PWM
         self._drop_neutral_us = int(self.get_parameter('drop_neutral_us').value)
         self._drop_run_s = float(self.get_parameter('drop_run_s').value)
         self._allow_disarmed_drop = bool(self.get_parameter('allow_disarmed_drop').value)
@@ -513,7 +513,7 @@ class InterfaceNode(Node):
 
     def _on_release_payload(self, request, response):
         # 投放执行：仅本服务被调用时（决策进 DROP_PAYLOAD）驱动投放舵机，
-        # forward 跑 drop_run_s → 回中立停住，物理动作完成才返回（见 docs/spec/adr/0007）。
+        # 请求口的 PWM 跑 drop_run_s → 回中立停住，物理动作完成才返回（见 docs/spec/adr/0007）。
         # armed 守卫：地面（未解锁）不由软件驱动投放；台架测试用 allow_disarmed_drop。
         with self._state_lock:
             armed = self._state['armed']
@@ -527,15 +527,21 @@ class InterfaceNode(Node):
             response.success = False
             response.message = 'no MAVLink link'
             return response
+        port = request.port
+        if port >= len(self._drop_port_us):
+            response.success = False
+            response.message = f'unknown drop port {port}'
+            return response
 
-        if not self._set_drop_servo(self._drop_forward_us):
-            # 保险：forward 未确认也补一次停——宁可多停一次，不赌舵机没在转。
+        self.get_logger().info(f'release_payload: port {port} -> {self._drop_port_us[port]}us x {self._drop_run_s}s')
+        if not self._set_drop_servo(self._drop_port_us[port]):
+            # 保险：放料 PWM 未确认也补一次停——宁可多停一次，不赌舵机没在转。
             self._set_drop_servo(self._drop_neutral_us)
             response.success = False
-            response.message = 'DO_SET_SERVO(forward) rejected or no ack'
+            response.message = f'DO_SET_SERVO(port {port}) rejected or no ack'
             return response
-        time.sleep(self._drop_run_s)  # 投放方向持续 drop_run_s（连续舵机物理动作期间）
-        # 连续舵机必须回中立停住（DO_SET_SERVO 无超时回落，停不住比投放失败更危险）：
+        time.sleep(self._drop_run_s)  # 本口舵机转 drop_run_s（物理放料期间）
+        # 舵机必须回中立停住（DO_SET_SERVO 无超时回落，停不住比投放失败更危险）：
         # 未确认就再补发一次，并如实报失败。
         if not self._set_drop_servo(self._drop_neutral_us):
             self._set_drop_servo(self._drop_neutral_us)
@@ -543,7 +549,7 @@ class InterfaceNode(Node):
             response.message = 'DO_SET_SERVO(neutral/stop) rejected or no ack'
             return response
 
-        self.drop_status_pub.publish(DropStatus(actuated=True))
+        self.drop_status_pub.publish(DropStatus(actuated=True, port=port))
         response.success = True
         response.message = ''
         return response

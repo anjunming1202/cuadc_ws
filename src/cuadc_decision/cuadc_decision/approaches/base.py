@@ -17,6 +17,7 @@ class ApproachOutput:
     drop_ready: bool = False
     give_up: Optional[Tuple[str, str]] = None  # (失效代码, 原因)：本目标对不上，任务 FSM 拉黑它换下一个
     event: Optional[Tuple[str, str]] = None    # (代码, 原因)：值得记一条 FAULT 的处理（改锁、放宽投放门）
+    speed_mps: Optional[float] = None          # 位置指令的水平限速；None = 任务按区域默认
 
 
 def physical_fields():

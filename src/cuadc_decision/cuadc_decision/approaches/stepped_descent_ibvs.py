@@ -61,11 +61,11 @@ class ApproachConfig:
     # 的速度,天然无过冲(位置伺服标准做法);0=关(退化为纯 v_max 限幅)。
     brake_decel_mps2: float = 0.0
     i_zone_m: float = 0.4                 # 只在近端积分,防大接近段积分饱和回弹
-    # 投放口杆臂表,机体系(前,右)米=投放口相对相机,按投放次序排:第 N 次投放用第 N 项。
+    # 投放口杆臂表,机体系(前,右)米=投放口相对相机,按口号排(0 左 / 1 右),本投用哪口见 MissionContext.drop_port。
     # load_config 从 cuadc_physical 注入(投放口位置 − 相机位置)。enter 时按
     # ctx.drop_task.drop_count 选定本次杆臂,超出表长用最后一项。
     lever_arms_m: Tuple[Tuple[float, float], ...] = ((0.0, 0.0),)
-    # 经验瞄准修正,机体系(前,右)米,按投放次序与 lever_arms_m 并行(超表长用最后一项)。
+    # 经验瞄准修正,机体系(前,右)米,按口号与 lever_arms_m 并行(超表长用最后一项)。
     # 吸收解析链吸收不掉的系统误差(安装角/内参/杆臂测量/深度残差):标定流程=实测落点
     # 偏差取均值反填(落点比筒心偏机体前方 5cm -> 前向 trim -0.05)。生效值 lever+trim。
     aim_trims_m: Tuple[Tuple[float, float], ...] = ((0.0, 0.0),)
@@ -110,7 +110,7 @@ def create(config: Optional[ApproachConfig] = None) -> 'SteppedDescentIbvs':
 class ApproachState:
     phase: str = 'coarse'                 # coarse -> terminal (持续丢失会退回 coarse 重来)
     locked: Optional[Candidate] = None    # 锁定目标(世界坐标),粗/末段硬锁都用它关联
-    lever: Tuple[float, float] = (0.0, 0.0)  # 本次投放口杆臂,enter 时按投放次序从 lever_arms_m 选定
+    lever: Tuple[float, float] = (0.0, 0.0)  # 本次投放口杆臂,enter 时按本投口号从 lever_arms_m 选定
     miss: int = 0                         # 末段连续失配帧数(丢检测),超阈值悬停
     integ: Tuple[float, float] = (0.0, 0.0)
     prev_off: Optional[Tuple[float, float]] = None       # 上一帧偏移,PID 的 D 项(on measurement)用
@@ -133,9 +133,9 @@ class SteppedDescentIbvs:
         self.state = ApproachState()
 
     def enter(self, ctx):
-        """进入 APPROACH 时调:以 SEARCH 选定的目标为锁定种子,按投放次序选投放口杆臂
+        """进入 APPROACH 时调:以 SEARCH 选定的目标为锁定种子,按本投口号选投放口杆臂
         (+经验修正),清内部状态。"""
-        i = ctx.drop_task.drop_count
+        i = ctx.drop_port
         arms, trims = self.cfg.lever_arms_m, self.cfg.aim_trims_m
         arm = arms[min(i, len(arms) - 1)]
         trim = trims[min(i, len(trims) - 1)]

@@ -1,5 +1,6 @@
-# 执行一次投放：接口层在投放 RC 通道上跑一段定时 RC override（forward→run_s→neutral→释放），
-# 舵机物理动作完成后才返回。空请求——舵机通道/PWM/时长是接口层配置。见 docs/spec/adr/0007。
+# 执行一次投放：接口层在投放舵机输出口上发本口 PWM 持续 run_s，再回中立停住，物理动作完成后才返回。
+# 舵机输出口/各口 PWM/时长是接口层配置（cuadc_physical/airframe.yaml）。见 docs/spec/adr/0007。
+uint8 port    # 投放口号：0 左 / 1 右
 ---
 bool success
 string message

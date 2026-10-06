@@ -16,11 +16,10 @@ def generate_launch_description():
         default_value='udp:127.0.0.1:14550',
         description='MAVLink 连接目标，仿真默认连本机 SITL，真机部署时改成串口',
     )
-    # 投放舵机参数（输出口 + PWM + 时长），见 docs/spec/adr/0007。默认值取机体固定配置
-    # cuadc_physical/airframe.yaml 的 drop_servo（单一真源）；现场可用 drop_run_s:=… 临时覆盖。
+    # 投放舵机参数（输出口 + 中立 PWM + 时长），见 docs/spec/adr/0007。默认值取机体固定配置
+    # cuadc_physical/airframe.yaml 的 drop_servo（单一真源，各口 PWM 也在那里）；现场可用 drop_run_s:=… 临时覆盖。
     servo = cuadc_physical.load_airframe().drop_servo
     drop_servo_arg = DeclareLaunchArgument('drop_servo', default_value=str(servo.output))
-    drop_forward_us_arg = DeclareLaunchArgument('drop_forward_us', default_value=str(servo.forward_us))
     drop_neutral_us_arg = DeclareLaunchArgument('drop_neutral_us', default_value=str(servo.neutral_us))
     drop_run_s_arg = DeclareLaunchArgument('drop_run_s', default_value=str(servo.run_s))
     # 台架未解锁测舵机用；默认 false，飞行时不要开。
@@ -38,7 +37,6 @@ def generate_launch_description():
         parameters=[{
             'connection': LaunchConfiguration('connection'),
             'drop_servo': LaunchConfiguration('drop_servo'),
-            'drop_forward_us': LaunchConfiguration('drop_forward_us'),
             'drop_neutral_us': LaunchConfiguration('drop_neutral_us'),
             'drop_run_s': LaunchConfiguration('drop_run_s'),
             'allow_disarmed_drop': ParameterValue(
@@ -48,6 +46,6 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        connection_arg, drop_servo_arg, drop_forward_us_arg,
+        connection_arg, drop_servo_arg,
         drop_neutral_us_arg, drop_run_s_arg, allow_disarmed_drop_arg,
         use_sim_time_arg, interface_node])

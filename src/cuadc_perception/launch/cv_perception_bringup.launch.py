@@ -18,7 +18,8 @@ def generate_launch_description():
     min_radius_arg = DeclareLaunchArgument(
         'min_radius_m', default_value='0.05', description='候选物理半径下限（米），过滤明显不合理的检测')
     max_radius_arg = DeclareLaunchArgument(
-        'max_radius_m', default_value='0.18', description='候选物理半径上限（米）')
+        'max_radius_m', default_value='0.40',
+        description='候选物理半径上限（米）；暗光/阴影会把筒洞撑大到真值 1.6 倍以上（2026-10-05 傍晚实飞）')
     profile_arg = DeclareLaunchArgument(
         'profile', default_value='sim',
         description='检测器的 sim/real 档：读 detectors/<detector>.<profile>.yaml，仿真 sim、真机 real')

@@ -1,0 +1,16 @@
+# 精确投放门（approach_variant:=high,precise）：track 时用图像偏差判断投放口相对筒心，并预测瓶子离开时的偏差。
+# 2026-10-06 hf1：过门时偏 3.2 cm，舵机启动约 1.15 s 后瓶子才离开，这期间又漂了 4–5 cm，砸在中筒筒壁。
+# 最小筒 Ø0.15：瓶心需在 7.5 − 3.3 ≈ 4 cm 内，门取 3 cm。
+image_gate: true
+drop_tol_m: 0.03
+relaxed_drop_tol_m: 0.06   # stable_timeout_s（15 s）仍没过门才放宽
+stable_hold_s: 0.3
+gate_speed_mps: 0.08
+release_delay_s: 1.1
+pred_window_s: 0.5
+# 末端目标一致性（筒被吹走后检测器会把垫边水泥/砖块缺口当成筒：置信度 0.28–0.40；投放高度 1.4 m 时真筒低空置信度 p5 0.71）
+min_conf_terminal: 0.45
+gate_min_conf: 0.6
+size_ratio_min: 0.5
+size_ratio_max: 2.0
+allow_endgame: false       # 1.4 m 处检测稳定；不盲投，免得筒被吹走后按旧位置投到空地

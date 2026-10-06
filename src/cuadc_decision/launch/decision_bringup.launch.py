@@ -24,6 +24,16 @@ def generate_launch_description():
                      'full_mission / drop_zone_bench / recon_zone_bench，见 docs/spec/mission-config-layer.md',
     )
 
+    approach_arg = DeclareLaunchArgument(
+        'approach', default_value='',
+        description='接近模块名（cone_descent_ibvs / position_lock_descent / ...），空 = approaches.ACTIVE')
+    approach_variant_arg = DeclareLaunchArgument(
+        'approach_variant', default_value='',
+        description='叠加 <approach>.<variant>.yaml（如 lowgain；逗号分隔可多个），空 = 不叠加')
+
+    first_drop_port_arg = DeclareLaunchArgument(
+        'first_drop_port', default_value='0', description='第一投用的投放口：0 左 / 1 右，之后轮换')
+
     decision_node = Node(
         package='cuadc_decision',
         executable='decision_node',
@@ -33,7 +43,11 @@ def generate_launch_description():
             'tick_rate_hz': LaunchConfiguration('tick_rate_hz'),
             'profile': LaunchConfiguration('profile'),
             'scenario': LaunchConfiguration('scenario'),
+            'approach': LaunchConfiguration('approach'),
+            'approach_variant': LaunchConfiguration('approach_variant'),
+            'first_drop_port': LaunchConfiguration('first_drop_port'),
         }],
     )
 
-    return LaunchDescription([tick_rate_arg, profile_arg, scenario_arg, decision_node])
+    return LaunchDescription([tick_rate_arg, profile_arg, scenario_arg, approach_arg, approach_variant_arg,
+                              first_drop_port_arg, decision_node])

@@ -9,8 +9,14 @@
 docs/spec/adr/0005-terminal-align-visual-servoing.md。
 """
 
+from dataclasses import replace
+from pathlib import Path
+
+import yaml
+
 from cuadc_decision.approaches.base import ApproachOutput
 from cuadc_decision.approaches import cone_descent_ibvs
+from cuadc_decision.approaches import position_lock_descent
 from cuadc_decision.approaches import stepped_descent_ibvs
 # 常用类型 re-export,方便脱离节点单测直接构造。
 from cuadc_decision.approaches.stepped_descent_ibvs import (
@@ -19,14 +25,20 @@ from cuadc_decision.approaches.stepped_descent_ibvs import (
 APPROACHES = {
     stepped_descent_ibvs.NAME: stepped_descent_ibvs,
     cone_descent_ibvs.NAME: cone_descent_ibvs,
+    position_lock_descent.NAME: position_lock_descent,
 }
-ACTIVE = cone_descent_ibvs.NAME  # 改这行切换/实验(stepped=阶梯基线 10/10, cone=锥面连续降高)
+ACTIVE = cone_descent_ibvs.NAME  # 默认；现场用启动参数 approach:= 切换，不改这行
 
 
-def create_active(profile=None, config=None):
-    """建当前选定 approach 的实例。给 profile 就从它的 yaml 读配置;给 config 直接
-    用;都不给用 dataclass 默认(纯单测/import 期,不读文件)。"""
-    mod = APPROACHES[ACTIVE]
+def create_active(profile=None, config=None, name=None, variant=None):
+    """建 approach 实例（name 缺省 = ACTIVE）。给 profile 就从它的 yaml 读配置，再按顺序叠加
+    variant（逗号分隔，如 'high,fastgate'）各自的 <name>.<variant>.yaml（只含要改的键）；
+    给 config 直接用；都不给用 dataclass 默认(纯单测/import 期,不读文件)。"""
+    name = name or ACTIVE
+    mod = APPROACHES[name]
     if config is None and profile is not None:
         config = mod.load_config(profile)
+        for v in filter(None, (variant or '').split(',')):
+            with open(Path(mod.__file__).parent / f'{name}.{v.strip()}.yaml') as fh:
+                config = replace(config, **(yaml.safe_load(fh) or {}))
     return mod.create(config)

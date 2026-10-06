@@ -60,8 +60,18 @@
 | 能力 | 通道 | 类型 | 底层 |
 |---|---|---|---|
 | ~~投放机构输出~~ | ~~`~/set_relay`~~ | ~~SetRelay~~ | ~~DO_SET_RELAY（2026-07-15，本 ADR 取代）~~ |
-| 投放执行 | service `~/release_payload` | `ReleasePayload.srv`（空请求 → bool success, string message） | `DO_SET_SERVO` 定时序列（forward run_s→neutral，每步等 ACK），投放完成才返回 |
+| 投放执行 | service `~/release_payload` | `ReleasePayload.srv`（空请求 → bool success, string message；2026-10-06 起带 `port`，见修订） | `DO_SET_SERVO` 定时序列（forward run_s→neutral，每步等 ACK），投放完成才返回 |
 | 投放状态反馈 | `~/status/drop` | `DropStatus`（bool actuated, 时间戳） | 确认投放序列已执行 |
+
+## 修订：两个单向舵机按 PWM 选口（2026-10-06，硬件子队确认）
+
+SERVO9 上接的不是一个双向舵机，而是左右两个**单向**舵机：**1100µs 驱动左口、1900µs 驱动右口、
+1500µs 两个都停**。原先「1100 = 放料方向」实际一直只放左口。
+
+- `ReleasePayload` 请求带口号 `port`（0 左 / 1 右）；接口层按口号查 PWM（`cuadc_physical/airframe.yaml`
+  每个 `drop_ports` 项的 `release_us`），口号越界拒绝；`DropStatus` 带回口号。决策仍不认识 PWM。
+- 本投用哪个口只在决策 `MissionContext.drop_port` 算一次（从 `first_drop_port` 起轮换），瞄准杠杆臂和放料
+  共用；放料失败重试仍是同一口。
 
 ## 被否决：RC 直通 + 任务期 RC override（2026-10-03 台架推翻）
 
