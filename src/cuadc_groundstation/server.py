@@ -95,6 +95,9 @@ def _ingest_telemetry_payload(payload: bytes, addr: tuple[str, int]) -> bool:
         return False
     with _telemetry_lock:
         obj.update(_field_pose.update(obj))
+        # HUD/折线用相对解锁点的高度，不把开机 EKF 原点高度直接画出
+        if obj.get("field_alt_m") is not None:
+            obj["alt_m"] = obj["field_alt_m"]
         _alt_trace.update(obj)
         obj["alt_trace"] = _alt_trace.snapshot()
         _latest_telemetry = obj

@@ -93,6 +93,10 @@
       gap: 0.4rem;
     }
     .stage-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
       font-size: 0.8rem;
       color: var(--muted);
       letter-spacing: 0.03em;
@@ -125,19 +129,26 @@
       background: #000;
       object-fit: contain;
     }
-    .hud {
-      position: absolute;
-      left: 0.75rem;
-      top: 0.75rem;
-      min-width: 11rem;
-      padding: 0.65rem 0.8rem;
-      background: rgba(10, 14, 20, 0.72);
-      border: 1px solid rgba(255, 255, 255, 0.12);
+    .stage:fullscreen,
+    .stage:-webkit-full-screen {
+      aspect-ratio: auto;
+      max-height: none;
+      width: 100%;
+      height: 100%;
+      border: none;
+      border-radius: 0;
+      background: #000;
+    }
+    .telem-panel {
+      margin-top: 0.85rem;
+      min-width: 0;
+      padding: 0.65rem 0.9rem;
+      background: var(--panel);
+      border: 1px solid #2a3340;
       border-radius: 6px;
       font-variant-numeric: tabular-nums;
-      pointer-events: none;
     }
-    .hud-title {
+    .telem-panel .hud-title {
       display: flex;
       justify-content: space-between;
       gap: 0.75rem;
@@ -147,17 +158,22 @@
       text-transform: uppercase;
       letter-spacing: 0.04em;
     }
-    .hud-title .telem-state.ok { color: var(--ok); }
-    .hud-title .telem-state.stale { color: var(--warn); }
-    .hud-title .telem-state.missing { color: var(--bad); }
-    .hud-grid {
+    .telem-panel .hud-title .telem-state.ok { color: var(--ok); }
+    .telem-panel .hud-title .telem-state.stale { color: var(--warn); }
+    .telem-panel .hud-title .telem-state.missing { color: var(--bad); }
+    .telem-panel .hud-grid {
       display: grid;
-      grid-template-columns: auto 1fr;
-      gap: 0.2rem 0.75rem;
+      grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+      gap: 0.35rem 1.25rem;
       font-size: 0.9rem;
     }
-    .hud-grid span:nth-child(odd) { color: var(--muted); }
-    .hud-grid span:nth-child(even) { color: var(--text); text-align: right; }
+    .telem-panel .hud-grid > div {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.75rem;
+    }
+    .telem-panel .hud-grid > div > span:first-child { color: var(--muted); }
+    .telem-panel .hud-grid > div > span:last-child { color: var(--text); text-align: right; }
     .field-wrap {
       margin-top: 1rem;
       display: flex;
@@ -308,26 +324,29 @@
         </div>
       </div>
     </div>
+    <div class="telem-panel" id="hud">
+      <div class="hud-title">
+        <span>Telemetry</span>
+        <span class="telem-state missing" id="telemState">无数据</span>
+      </div>
+      <div class="hud-grid">
+        <div><span>高度</span><span id="vAlt">—</span></div>
+        <div><span>姿态</span><span id="vAtt">—</span></div>
+        <div><span>模式</span><span id="vMode">—</span></div>
+        <div><span>电量</span><span id="vBatt">—</span></div>
+        <div><span>EKF/GPS</span><span id="vEkf">—</span></div>
+        <div><span>Pi CPU</span><span id="vCpu">—</span></div>
+        <div><span>赛道</span><span id="vField">—</span></div>
+      </div>
+    </div>
     <div class="stages">
       <div class="stage-wrap">
-        <div class="stage-label">原始图传 <span class="pill">:5600 → /stream.ts</span></div>
-        <div class="stage">
+        <div class="stage-label">
+          <span>原始图传 <span class="pill">:5600 → /stream.ts</span></span>
+          <button id="fsClean" class="rec-btn" type="button" title="原始图传全屏">全屏</button>
+        </div>
+        <div class="stage" id="stageClean">
           <video id="videoClean" muted autoplay playsinline></video>
-          <div class="hud" id="hud">
-            <div class="hud-title">
-              <span>Telemetry</span>
-              <span class="telem-state missing" id="telemState">无数据</span>
-            </div>
-            <div class="hud-grid">
-              <span>高度</span><span id="vAlt">—</span>
-              <span>姿态</span><span id="vAtt">—</span>
-              <span>模式</span><span id="vMode">—</span>
-              <span>电量</span><span id="vBatt">—</span>
-              <span>EKF/GPS</span><span id="vEkf">—</span>
-              <span>Pi CPU</span><span id="vCpu">—</span>
-              <span>赛道</span><span id="vField">—</span>
-            </div>
-          </div>
         </div>
       </div>
       <div class="stage-wrap">
@@ -338,9 +357,10 @@
       </div>
     </div>
     <p class="hint">
-      顶上就是赛道（不需要飞控）。左：干净图传 <code>/stream.ts</code>。
+      顶上就是赛道（不需要飞控）。Telemetry 在图传上方单独一栏，不挡画面。
+      左：干净图传可点「全屏」<code>/stream.ts</code>。
       右：CV 预览 <code>/stream_cv.ts</code>。机位为起飞坐标（x 前、y 右）：每次解锁那一刻锁成 H，上锁后保持，下次解锁重锁。
-      高度折线看近 30 秒 <code>alt_m</code>。
+      高度折线看近 30 秒，相对本次解锁点（不是开机 EKF 原点）。
     </p>
   </main>
   <script src="/mpegts.js"></script>
@@ -747,6 +767,32 @@
       streamPath: "/stream_cv.ts",
       stateKey: "cv",
     });
+
+    const stageClean = document.getElementById("stageClean");
+    const fsCleanBtn = document.getElementById("fsClean");
+    const videoCleanEl = document.getElementById("videoClean");
+    function fsElement() {
+      return document.fullscreenElement || document.webkitFullscreenElement || null;
+    }
+    function requestFs(el) {
+      const fn = el.requestFullscreen || el.webkitRequestFullscreen;
+      if (fn) return fn.call(el);
+    }
+    function exitFs() {
+      const fn = document.exitFullscreen || document.webkitExitFullscreen;
+      if (fn) return fn.call(document);
+    }
+    function syncFsBtn() {
+      fsCleanBtn.textContent = fsElement() === stageClean ? "退出全屏" : "全屏";
+    }
+    function toggleCleanFs() {
+      if (fsElement() === stageClean) exitFs();
+      else requestFs(stageClean);
+    }
+    fsCleanBtn.addEventListener("click", toggleCleanFs);
+    videoCleanEl.addEventListener("dblclick", toggleCleanFs);
+    document.addEventListener("fullscreenchange", syncFsBtn);
+    document.addEventListener("webkitfullscreenchange", syncFsBtn);
 
     // ---- 录制(和视频/任务解耦,只调服务端 /record/*) ----
     // 一键同时录干净图传 + CV 预览两路 + 遥测,落 server 的 recordings/。

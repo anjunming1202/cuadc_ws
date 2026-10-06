@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Ground-side field pose: FC NED/GPS → 起飞坐标系（与任务同一定义，见 docs/spec/coordinate-frames.md）。
 
-Does not run on the Pi. 每次解锁上升沿锁原点和机头；上锁后保持，下次解锁重锁。
+Does not run on the Pi. 每次解锁上升沿锁水平原点、机头、高度零点；上锁后保持，下次解锁重锁。
+高度显示为「当前 alt_m − 解锁瞬间 alt_m」，把 EKF 开机原点或 home 都收成相对解锁点。
 """
 from __future__ import annotations
 
@@ -50,15 +51,18 @@ class FieldPoseTracker:
         self._was_armed = False
         self._n0: float | None = None
         self._e0: float | None = None
+        self._alt0: float | None = None  # 解锁瞬间的机载 alt_m（可能是 RelOrigin 或 relative_alt）
         self._lat0: float | None = None
         self._lon0: float | None = None
         self._yaw0_rad: float = 0.0
         self._last: tuple[float, float, float] = (0.0, 0.0, 0.0)
+        self._last_alt: float | None = None
 
     def update(self, telem: dict[str, Any]) -> dict[str, Any]:
         """Return overlay fields; does not mutate telem."""
         ned_n = _num(telem.get("ned_n"))
         ned_e = _num(telem.get("ned_e"))
+        alt_m = _num(telem.get("alt_m"))
         lat = _num(telem.get("lat_deg"))
         lon = _num(telem.get("lon_deg"))
         yaw_deg = _num(telem.get("yaw_deg"))
@@ -68,11 +72,16 @@ class FieldPoseTracker:
         # 老版 telem_ground 不发 armed：用 GUIDED 近似
         armed = bool(telem["armed"]) if "armed" in telem else is_guided(telem.get("mode"))
 
-        if armed and not self._was_armed and (has_ned or has_gps):
+        if armed and not self._was_armed and (has_ned or has_gps or alt_m is not None):
             self._n0, self._e0 = (ned_n, ned_e) if has_ned else (None, None)
+            self._alt0 = alt_m
+            self._last_alt = 0.0
             self._lat0, self._lon0 = (lat, lon) if has_gps else (None, None)
             self._yaw0_rad = 0.0 if yaw_rad is None else yaw_rad
             self.latched = True
+        elif self.latched and self._alt0 is None and alt_m is not None:
+            self._alt0 = alt_m  # 解锁包还没有高度时，用随后第一条补零点
+            self._last_alt = 0.0
         self._was_armed = armed and self.latched
 
         if not self.latched:
@@ -80,6 +89,7 @@ class FieldPoseTracker:
                 "field_x_m": 0.0,
                 "field_y_m": 0.0,
                 "field_yaw_deg": 0.0,
+                "field_alt_m": 0.0,
                 "field_latched": False,
                 "field_src": "pre-arm",
             }
@@ -93,19 +103,37 @@ class FieldPoseTracker:
         else:
             x, y, yaw = self._last
             return {"field_x_m": x, "field_y_m": y, "field_yaw_deg": yaw,
-                    "field_latched": True, "field_src": "hold"}
+                    "field_alt_m": self._last_alt, "field_latched": True, "field_src": "hold"}
 
         fx, fy = ned_delta_to_field(dn, de, self._yaw0_rad)
         heading = 0.0 if yaw_rad is None else math.degrees(yaw_rad - self._yaw0_rad)
+        field_alt = self._arm_relative_alt(alt_m)
         out = {
             "field_x_m": round(fx, 2),
             "field_y_m": round(fy, 2),
             "field_yaw_deg": round(heading % 360.0, 1),  # 向右转为正
+            "field_alt_m": field_alt,
             "field_latched": True,
             "field_src": src,
         }
         self._last = (out["field_x_m"], out["field_y_m"], out["field_yaw_deg"])
+        if field_alt is not None:
+            self._last_alt = field_alt
         return out
+
+    def _arm_relative_alt(self, alt_m: float | None) -> float | None:
+        """当前高度减去解锁瞬间高度。机载 alt_m 若在 RelOrigin / relative_alt 间跳变，丢掉单帧尖峰。"""
+        if alt_m is None or self._alt0 is None:
+            return self._last_alt
+        rel = round(alt_m - self._alt0, 2)
+        # 10Hz 真实爬升远小于 1.5m/包；这么大的跳变是两种高度源互盖，不是飞机在动
+        if (
+            self._last_alt is not None
+            and abs(self._last_alt) > 0.4
+            and abs(rel - self._last_alt) > 1.5
+        ):
+            return self._last_alt
+        return rel
 
 
 class AltitudeTrace:
@@ -133,10 +161,13 @@ class AltitudeTrace:
 if __name__ == "__main__":
     t = FieldPoseTracker()
     assert not t.update({"armed": False, "ned_n": 5, "ned_e": 0, "yaw_deg": 90})["field_latched"]
-    a0 = t.update({"armed": True, "ned_n": 5, "ned_e": 0, "yaw_deg": 90})  # 机头朝东
-    assert a0["field_x_m"] == 0 and a0["field_latched"]
-    a1 = t.update({"armed": True, "ned_n": 4, "ned_e": 10, "yaw_deg": 90})
+    a0 = t.update({"armed": True, "ned_n": 5, "ned_e": 0, "alt_m": -2.1, "yaw_deg": 90})  # 机头朝东
+    assert a0["field_x_m"] == 0 and a0["field_latched"] and a0["field_alt_m"] == 0.0
+    a1 = t.update({"armed": True, "ned_n": 4, "ned_e": 10, "alt_m": 0.9, "yaw_deg": 90})
+    assert a1["field_alt_m"] == 3.0  # RelOrigin -2.1→0.9 显示为相对解锁点 3m
     assert (a1["field_x_m"], a1["field_y_m"]) == (10.0, 1.0)  # 向东 10 = 前；向南 1 = 右
+    spike = t.update({"armed": True, "ned_n": 4, "ned_e": 10, "alt_m": 3.0, "yaw_deg": 90})
+    assert spike["field_alt_m"] == 3.0  # relative_alt 盖过来的尖峰丢掉
     rtl = t.update({"armed": True, "mode": "RTL", "ned_n": 5, "ned_e": 3, "yaw_deg": 90})
     assert rtl["field_x_m"] == 3.0  # 换模式不重锁
     landed = t.update({"armed": False, "ned_n": 5, "ned_e": 1, "yaw_deg": 90})
